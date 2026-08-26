@@ -1,0 +1,43 @@
+# deps
+node_modules/
+.pnpm-store/
+.venv/
+__pycache__/
+*.py[cod]
+.uv-cache/
+
+# build output
+.next/
+dist/
+build/
+.turbo/
+*.egg-info/
+*.tsbuildinfo
+
+# generated — codegen output is not source
+packages/contracts/dist/
+packages/contracts/schema/
+
+# env
+.env
+.env.*
+!.env.example
+
+# tooling scratch
+.playwright-mcp/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+coverage/
+htmlcov/
+
+# eval artifacts — large, regenerable
+packages/evals/generated/
+packages/evals/reports/
+
+# local sample data (real student work — never commit)
+data/
+*.local.pdf
+
+# os
+.DS_Store

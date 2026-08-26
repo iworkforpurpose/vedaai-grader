@@ -1,0 +1,124 @@
+/*
+ * Design tokens.
+ *
+ * Declared as custom properties from the first commit for a specific reason:
+ * the real designs exist in Figma and will be applied in a later pass. If
+ * components hardcode colour and spacing, that pass becomes a rewrite. If they
+ * read tokens, it is largely a matter of changing values here.
+ *
+ * The palette below is deliberately plain. It is not a design — it is a neutral
+ * substrate that keeps the interface legible while the accuracy work proceeds.
+ *
+ * Two things here are NOT arbitrary and must survive the Figma pass:
+ *   --hl-*        highlight colours carry meaning (confidence, review state)
+ *   --status-*    answer statuses map to colour; changing which colour means
+ *                 "needs review" changes what a teacher believes at a glance
+ */
+
+:root {
+  /* neutrals — slight blue bias so they read as chosen rather than inherited */
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #d8dee6;
+  --text: #13171e;
+  --text-2: #3d4652;
+  --text-muted: #69737f;
+
+  --accent: #1f5480;
+  --accent-contrast: #ffffff;
+
+  /* answer status — semantic, not decorative */
+  --status-answered: #146b4f;
+  --status-unanswered: #69737f;
+  --status-review: #8f5308;
+  --status-missing: #9c1120;
+  --status-not-required: #4a5568;
+
+  /* highlight overlay */
+  --hl-fill: rgba(31, 84, 128, 0.18);
+  --hl-stroke: #1f5480;
+  --hl-fill-low: rgba(143, 83, 8, 0.18);
+  --hl-stroke-low: #8f5308;
+  --hl-fill-ink: rgba(20, 107, 79, 0.16);
+  --hl-stroke-ink: #146b4f;
+
+  /* debug overlay — OCR boxes and ink components, Phase 1/2 */
+  --debug-line: rgba(220, 38, 38, 0.9);
+  --debug-word: rgba(37, 99, 235, 0.55);
+  --debug-ink: rgba(16, 185, 129, 0.75);
+
+  /* spacing scale */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  --radius-sm: 3px;
+  --radius: 6px;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 13px;
+  --fs-base: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+
+  --shadow: 0 1px 2px rgba(19, 23, 30, 0.06), 0 8px 24px -16px rgba(19, 23, 30, 0.18);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Keyboard focus must stay visible. The review surface is dense and heavily
+   clickable, and a teacher tabbing through a question list needs to know
+   where they are. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

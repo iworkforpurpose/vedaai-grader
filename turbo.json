@@ -1,0 +1,27 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "codegen": {
+      "outputs": ["dist/**", "schema/**"],
+      "inputs": ["src/**/*.py", "scripts/**/*.py"]
+    },
+    "typecheck": {
+      "dependsOn": ["^codegen", "codegen"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^codegen"],
+      "outputs": []
+    },
+    "eval": {
+      "dependsOn": ["^codegen"],
+      "outputs": ["reports/**"],
+      "cache": false
+    },
+    "build": {
+      "dependsOn": ["^codegen", "^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

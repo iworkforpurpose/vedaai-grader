@@ -1,0 +1,15 @@
+{
+  "name": "@vedaai/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/types.ts",
+  "types": "dist/types.ts",
+  "scripts": {
+    "codegen": "uv run --with pydantic python scripts/gen_types.py",
+    "typecheck": "tsc --noEmit",
+    "test": "uv run --with pydantic --with pytest python -m pytest -q"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
