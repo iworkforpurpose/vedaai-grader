@@ -1,11 +1,12 @@
+import { UploadForm } from "@/components/UploadForm";
 import { ApiUnavailableError, EXPECTED_RENDER_DPI, fetchHealth, type Health } from "@/lib/api";
 
 /**
- * Phase 0 landing page.
+ * Upload page.
  *
- * Its only job is to prove the seams hold: Next boots, the generated contract
- * types compile, the API is reachable, and both sides agree on the render DPI.
- * The upload flow lands in Phase 1 and the review surface in Phase 7.
+ * Also cross-checks the render DPI against the pipeline service. A mismatch
+ * would not throw — normalized coordinates mean the browser never divides by
+ * DPI — it would silently offset every highlight, so it is worth surfacing.
  */
 
 export const dynamic = "force-dynamic";
@@ -49,7 +50,7 @@ export default async function Home(): Promise<React.JSX.Element> {
             margin: "0 0 var(--sp-2)",
           }}
         >
-          Phase 0 · scaffold
+          Teacher review
         </p>
         <h1 style={{ fontSize: "var(--fs-xl)", margin: 0, letterSpacing: "-0.02em" }}>
           Answer Sheet Review
@@ -111,11 +112,18 @@ export default async function Home(): Promise<React.JSX.Element> {
         )}
       </section>
 
-      <p style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)", margin: 0 }}>
-        Next: page rendering, transcription, and a debug overlay that draws every recognized
-        line box over the page — so highlight geometry is verifiable by eye before anything is
-        built on top of it.
-      </p>
+      <section
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: "var(--sp-5)",
+          boxShadow: "var(--shadow)",
+        }}
+      >
+        <h2 style={{ fontSize: "var(--fs-lg)", margin: "0 0 var(--sp-4)" }}>Upload</h2>
+        <UploadForm />
+      </section>
     </main>
   );
 }

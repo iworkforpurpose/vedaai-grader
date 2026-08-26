@@ -23,6 +23,9 @@ packages/contracts/schema/
 .env.*
 !.env.example
 
+# rendered page images — regenerable, and may contain real student work
+.pagestore/
+
 # tooling scratch
 .playwright-mcp/
 .pytest_cache/

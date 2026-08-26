@@ -27,6 +27,13 @@ class OcrEngine(StrEnum):
     disagreement usable as a confidence signal.
     """
 
+    PDF_TEXT_LAYER = "pdf_text"
+    """Not OCR at all — geometry and text read straight from a PDF's embedded
+    text layer. Exact and free, so it is preferred for printed question papers
+    that carry one. Never used for the answer sheet, which is handwritten, and
+    never trusted without a raster cross-check when the source is untrusted:
+    a text layer can hold content that is invisible on the rendered page."""
+
     GOOGLE_CLOUD_VISION = "gcv"
     PADDLE_OCR_VL = "paddle"
     SYNTHETIC = "synthetic"  # ground truth from the synthetic generator

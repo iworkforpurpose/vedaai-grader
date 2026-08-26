@@ -1,0 +1,187 @@
+"""HTTP surface.
+
+Note on uploads: the browser posts files to this service directly, not through
+the Next.js app. That matters because a Vercel function caps its request body at
+4.5 MB, which a scanned answer sheet routinely exceeds — but this service runs on
+its own host, so the cap never applies and presigned object-storage uploads
+become an optimization rather than a requirement.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
+from fastapi.responses import Response, StreamingResponse
+from vedaai_contracts import DocumentKind, LineIndex, Submission
+
+from . import pipeline, render
+from .render import UnsupportedDocument
+from .storage import PageStore, get_page_store
+from .store import SubmissionStore, get_store
+
+router = APIRouter()
+
+StoreDep = Annotated[SubmissionStore, Depends(get_store)]
+PageStoreDep = Annotated[PageStore, Depends(get_page_store)]
+
+
+@router.post("/submissions", response_model=Submission, tags=["submissions"])
+async def create_submission(
+    store: StoreDep,
+    page_store: PageStoreDep,
+    question_paper: Annotated[UploadFile, File(description="Printed question paper.")],
+    answer_sheet: Annotated[UploadFile, File(description="One student's handwritten sheet.")],
+) -> Submission:
+    """Upload both documents and run ingest.
+
+    Ingest is awaited rather than backgrounded. At this scale a request that
+    takes a few seconds is simpler and more debuggable than a job handle, and
+    the SSE stream still carries per-page progress for the client. When
+    transcription grows to a minute-plus this moves to a background task and the
+    response becomes the submission ID alone.
+    """
+    qp_bytes = await question_paper.read()
+    as_bytes = await answer_sheet.read()
+
+    try:
+        qp_source = render.inspect(
+            qp_bytes, question_paper.filename or "question_paper", DocumentKind.QUESTION_PAPER
+        )
+        as_source = render.inspect(
+            as_bytes, answer_sheet.filename or "answer_sheet", DocumentKind.ANSWER_SHEET
+        )
+    except UnsupportedDocument as exc:
+        # A rejected upload is the user's problem to fix, so the message says
+        # what was wrong rather than surfacing a parser exception.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    submission_id = uuid.uuid4().hex[:12]
+    store.put(Submission(submission_id=submission_id))
+
+    loop = asyncio.get_running_loop()
+    try:
+        submission = await loop.run_in_executor(
+            None,
+            lambda: pipeline.ingest(
+                submission_id=submission_id,
+                question_paper=(qp_bytes, qp_source),
+                answer_sheet=(as_bytes, as_source),
+                page_store=page_store,
+                submission_store=store,
+            ),
+        )
+    except UnsupportedDocument as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
+
+    store.remember_content(qp_source.content_hash, submission_id)
+    return submission
+
+
+@router.get("/submissions/{submission_id}", response_model=Submission, tags=["submissions"])
+def get_submission(submission_id: str, store: StoreDep) -> Submission:
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+    return submission
+
+
+@router.get(
+    "/submissions/{submission_id}/lines/{kind}",
+    response_model=LineIndex,
+    tags=["submissions"],
+)
+def get_lines(submission_id: str, kind: DocumentKind, store: StoreDep) -> LineIndex:
+    """The line index for one document.
+
+    This is what the debug overlay draws. Every box it renders came from the
+    transcription engine, so if a highlight later lands in the wrong place, this
+    endpoint answers whether the geometry or the mapping is at fault.
+    """
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+
+    index = (
+        submission.question_paper_lines
+        if kind is DocumentKind.QUESTION_PAPER
+        else submission.answer_sheet_lines
+    )
+    if index is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No transcription for the {kind.value.replace('_', ' ')}. "
+            + "; ".join(submission.warnings),
+        )
+    return index
+
+
+@router.get("/pages/{key:path}", tags=["pages"])
+def get_page_image(
+    page_store: PageStoreDep,
+    key: Annotated[str, Path(description="Page image key from Page.image_key.")],
+) -> Response:
+    """Serve a rendered page image.
+
+    Cached hard: page images are content-addressed, so a given key's bytes never
+    change and the browser can keep them for as long as it likes. The review
+    surface scrolls through every page of a script, and re-fetching them on each
+    interaction would make the overlay feel broken.
+    """
+    try:
+        if not page_store.exists(key):
+            raise HTTPException(status_code=404, detail=f"No page image {key!r}")
+        data = page_store.read(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@router.get("/submissions/{submission_id}/events", tags=["submissions"])
+async def stream_events(submission_id: str, store: StoreDep) -> StreamingResponse:
+    """Server-sent events for pipeline progress.
+
+    Replays from the beginning on connect, so a browser that reconnects
+    mid-processing sees what it missed rather than resuming blind. A keepalive
+    comment goes out whenever a stage runs quiet, because proxies drop idle
+    connections and transcription legitimately produces nothing for tens of
+    seconds at a time.
+    """
+    if store.get(submission_id) is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+
+    async def generate():
+        cursor = 0
+        while True:
+            events, cursor = store.events_since(submission_id, cursor)
+            for event in events:
+                yield f"data: {json.dumps(event.model_dump(mode='json'))}\n\n"
+                if event.is_terminal:
+                    return
+            if store.is_finished(submission_id):
+                return
+            await store.wait_for_change(submission_id)
+            if not events:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Nginx and several PaaS proxies buffer responses by default, which
+            # would hold every event until the stream closed.
+            "X-Accel-Buffering": "no",
+        },
+    )

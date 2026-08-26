@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from vedaai_contracts import EXPORTED_MODELS
 from vedaai_contracts.geometry import HGBENCH_SCALE, RENDER_DPI
 
+from .routes import router
+
 app = FastAPI(
     title="Vedaai Grader API",
     version="0.1.0",
@@ -59,3 +61,6 @@ def health() -> Health:
         hgbench_scale=HGBENCH_SCALE,
         contract_model_count=len(EXPORTED_MODELS),
     )
+
+
+app.include_router(router)
