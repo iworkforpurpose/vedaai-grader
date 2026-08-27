@@ -451,7 +451,15 @@ body::before {
 
 .topbar {
   position: sticky;
-  top: var(--page-pad);
+  /*
+   * Zero, not the page inset.
+   *
+   * `top: var(--page-pad)` shifted the bar down 24px visually while its layout box
+   * stayed where it was, so everything after it began 24px too high and the panes
+   * overlapped the bar by half its height. The shell already provides the inset;
+   * the sticky offset was adding it a second time.
+   */
+  top: 0;
   z-index: 20;
   display: flex;
   align-items: center;
@@ -935,70 +943,150 @@ body::before {
 }
 
 
-/* ══ review screen ═════════════════════════════════════════════════════════
+/* ══ collapsed rail ════════════════════════════════════════════════════════
  *
- * No Figma frame for this yet, so the styling here is deliberately quiet — the
- * job is that it *works* at every size, not that it is finished. It gets the same
- * treatment as the upload screen when the frames arrive.
- *
- * The split pane is the hard case, and it has no phone equivalent. Below the rail
- * breakpoint the two panes stack: questions first, sheet beneath, one scroll.
- * That is not the ideal phone design — the point of the product is seeing a
- * question and its highlight together — but it is honest, and it beats what was
- * there, which gave the answer sheet 73px of width at phone size and made the
- * highlight impossible to see.
+ * The loading and mapping frames show the rail collapsed to icons; the upload
+ * frame shows it expanded. Same navigation, two widths, and the `»` control moves
+ * between them — so it is a state on one component rather than a second rail.
  */
 
-.review {
+.rail[data-collapsed="true"] .brand-word,
+.rail[data-collapsed="true"] .nav-label,
+.rail[data-collapsed="true"] .nav-badge,
+.rail[data-collapsed="true"] .school-text {
+  display: none;
+}
+
+.rail-expand {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .rail[data-collapsed="true"] {
+    width: 72px;
+    padding: var(--sp-3) var(--sp-2);
+    align-items: center;
+  }
+
+  .rail[data-collapsed="true"] .nav-row,
+  .rail[data-collapsed="true"] .toolkit,
+  .rail[data-collapsed="true"] .school {
+    justify-content: center;
+    width: 40px;
+    padding: 0;
+    min-height: 40px;
+  }
+
+  /* The toolkit button keeps its accent ring when there is no label to carry it. */
+  .rail[data-collapsed="true"] .toolkit {
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+  }
+
+  .rail[data-collapsed="true"] .rail-head {
+    justify-content: center;
+  }
+
+  .rail[data-collapsed="true"] .rail-collapse {
+    display: none;
+  }
+
+  .rail-expand {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin: var(--sp-2) auto 0;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--body-solid);
+    cursor: pointer;
+  }
+
+  .rail-expand:hover {
+    background: var(--chip);
+  }
+}
+
+/* ══ loading ═══════════════════════════════════════════════════════════════ */
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6) var(--page-pad);
+  background: var(--surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-panel);
+}
+
+.stage-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px; /* the frame's gap between the mark and the text block */
+  text-align: center;
+}
+
+.sparkles {
+  position: relative;
+  width: 128px;
+  height: 134px;
+}
+
+.sparkles svg {
+  position: absolute;
+  color: var(--accent);
+}
+
+/* Sizes and positions from the frame: 96, 72, 29 and a 12px dot. */
+.sparkles [data-s="lg"] { width: 96px; height: 96px; top: 0; right: 0; }
+.sparkles [data-s="md"] { width: 72px; height: 72px; bottom: 0; left: 4px; }
+.sparkles [data-s="sm"] { width: 29px; height: 29px; bottom: 18px; right: 6px; }
+.sparkles [data-s="dot"] { width: 12px; height: 12px; top: 44px; left: 0; opacity: 0.75; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .sparkles [data-s="lg"] { animation: twinkle 2.4s ease-in-out infinite; }
+  .sparkles [data-s="md"] { animation: twinkle 2.4s ease-in-out 0.5s infinite; }
+  .sparkles [data-s="sm"] { animation: twinkle 2.4s ease-in-out 1s infinite; }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.9); }
+}
+
+.stage-title {
+  font-size: 1.875rem; /* 30/36 */
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--title);
+}
+
+.stage-note {
+  font-size: 1.25rem; /* 20/36 */
+  color: rgb(70 70 70 / 0.75);
+}
+
+.stage-detail {
+  font-size: var(--fs-sm);
+  color: var(--body);
+  max-width: 46ch;
+}
+
+/* ══ mapping screen ════════════════════════════════════════════════════════ */
+
+.map {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  padding: var(--page-pad);
 }
 
-.review-summary {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3) var(--sp-5);
-  flex-wrap: wrap;
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-panel);
-  font-size: var(--fs-sm);
-}
-
-.review-summary-title {
-  font-size: var(--fs-base);
-  font-weight: 700;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.review-summary-spacer {
-  margin-left: auto;
-}
-
-.review-notices {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  padding: var(--sp-3) var(--sp-4);
-  border-radius: var(--r-md);
-  background: var(--surface-veil);
-  font-size: var(--fs-sm);
-  color: var(--body-solid);
-}
-
-/* Stacked by default. The panes become side by side only where there is room for
-   both to be useful. */
-.review-panes {
+.map-panes {
   flex: 1;
   min-height: 0;
   display: grid;
@@ -1006,119 +1094,424 @@ body::before {
   gap: var(--sp-3);
 }
 
-.review-pane {
+/* ── questions pane ────────────────────────────────────────────────────── */
+
+.q-pane {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-panel);
-  overflow: hidden;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  border-radius: 20px;
+  background: var(--surface-veil);
 }
 
-.review-pane-scroll {
+.q-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.q-head h2 {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.q-head-action {
+  margin-left: auto;
+  min-height: 44px;
+  padding: var(--sp-3) 20px var(--sp-3) var(--sp-4);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: #181818;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.q-head-action:hover {
+  background: var(--chip);
+}
+
+.q-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  /* Room for the focus ring and the selected card's 2px border. */
+  padding: 2px;
 }
 
-/* Stacked, each pane needs a height of its own or both collapse to content. */
-@media (max-width: 1023px) {
-  .review-pane[data-pane="questions"] {
-    max-height: 55dvh;
-  }
-
-  .review-pane[data-pane="sheet"] {
-    min-height: 60dvh;
-  }
+.q-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 2px solid transparent;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font: inherit;
+  color: inherit;
 }
 
-@media (min-width: 1024px) {
-  /*
-   * The frame, not a percentage of one.
-   *
-   * `height: 100%` resolved against a body with no height of its own, so the
-   * panes grew with their content — 2480px tall inside a 1080px window — and the
-   * document scrolled instead of each pane scrolling. The effect was that the
-   * questions list and the answer sheet could never be seen at the same scroll
-   * position, which is the entire point of a split view.
-   *
-   * dvh rather than vh: on a phone `vh` is the *largest* viewport height, so a
-   * full-height element sits partly under the browser chrome until it is
-   * dismissed.
-   */
-  .review {
-    height: 100dvh;
-    padding: var(--page-pad);
-  }
-
-  /*
-   * The questions column is fixed rather than fractional. A share of the width
-   * would give it 640px at 1920, which is more than a list of question labels can
-   * use, and would take that room from the answer sheet — where the highlight
-   * lives, and the only place extra pixels are worth anything.
-   */
-  .review-panes {
-    grid-template-columns: minmax(320px, 400px) 1fr;
-  }
-
-  .review-pane[data-pane="questions"],
-  .review-pane[data-pane="sheet"] {
-    max-height: none;
-    min-height: 0;
-  }
+.q-card[data-selected="true"] {
+  border-color: #ff8d36;
 }
 
-.review-selected {
+.q-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+}
+
+/* The number badge. Dark normally, accent when this question is the selected one —
+   which is how the frame marks the selection, alongside the card border. */
+.q-num {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  background: rgb(43 43 43 / 0.8);
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.q-card[data-selected="true"] .q-num {
+  background: var(--accent);
+}
+
+/* Sub-part letter, its own column in the frame so labels stay aligned. */
+.q-sub {
+  flex: none;
+  min-width: 20px;
+  padding-top: 5px;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.q-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-base);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+}
+
+.q-right {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
-  flex-wrap: wrap;
-  padding: var(--sp-2) var(--sp-4);
-  border-bottom: 1px solid var(--row-active);
-  font-size: var(--fs-sm);
+  gap: var(--sp-2);
 }
 
-.review-orphans {
-  padding: var(--sp-4);
-  border-top: 1px solid var(--row-active);
-}
-
-.review-orphans h2 {
+.score {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-circle);
   font-size: var(--fs-base);
-  margin-bottom: var(--sp-2);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.orphan-card {
-  border: 1px solid var(--row-active);
-  border-radius: var(--r-md);
-  padding: var(--sp-2) var(--sp-3);
-  margin-bottom: var(--sp-2);
+/* Exactly the three the frame defines. */
+.score[data-tone="pass"] { background: rgb(69 181 41 / 0.1); color: #34ac15; }
+.score[data-tone="partial"] { background: rgb(255 153 0 / 0.1); color: #e3600f; }
+.score[data-tone="zero"] { background: #ffe9e2; color: #c0350a; }
+.score[data-tone="none"] { background: var(--chip); color: var(--body-solid); }
+
+.q-chevron {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--chip);
+  color: #1e1e1e;
+  cursor: pointer;
+}
+
+.q-hint {
+  font-size: var(--fs-base);
+  color: var(--body);
+  white-space: nowrap;
+}
+
+/* ── AI feedback ───────────────────────────────────────────────────────── */
+
+.feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-lg);
+  background: var(--chip);
+}
+
+.feedback h3 {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.feedback p {
   font-size: var(--fs-sm);
+  line-height: 1.43;
+  color: var(--ink);
 }
 
-.link-button {
+.feedback-cite {
+  align-self: flex-start;
   border: 0;
   background: none;
   padding: 0;
-  color: var(--accent);
   font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
 }
 
-.pill-button {
-  padding: 2px 10px;
-  border: 1px solid var(--accent);
-  border-radius: var(--r-sm);
+/* ── answer sheet pane ─────────────────────────────────────────────────── */
+
+.sheet-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1.25px solid rgb(0 0 0 / 0.1);
+  border-radius: 20px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.sheet-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: var(--sp-3) var(--sp-5);
+  background: var(--ink);
+  color: #fff;
+}
+
+.sheet-bar h2 {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: rgb(255 255 255 / 0.8);
+  white-space: nowrap;
+}
+
+.sheet-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-circle);
+  background: rgb(255 255 255 / 0.14);
+  font-size: var(--fs-sm);
+}
+
+.tool-button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
   background: transparent;
-  color: var(--accent);
-  font-size: var(--fs-xs);
+  color: #fff;
   cursor: pointer;
 }
 
-.pill-button:hover {
-  background: var(--accent);
-  color: var(--on-accent);
+.tool-button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.18);
+}
+
+.tool-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tool-value {
+  min-width: 4.5ch;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.sheet-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--chip);
+}
+
+.sheet-page {
+  position: relative;
+  margin: 0 auto;
+  background: var(--surface);
+}
+
+.sheet-page img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* The mapped answer. Green in the frame, with a tab carrying the question label —
+   the tab is what makes a highlight self-describing when several are visible. */
+.hl {
+  position: absolute;
+  border: 2px solid #3dd218;
+  border-radius: var(--r-lg);
+  background: rgb(94 255 53 / 0.1);
+  pointer-events: none;
+}
+
+.hl-tab {
+  position: absolute;
+  top: -22px;
+  left: -2px;
+  z-index: 1;
+  min-width: 45px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: #34ac15;
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.hl[data-kind="ink"] {
+  border-color: var(--hl-stroke-ink);
+  border-style: dashed;
+  background: var(--hl-fill-ink);
+}
+
+/* ── phone: a tab per pane ─────────────────────────────────────────────── */
+
+.map-tabs {
+  flex: none;
+  display: flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-circle);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.map-tab {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--r-circle);
+  background: transparent;
+  color: var(--body-solid);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.map-tab[aria-selected="true"] {
+  background: var(--ink);
+  color: #fff;
+}
+
+@media (min-width: 1024px) {
+  .map-tabs {
+    display: none;
+  }
+
+  .map-panes {
+    /*
+     * Proportional between a floor and the frame's own width, rather than either
+     * a pure fraction or a fixed 672.
+     *
+     * A pure fraction hands the questions column 780px at 1920, more than
+     * question labels can use, and takes it from the sheet where the highlight
+     * lives. A fixed 672 does the opposite at the low end: at 1024 it left the
+     * sheet 211px, which is the same starvation the old build had at phone width,
+     * just arriving from the other direction.
+     *
+     * 45% capped at the frame's 672 gives the sheet the majority at every width
+     * from 1024 up.
+     */
+    grid-template-columns: clamp(340px, 45%, 672px) minmax(0, 1fr);
+  }
+
+  .map-pane {
+    display: flex !important;
+  }
+}
+
+/* Below the rail breakpoint only the chosen tab is shown, so the other pane costs
+   nothing and the page has one scroll. */
+@media (max-width: 1023px) {
+  .map-pane[data-active="false"] {
+    display: none;
+  }
+
+  /*
+   * The card reflows: badge and score on the first line, question text on its own
+   * beneath — which is how the phone frame draws it, and necessary rather than
+   * decorative. Kept in one row, the pill and chevron take fixed width and the
+   * text was left a ~110px column, breaking every few words.
+   */
+  .q-row {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .q-text {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .q-right {
+    margin-left: auto;
+  }
+
+  /* The list scrolls with the page rather than inside itself, as the phone frame's
+     2227px height implies — two nested scrollers on a touch screen fight each
+     other. */
+  .q-list {
+    overflow: visible;
+  }
+}
+
+/* Flipped inside, for a highlight with no room above it. */
+.hl-tab[data-inside="true"] {
+  top: 2px;
+  left: 2px;
+  border-radius: var(--r-sm);
 }

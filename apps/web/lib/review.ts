@@ -402,3 +402,45 @@ export function summarizeMarks(submission: Submission): MarkSummary {
     rubricOnly: !judged,
   };
 }
+
+
+export type ScoreTone = "pass" | "partial" | "zero" | "none";
+
+/**
+ * Which of the frame's three score pills a grade should wear.
+ *
+ * The design defines exactly three — full marks, partial, nothing — and a fourth
+ * state the design does not show but the product has: not marked at all. That one
+ * gets the neutral chip rather than a zero, because "nobody has marked this" and
+ * "the student scored nothing" are the same number and completely different
+ * facts.
+ */
+export function scoreTone(grade: QuestionGrade | undefined): ScoreTone {
+  if (!grade || grade.marks_available <= 0) return "none";
+  const judged = grade.rubric_points.some((point) => point.cited_line_ids.length > 0);
+  if (!judged && grade.marks_awarded === 0) return "none";
+  if (grade.marks_awarded <= 0) return "zero";
+  if (grade.marks_awarded >= grade.marks_available) return "pass";
+  return "partial";
+}
+
+/** The pill's text, or null when there is nothing to show. */
+export function scoreLabel(grade: QuestionGrade | undefined): string | null {
+  if (!grade || grade.marks_available <= 0) return null;
+  const trim = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  return `${trim(grade.marks_awarded)} / ${trim(grade.marks_available)}`;
+}
+
+/**
+ * The feedback worth showing for one question.
+ *
+ * Prefers the model's note to the student, then the first rubric-point comment —
+ * which is where a skip reason lands, and a teacher needs to see "nothing was
+ * written for this" as much as they need a mark.
+ */
+export function feedbackFor(grade: QuestionGrade | undefined): string | null {
+  if (!grade) return null;
+  if (grade.feedback) return grade.feedback;
+  const comment = grade.rubric_points.find((point) => point.comment)?.comment;
+  return comment ?? null;
+}

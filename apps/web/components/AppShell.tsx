@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import {
   AnalyticsIcon,
+  ChevronsRightIcon,
   AssignmentsIcon,
   BackIcon,
   BellIcon,
@@ -60,13 +61,23 @@ const NAV: NavEntry[] = [
 export function AppShell({
   crumb,
   onBack,
+  collapsedRail = false,
   children,
 }: {
   crumb: string;
   onBack?: () => void;
+  /**
+   * Start with the rail collapsed to icons.
+   *
+   * The loading and mapping frames show it that way and the upload frame does not,
+   * which reads as intent rather than inconsistency: those screens want the width
+   * for content. It stays a state the teacher can change either way.
+   */
+  collapsedRail?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(collapsedRail);
 
   // Escape closes the drawer — expected of anything that covers the page, and
   // cheap enough that omitting it is just an omission.
@@ -90,7 +101,7 @@ export function AppShell({
         />
       )}
 
-      <nav className="rail" data-open={navOpen} aria-label="Main">
+      <nav className="rail" data-open={navOpen} data-collapsed={collapsed} aria-label="Main">
         <div className="rail-head">
           <span className="brand-mark">
             <Image src="/brand/logo.png" alt="" width={40} height={40} priority />
@@ -99,30 +110,33 @@ export function AppShell({
           <button
             type="button"
             className="rail-collapse"
-            aria-label="Close navigation"
-            onClick={() => setNavOpen(false)}
+            aria-label="Collapse navigation"
+            onClick={() => {
+              setNavOpen(false);
+              setCollapsed(true);
+            }}
           >
             <PanelIcon />
           </button>
         </div>
 
-        <button type="button" className="toolkit">
+        <button type="button" className="toolkit" title="AI Teacher's Toolkit">
           <SparkleIcon size={17} />
-          AI Teacher&rsquo;s Toolkit
+          <span className="nav-label">AI Teacher&rsquo;s Toolkit</span>
         </button>
 
         <ul className="rail-menu">
           {NAV.map((entry) => (
             <li key={entry.label}>
               {entry.available ? (
-                <a className="nav-row" href="/" aria-current="page">
+                <a className="nav-row" href="/" aria-current="page" title={entry.label}>
                   <span className="nav-icon">{entry.icon}</span>
-                  {entry.label}
+                  <span className="nav-label">{entry.label}</span>
                 </a>
               ) : (
-                <span className="nav-row" aria-disabled="true">
+                <span className="nav-row" aria-disabled="true" title={entry.label}>
                   <span className="nav-icon">{entry.icon}</span>
-                  {entry.label}
+                  <span className="nav-label">{entry.label}</span>
                   {entry.badge && <span className="nav-badge">{entry.badge}</span>}
                 </span>
               )}
@@ -131,23 +145,34 @@ export function AppShell({
         </ul>
 
         <div className="rail-foot">
-          <span className="nav-row" aria-disabled="true">
+          <span className="nav-row" aria-disabled="true" title="Settings">
             <span className="nav-icon">
               <SettingsIcon />
             </span>
-            Settings
+            <span className="nav-label">Settings</span>
           </span>
 
           <div className="school">
             <span className="school-crest">
               <Image src="/brand/school-crest.png" alt="" width={59} height={60} />
             </span>
-            <span>
+            <span className="school-text">
               <span className="school-name">Delhi Public School</span>
               <br />
               <span className="school-place">Bokaro Steel City</span>
             </span>
           </div>
+
+          {collapsed && (
+            <button
+              type="button"
+              className="rail-expand"
+              aria-label="Expand navigation"
+              onClick={() => setCollapsed(false)}
+            >
+              <ChevronsRightIcon />
+            </button>
+          )}
         </div>
       </nav>
 

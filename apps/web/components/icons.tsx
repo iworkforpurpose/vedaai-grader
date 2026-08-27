@@ -235,3 +235,65 @@ export function GearGlyph({ size = 12 }: IconProps): React.JSX.Element {
     </svg>
   );
 }
+
+export function ChevronLeftIcon({ size = 20 }: IconProps): React.JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M14 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size = 20 }: IconProps): React.JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M10 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function ChevronsRightIcon({ size = 20 }: IconProps): React.JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M6 6l6 6-6 6M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function MinusIcon({ size = 18 }: IconProps): React.JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+export function PlusIcon({ size = 18 }: IconProps): React.JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+/**
+ * One four-pointed sparkle, filled.
+ *
+ * The loading frame composes four of these at 96, 72, 29 and a 12px dot, all in
+ * the accent. Drawn as a single reusable shape rather than four hand-tuned paths.
+ */
+export function SparkleShape({ size = 96 }: IconProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor" aria-hidden>
+      <path d="M50 0c3.4 22.4 10.9 34 27.6 38.1C89.4 41 95.6 44.6 100 50c-22.4 3.4-34 10.9-38.1 27.6C59 89.4 55.4 95.6 50 100c-3.4-22.4-10.9-34-27.6-38.1C10.6 59 4.4 55.4 0 50c22.4-3.4 34-10.9 38.1-27.6C41 10.6 44.6 4.4 50 0z" />
+    </svg>
+  );
+}
+
+export function DotShape({ size = 12 }: IconProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+      <circle cx="6" cy="6" r="6" />
+    </svg>
+  );
+}
