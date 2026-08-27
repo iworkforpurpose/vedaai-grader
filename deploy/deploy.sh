@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# Build, push, and roll out the grader on ECS Fargate.
+#
+# Written to be read before it is run. Every step is idempotent, so re-running
+# after a failure resumes rather than duplicating, and each resource is created
+# only if it is missing.
+#
+#   deploy/deploy.sh bootstrap    # once: ECR, S3, IAM, cluster, ALB, service
+#   deploy/deploy.sh release      # every time after: build, push, restart
+#
+# Requires the AWS CLI, Docker, and credentials with permission to create these
+# resources. Reads AWS_REGION and S3_PAGE_BUCKET from .env if present.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+[ -f .env ] && set -a && . ./.env && set +a || true
+
+REGION="${AWS_REGION:-ap-south-1}"
+APP="${APP_NAME:-vedaai-grader}"
+BUCKET="${S3_PAGE_BUCKET:-}"
+CPU="${TASK_CPU:-512}"
+MEMORY="${TASK_MEMORY:-1024}"
+
+ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
+
+say() { printf '\n== %s\n' "$*"; }
+
+# ── build and push ───────────────────────────────────────────────────────────
+release_image() {
+  say "building ${APP}"
+  # linux/amd64 explicitly: Fargate runs x86 unless the task says otherwise, and
+  # an image built on an Apple laptop is arm64 by default. The failure is an
+  # "exec format error" in the task logs, long after the push looked fine.
+  docker build --platform linux/amd64 -t "${APP}:latest" .
+
+  say "pushing to ${REPO}"
+  aws ecr get-login-password --region "${REGION}" \
+    | docker login --username AWS --password-stdin "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+  docker tag "${APP}:latest" "${REPO}:latest"
+  docker push "${REPO}:latest"
+}
+
+# ── bootstrap ────────────────────────────────────────────────────────────────
+bootstrap() {
+  say "ECR repository"
+  aws ecr describe-repositories --repository-names "${APP}" --region "${REGION}" >/dev/null 2>&1 \
+    || aws ecr create-repository --repository-name "${APP}" --region "${REGION}" \
+         --image-scanning-configuration scanOnPush=true >/dev/null
+
+  if [ -z "${BUCKET}" ]; then
+    BUCKET="${APP}-pages-${ACCOUNT}"
+    echo "S3_PAGE_BUCKET was empty; using ${BUCKET}"
+  fi
+
+  say "S3 bucket ${BUCKET}"
+  if ! aws s3api head-bucket --bucket "${BUCKET}" 2>/dev/null; then
+    aws s3api create-bucket --bucket "${BUCKET}" --region "${REGION}" \
+      --create-bucket-configuration "LocationConstraint=${REGION}" >/dev/null
+  fi
+  # These are student answer scripts. Never public, and expired on a timer,
+  # because they are fully regenerable from the upload.
+  aws s3api put-public-access-block --bucket "${BUCKET}" \
+    --public-access-block-configuration \
+      BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  aws s3api put-bucket-encryption --bucket "${BUCKET}" \
+    --server-side-encryption-configuration \
+      '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+  aws s3api put-bucket-lifecycle-configuration --bucket "${BUCKET}" \
+    --lifecycle-configuration "file://deploy/bucket-lifecycle.json"
+
+  say "IAM roles"
+  local trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+
+  # Execution role: pulls the image and writes logs. Nothing to do with the app.
+  aws iam get-role --role-name "${APP}-execution" >/dev/null 2>&1 || {
+    aws iam create-role --role-name "${APP}-execution" \
+      --assume-role-policy-document "${trust}" >/dev/null
+    aws iam attach-role-policy --role-name "${APP}-execution" \
+      --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  }
+
+  # Task role: what the application itself may do. Textract and one S3 prefix,
+  # and nothing else — this is the credential the container actually runs with,
+  # which is why no key pair is ever shipped in the image.
+  aws iam get-role --role-name "${APP}-task" >/dev/null 2>&1 || \
+    aws iam create-role --role-name "${APP}-task" \
+      --assume-role-policy-document "${trust}" >/dev/null
+
+  sed "s/REPLACE_BUCKET/${BUCKET}/g" deploy/task-role-policy.json > /tmp/${APP}-policy.json
+  aws iam put-role-policy --role-name "${APP}-task" \
+    --policy-name "${APP}-app" --policy-document "file:///tmp/${APP}-policy.json"
+
+  say "log group"
+  aws logs create-log-group --log-group-name "/ecs/${APP}" --region "${REGION}" 2>/dev/null || true
+  aws logs put-retention-policy --log-group-name "/ecs/${APP}" \
+    --retention-in-days 14 --region "${REGION}" >/dev/null
+
+  say "cluster"
+  aws ecs describe-clusters --clusters "${APP}" --region "${REGION}" \
+    --query 'clusters[0].status' --output text 2>/dev/null | grep -q ACTIVE \
+    || aws ecs create-cluster --cluster-name "${APP}" --region "${REGION}" >/dev/null
+
+  echo
+  echo "Bootstrapped. Networking is the one part left, and it is left on purpose:"
+  echo "a VPC, subnets, a security group and a load balancer depend on what you"
+  echo "already have, and guessing would either duplicate them or wire the service"
+  echo "into the wrong one. See deploy/README.md for the four commands, or create"
+  echo "the service in the console and point it at the task definition below."
+  echo
+  echo "  bucket        ${BUCKET}"
+  echo "  image         ${REPO}:latest"
+  echo "  task role     arn:aws:iam::${ACCOUNT}:role/${APP}-task"
+  echo "  exec role     arn:aws:iam::${ACCOUNT}:role/${APP}-execution"
+}
+
+# ── task definition ──────────────────────────────────────────────────────────
+register_task() {
+  [ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
+  say "registering task definition"
+
+  local secrets=""
+  if [ -n "${ANTHROPIC_SECRET_ARN:-}" ]; then
+    # From Secrets Manager rather than the environment, so the key is not visible
+    # in the task definition or to anyone who can describe the task.
+    secrets=$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")
+  fi
+
+  cat > /tmp/${APP}-task.json <<JSON
+{
+  "family": "${APP}",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "${CPU}",
+  "memory": "${MEMORY}",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::${ACCOUNT}:role/${APP}-execution",
+  "taskRoleArn": "arn:aws:iam::${ACCOUNT}:role/${APP}-task",
+  "containerDefinitions": [
+    {
+      "name": "grader",
+      "image": "${REPO}:latest",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
+      "environment": [
+        { "name": "AWS_REGION", "value": "${REGION}" },
+        { "name": "OCR_ENGINE", "value": "textract" },
+        { "name": "S3_PAGE_BUCKET", "value": "${BUCKET}" },
+        { "name": "S3_PAGE_PREFIX", "value": "pages/" },
+        { "name": "WEB_ORIGINS", "value": "${WEB_ORIGINS:-}" },
+        { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-claude-sonnet-5}" }
+      ],
+      "secrets": [${secrets}],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/${APP}",
+          "awslogs-region": "${REGION}",
+          "awslogs-stream-prefix": "task"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \\"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status==200 else 1)\\""],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    }
+  ]
+}
+JSON
+
+  aws ecs register-task-definition --cli-input-json "file:///tmp/${APP}-task.json" \
+    --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
+}
+
+release() {
+  release_image
+  local arn
+  arn="$(register_task)"
+  echo "registered ${arn}"
+
+  if aws ecs describe-services --cluster "${APP}" --services "${APP}" --region "${REGION}" \
+       --query 'services[0].status' --output text 2>/dev/null | grep -q ACTIVE; then
+    say "rolling out"
+    aws ecs update-service --cluster "${APP}" --service "${APP}" \
+      --task-definition "${arn}" --force-new-deployment --region "${REGION}" \
+      --query 'service.deployments[0].id' --output text
+    echo "watch it with: aws ecs wait services-stable --cluster ${APP} --services ${APP} --region ${REGION}"
+  else
+    echo
+    echo "No service named ${APP} yet. Create it once against ${arn} —"
+    echo "see deploy/README.md — and later releases will roll out automatically."
+  fi
+}
+
+case "${1:-}" in
+  bootstrap) bootstrap ;;
+  release)   release ;;
+  image)     release_image ;;
+  task)      register_task ;;
+  *) echo "usage: $0 {bootstrap|release|image|task}" >&2; exit 2 ;;
+esac

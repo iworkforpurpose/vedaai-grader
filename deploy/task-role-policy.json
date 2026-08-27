@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadHandwriting",
+      "Effect": "Allow",
+      "Action": "textract:DetectDocumentText",
+      "Resource": "*"
+    },
+    {
+      "Sid": "StoreRenderedPages",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::REPLACE_BUCKET/pages/*"
+    },
+    {
+      "Sid": "ListOnlyThePagePrefix",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::REPLACE_BUCKET",
+      "Condition": { "StringLike": { "s3:prefix": "pages/*" } }
+    }
+  ]
+}

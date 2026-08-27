@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-rendered-pages",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "pages/" },
+      "Expiration": { "Days": 7 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
