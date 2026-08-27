@@ -387,3 +387,60 @@ def test_ink_on_real_handwriting(tmp_path) -> None:
             f"one region covers {biggest:.0%} of the page — illumination flattening "
             "probably failed on this scan"
         )
+
+
+class TestOverlapDirection:
+    """Regression tests for which side an overlap fraction is measured against.
+
+    Ink components and OCR lines segment a page differently, so the two questions
+    need opposite directions. Using one for both meant a small ink fragment
+    sitting wholly inside a long transcribed line was reported as untranscribed,
+    inflating the orphan count and making recognition look worse than it was.
+    """
+
+    @staticmethod
+    def line(line_id: str, box: BBox, confidence: float = 0.95) -> Line:
+        return Line(
+            line_id=line_id,
+            kind=DocumentKind.ANSWER_SHEET,
+            page=0,
+            box=box,
+            text="something",
+            confidence=confidence,
+            engine=OcrEngine.PADDLE_OCR_VL,
+        )
+
+    def test_a_fragment_inside_a_long_line_counts_as_transcribed(self) -> None:
+        # The exact geometry that exposed the bug: a narrow ink region wholly
+        # within a wide line. Measured against the line's area it scores ~0.21
+        # and fails; measured against the region's, it is plainly covered.
+        page = blank_page()
+        draw_writing(page, 200, x0=100, x1=700)
+        found = ink.find_regions(page, page=0)
+        substantive = [r for r in found if r.is_substantive]
+        assert substantive
+
+        wide_line = self.line("as:0001", BBox(x0=0.08, y0=0.16, x1=0.80, y1=0.18))
+        reconciled = regions.reconcile(found, [wide_line])
+
+        covered = [r for r in reconciled if r.is_substantive and r.covered_by_ocr]
+        assert covered, "a region inside the line should be marked transcribed"
+
+    def test_a_tiny_struck_fragment_does_not_disqualify_a_whole_line(self) -> None:
+        # The other direction. Exclusion is line-centric, so a speck of
+        # struck-through ink must not remove an entire legible answer from
+        # grading — that would silently zero a question the student answered.
+        page = blank_page()
+        draw_writing(page, 200, x0=100, x1=700)
+        found = ink.find_regions(page, page=0)
+
+        tiny_struck = [
+            r.model_copy(update={"kind": InkRegionKind.STRUCK_THROUGH})
+            for r in found
+            if r.is_substantive
+        ][:1]
+        # A long line that the small region barely overlaps.
+        long_line = self.line("as:0001", BBox(x0=0.02, y0=0.10, x1=0.98, y1=0.90))
+
+        excluded = regions.lines_excluded_from_grading(tiny_struck, [long_line])
+        assert excluded == set(), "a small struck region should not exclude a whole line"

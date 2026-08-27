@@ -25,7 +25,13 @@ from vedaai_contracts import (
 from . import ink as ink_module
 from . import regions as regions_module
 from . import render
-from .ocr import EngineUnavailable, PageInput, select_engine, trusts_own_order
+from .ocr import (
+    EngineUnavailable,
+    PageInput,
+    TranscriptionEngine,
+    select_engine,
+    trusts_own_order,
+)
 from .storage import PageStore
 from .store import SubmissionStore
 
@@ -37,6 +43,7 @@ def ingest_document(
     source: SourceFile,
     page_store: PageStore,
     submission_store: SubmissionStore,
+    engine_override: TranscriptionEngine | None = None,
 ) -> tuple[list[Page], LineIndex | None, list[str], list[InkRegion]]:
     """Render and transcribe one document, and extract its ink.
 
@@ -49,15 +56,22 @@ def ingest_document(
     a small worker killed. Ink extraction happens inside that same loop, on the
     bitmap already decoded for transcription, rather than in a second pass that
     would have to decode every page again.
+
+    ``engine_override`` exists for evaluation and has no production caller. The
+    eval harness uses it to read synthetic answer sheets from their text layer,
+    which normal selection refuses to do — correctly, since a real scanned sheet's
+    text layer is spurious. For a *generated* sheet it is exact, and that is the
+    point: mapping metrics should measure mapping, not recognition. Without it a
+    mapping regression and an OCR regression are indistinguishable in the report.
     """
     warnings: list[str] = []
     pages: list[Page] = []
     per_page_lines: list[list] = []
     ink_regions: list[InkRegion] = []
 
-    engine = None
+    engine = engine_override
     try:
-        engine = select_engine(source)
+        engine = engine or select_engine(source)
     except EngineUnavailable as exc:
         # Not fatal. Rendering still produces the page images the reviewer needs,
         # and the missing transcription is reported rather than crashing the run.
@@ -162,8 +176,12 @@ def ingest(
     answer_sheet: tuple[bytes, SourceFile] | None,
     page_store: PageStore,
     submission_store: SubmissionStore,
+    answer_engine_override: TranscriptionEngine | None = None,
 ) -> Submission:
-    """Run ingest for both documents and store the result."""
+    """Run ingest for both documents and store the result.
+
+    ``answer_engine_override`` is for evaluation only — see ``ingest_document``.
+    """
     submission = submission_store.require(submission_id)
     submission.status = SubmissionStatus.PROCESSING
     submission_store.put(submission)
@@ -195,6 +213,7 @@ def ingest(
                 source=source,
                 page_store=page_store,
                 submission_store=submission_store,
+                engine_override=answer_engine_override,
             )
             all_pages.extend(pages)
             submission.answer_sheet_lines = index
@@ -240,15 +259,21 @@ def ingest(
 def _extract_ink(png: bytes, page_index: int) -> list[InkRegion]:
     """Decode one page and find its ink regions.
 
+    Decoded with OpenCV rather than Pillow. Pillow is only present in the
+    optional local-OCR extra, and ink extraction is a core geometry source — the
+    first version imported it unconditionally and silently produced no ink
+    wherever that extra was absent, which reads as a page with nothing on it.
+
     Imports are local because OpenCV and numpy are heavy, and a run that never
     touches an answer sheet should not pay to load them.
     """
-    import io
-
+    import cv2
     import numpy as np
-    from PIL import Image
 
-    image = np.asarray(Image.open(io.BytesIO(png)).convert("RGB"))
+    buffer = np.frombuffer(png, dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("could not decode page image")
     return ink_module.find_regions(image, page_index)
 
 

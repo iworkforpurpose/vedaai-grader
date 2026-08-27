@@ -133,13 +133,19 @@ class PaddleOcrEngine:
                 "before transcribing."
             )
 
-        import io
-
+        import cv2
         import numpy as np
-        from PIL import Image
 
-        image = Image.open(io.BytesIO(page.png)).convert("RGB")
-        array = np.asarray(image)
+        # Decoded with OpenCV rather than Pillow, so the base install needs one
+        # fewer dependency and ink extraction and transcription decode pages the
+        # same way. Converted to RGB because that is what was measured; the
+        # channel order is unlikely to matter for text, but changing it silently
+        # alongside other work would make any regression hard to attribute.
+        buffer = np.frombuffer(page.png, dtype=np.uint8)
+        bgr = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise EngineUnavailable("could not decode the page image")
+        array = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         # Normalize against the actual decoded image rather than the declared
         # page size. If they ever disagree, trusting the declared size would

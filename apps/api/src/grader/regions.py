@@ -38,16 +38,52 @@ _SCRIBBLE_DENSITY_MULTIPLE = 1.8
 #: that the teacher can still see highlighted.
 _UNREADABLE_CONFIDENCE = 0.70
 
-#: Minimum share of a line's box that must fall inside an ink region before the
-#: two are considered to describe the same marking.
+#: Minimum overlap before an ink region and a transcribed line are taken to
+#: describe the same marking.
+#:
+#: Which side the fraction is measured against is not interchangeable, and
+#: getting it wrong was a real bug. Ink components and OCR lines segment the page
+#: differently: ink may split one line into fragments, or merge two into one. So
+#: the two questions need opposite directions.
+#:
+#: *Was this region transcribed?* Region-centric — is most of the **region**
+#: inside some line? Measuring against the line's area instead meant a small
+#: fragment sitting wholly inside a long line scored 0.21 and was reported as
+#: untranscribed, inflating the orphan count and making recognition look worse
+#: than it is.
+#:
+#: *Should this line be excluded from grading?* Line-centric — is most of the
+#: **line** inside a struck-through or bleed-through region? A tiny struck
+#: fragment should not disqualify an entire legible line.
 _OVERLAP_FRACTION = 0.30
 
 
-def _overlap_fraction(region: InkRegion, line: Line) -> float:
-    """Share of the line's box lying inside the region's box."""
+def _share_of_line_inside_region(region: InkRegion, line: Line) -> float:
+    """How much of the line falls within the region."""
     if line.box.area <= 0:
         return 0.0
     return region.box.intersection_area(line.box) / line.box.area
+
+
+def _share_of_region_inside_line(region: InkRegion, line: Line) -> float:
+    """How much of the region falls within the line."""
+    if region.box.area <= 0:
+        return 0.0
+    return region.box.intersection_area(line.box) / region.box.area
+
+
+def _describes_same_marking(region: InkRegion, line: Line) -> bool:
+    """Whether a region and a line are the same ink, seen two ways.
+
+    Either direction suffices. Ink and OCR segment a page differently — ink may
+    fragment one line or merge two — so requiring containment in a particular
+    direction would reject genuine matches on whichever side happened to be
+    larger.
+    """
+    return (
+        _share_of_region_inside_line(region, line) >= _OVERLAP_FRACTION
+        or _share_of_line_inside_region(region, line) >= _OVERLAP_FRACTION
+    )
 
 
 def reconcile(regions: list[InkRegion], lines: list[Line]) -> list[InkRegion]:
@@ -68,9 +104,7 @@ def reconcile(regions: list[InkRegion], lines: list[Line]) -> list[InkRegion]:
     out: list[InkRegion] = []
     for region in regions:
         page_lines = by_page.get(region.page, [])
-        overlapping = [
-            line for line in page_lines if _overlap_fraction(region, line) >= _OVERLAP_FRACTION
-        ]
+        overlapping = [line for line in page_lines if _describes_same_marking(region, line)]
 
         covered = bool(overlapping)
         kind = region.kind
@@ -102,9 +136,7 @@ def _density_baseline(regions: list[InkRegion], by_page: dict[int, list[Line]]) 
         all_writing.append(region.ink_ratio)
 
         page_lines = by_page.get(region.page, [])
-        overlapping = [
-            line for line in page_lines if _overlap_fraction(region, line) >= _OVERLAP_FRACTION
-        ]
+        overlapping = [line for line in page_lines if _describes_same_marking(region, line)]
         if overlapping and min(line.confidence for line in overlapping) >= _UNREADABLE_CONFIDENCE:
             confident.append(region.ink_ratio)
 
@@ -150,7 +182,10 @@ def lines_excluded_from_grading(regions: list[InkRegion], lines: list[Line]) -> 
     ]
     for line in lines:
         for region in suspect:
-            if region.page == line.page and _overlap_fraction(region, line) >= _OVERLAP_FRACTION:
+            if (
+                region.page == line.page
+                and _share_of_line_inside_region(region, line) >= _OVERLAP_FRACTION
+            ):
                 excluded.add(line.line_id)
                 break
     return excluded

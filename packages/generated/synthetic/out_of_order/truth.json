@@ -1,0 +1,219 @@
+{
+  "sample_id": "out_of_order",
+  "origin": "synthetic",
+  "question_paper": "question_paper.pdf",
+  "answer_sheet": "answer_sheet.pdf",
+  "questions": [
+    {
+      "qid": "A/1",
+      "label_raw": "1.",
+      "print_order": 0,
+      "marks": 2
+    },
+    {
+      "qid": "A/2/i",
+      "label_raw": "2 (i)",
+      "print_order": 1,
+      "marks": 2
+    },
+    {
+      "qid": "A/2/i/a",
+      "label_raw": "2 (i) (a)",
+      "print_order": 2,
+      "marks": 3
+    },
+    {
+      "qid": "A/2/ii",
+      "label_raw": "2 (ii)",
+      "print_order": 3,
+      "marks": 1
+    },
+    {
+      "qid": "A/3",
+      "label_raw": "3.",
+      "print_order": 4,
+      "marks": 2
+    },
+    {
+      "qid": "B/4",
+      "label_raw": "4.",
+      "print_order": 5,
+      "marks": 5
+    },
+    {
+      "qid": "B/5/a",
+      "label_raw": "5 (a)",
+      "print_order": 6,
+      "marks": 3
+    },
+    {
+      "qid": "B/5/b",
+      "label_raw": "5 (b)",
+      "print_order": 7,
+      "marks": 2
+    },
+    {
+      "qid": "B/6",
+      "label_raw": "6.",
+      "print_order": 8,
+      "marks": 5
+    }
+  ],
+  "answers": [
+    {
+      "qid": "A/1",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09283012990992896,
+            "y0": 0.3288066686281897,
+            "x1": 0.6361114426164542,
+            "y1": 0.36785755299249306
+          }
+        }
+      ],
+      "steps": [],
+      "text": "Refraction is the bending of light when it passes from one medium to another."
+    },
+    {
+      "qid": "A/2/i",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.0910083741743999,
+            "y0": 0.11422089878185764,
+            "x1": 0.6883412013754592,
+            "y1": 0.15285374716737385
+          }
+        }
+      ],
+      "steps": [],
+      "text": "The angle of incidence equals the angle of reflection, and both rays lie in one plane."
+    },
+    {
+      "qid": "A/2/i/a",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09239728746703968,
+            "y0": 0.4843869767961365,
+            "x1": 0.7312174728323864,
+            "y1": 0.5250805924514342
+          }
+        }
+      ],
+      "steps": [],
+      "text": "Diagram drawn with incident ray, normal and reflected ray labelled."
+    },
+    {
+      "qid": "A/2/ii",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09286821627144062,
+            "y0": 0.44624893362934864,
+            "x1": 0.24060675285241823,
+            "y1": 0.4629528631810222
+          }
+        }
+      ],
+      "steps": [],
+      "text": "The watt."
+    },
+    {
+      "qid": "A/3",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09270325570643144,
+            "y0": 0.2688135133764168,
+            "x1": 0.6902808777542518,
+            "y1": 0.3075627882949682
+          }
+        }
+      ],
+      "steps": [],
+      "text": "Water is denser than air, so sound waves travel through it more quickly."
+    },
+    {
+      "qid": "B/4",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09584632557690924,
+            "y0": 0.5463408305019442,
+            "x1": 0.5936881034270554,
+            "y1": 0.6056012409722679
+          }
+        }
+      ],
+      "steps": [],
+      "text": "A current-carrying coil placed in a magnetic field experiences a force, which turns the coil and converts electrical energy into rotation."
+    },
+    {
+      "qid": "B/5/a",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09136613790483271,
+            "y0": 0.17266408849470408,
+            "x1": 0.633596657353351,
+            "y1": 0.2127087061979155
+          }
+        }
+      ],
+      "steps": [],
+      "text": "Current through a conductor is proportional to the potential difference across it."
+    },
+    {
+      "qid": "B/5/b",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.0971274550753412,
+            "y0": 0.23350776405377208,
+            "x1": 0.3995974984356524,
+            "y1": 0.2500888613706376
+          }
+        }
+      ],
+      "steps": [],
+      "text": "R = V / I = 10 / 2 = 5 ohm."
+    },
+    {
+      "qid": "B/6",
+      "status": "answered",
+      "complete_answer_box": [
+        {
+          "page": 0,
+          "box": {
+            "x0": 0.09214089890970975,
+            "y0": 0.3866205640535215,
+            "x1": 0.5762769644903534,
+            "y1": 0.42557925384411904
+          }
+        }
+      ],
+      "steps": [],
+      "text": "Weigh a sealed flask, pump the air out, and weigh it again. The mass decreases."
+    }
+  ],
+  "lines": [],
+  "notes": "Answers shuffled."
+}

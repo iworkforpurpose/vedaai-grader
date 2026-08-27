@@ -1,0 +1,10 @@
+{
+  "name": "@vedaai/evals",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "eval": "uv run --extra dev python -m vedaai_evals.runner",
+    "test": "uv run --extra dev python -m pytest -q",
+    "typecheck": "uv run --extra dev python -m ruff check src tests"
+  }
+}

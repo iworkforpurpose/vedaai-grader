@@ -146,7 +146,10 @@ class InkMasks:
 
 def build_masks(image: np.ndarray) -> InkMasks:
     """Flatten illumination and produce the strict and loose ink masks."""
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if image.ndim == 3 else image
+    # BGR, because OpenCV's imdecode is what supplies these pages. The channel
+    # order matters here only through the luminance weights, but assuming the
+    # wrong one would shift every threshold slightly and invisibly.
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
 
     # Estimate the page background by closing over a kernel far larger than any
     # stroke, then divide it out. This is what makes a single threshold valid

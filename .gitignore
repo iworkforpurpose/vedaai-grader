@@ -34,7 +34,7 @@ packages/contracts/schema/
 coverage/
 htmlcov/
 
-# eval artifacts — large, regenerable
+# eval artifacts — large, regenerable from the case matrix
 packages/evals/generated/
 packages/evals/reports/
 
