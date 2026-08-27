@@ -59,15 +59,33 @@ from vedaai_contracts import (
 from .answers.similarity import Similarity, default_similarity
 from .questions.expects import expects_a_drawing
 
-#: Weights on the match score. Starting values, tuned against the golden set.
+#: Weights on the match score.
 #:
 #: The label term dominates by design: a student naming the question is stating
 #: the answer directly, and no amount of semantic drift should outvote a
-#: confirmed label. Order is weak on purpose so that a strong label can beat it,
-#: since answering out of order is permitted.
+#: confirmed label.
+#:
+#: Order is meant to be weak, so that a real signal beats it — answering out of
+#: order is permitted, and position is only a habit. At 0.3 it was not weak: the
+#: prior spans [0, 1], so it contributed up to +0.30 while observed semantic
+#: deviations on real prose span about ±0.22, which makes position the *dominant*
+#: term rather than the tiebreaker the comment claimed.
+#:
+#: A real script showed the cost. A student's answer beginning "Invasive is a
+#: significant word in the article because…" scored +0.218 against the question
+#: that asks exactly that, and +0.063 against a later question about invasive
+#: species — semantics preferred the right question by more than three times, and
+#: the order prior handed the answer to the wrong one anyway.
+#:
+#: Halved. The golden set does not move at all across a sixfold sweep of this
+#: weight, which is itself the finding: there, an answer's vocabulary always agrees
+#: with its position, so the prior never has to decide anything and cannot be
+#: measured. It earns its place only where semantics is silent — on scripts whose
+#: recognition is too damaged to carry meaning — and for that a tiebreaker is
+#: enough.
 W_LABEL = 3.0
 W_SEMANTIC = 1.0
-W_ORDER = 0.3
+W_ORDER = 0.15
 W_LENGTH = 0.2
 
 #: Cost of leaving a question unanswered, and of emitting an orphan block.

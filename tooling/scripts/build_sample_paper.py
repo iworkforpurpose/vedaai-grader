@@ -176,23 +176,100 @@ def build_sheet(images: list[Path], out: Path) -> None:
     doc.close()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
-    args = parser.parse_args()
+ASAP_ROOT = Path("data/asap/Handwritten ASAP SAS")
 
-    paper_path = args.repo / "samples" / "programming_lab_set1.pdf"
+
+def build_theory() -> Paper:
+    """A reading-comprehension paper the ASAP short-answer scripts answer.
+
+    The handwritten answers in ``data/asap`` are real student responses to two
+    items on one article about invasive species — prompt 3 asks how pandas and
+    koalas are alike and how both differ from pythons, prompt 4 asks why the word
+    "invasive" is significant. Both were read before writing this, and the
+    questions below are those two items restated.
+
+    The rest of the structure is chosen so the hard cases arise from the answers
+    rather than being staged. Sub-parts 3(i) and 3(ii) are genuinely satisfied
+    *inside* the prompt-3 answer, which names bamboo and eucalyptus and calls the
+    python a generalist — so one run of writing legitimately answers three
+    questions, which is the merged sub-part case with nothing invented. Question 4
+    asks for a diagram nobody drew, and Section B offers a choice nobody took.
+    """
+    paper = Paper()
+
+    paper.line("CENTRAL BOARD OF SECONDARY EDUCATION", size=13, bold=True, centre=True)
+    paper.line("Class VIII — English Language and Literature", size=10.5, centre=True)
+    paper.gap(6)
+    paper.line("READING COMPREHENSION — UNIT TEST", size=12.5, bold=True, centre=True)
+    paper.line("Passage: \u201cInvasive Species\u201d (Achenbach)", size=10.5, centre=True)
+    paper.gap(8)
+    paper.line("Time allowed: 45 minutes                                Maximum Marks: 20", size=10)
+    paper.line("Answer with reference to the passage. Marks are shown in brackets.", size=10)
+    paper.gap(14)
+
+    paper.line("SECTION A", size=12, bold=True)
+    paper.line("(Attempt all questions from this Section)", size=10)
+    paper.gap(8)
+
+    paper.wrapped(
+        "1. Explain how pandas in China are similar to koalas in Australia, and how both "
+        "are different from pythons. Support your answer with information from the "
+        "passage.  [5]"
+    )
+    paper.gap(6)
+    paper.wrapped(
+        "2. The author uses the word \u201cinvasive\u201d throughout the passage. Explain why "
+        "this word is significant.  [4]"
+    )
+    paper.gap(6)
+    paper.wrapped("3. Answer the following about the animals named in the passage:")
+    paper.wrapped("(i) Name the single food source each specialist depends on.  [2]", indent=18)
+    paper.wrapped(
+        "(ii) State whether a python is a specialist or a generalist.  [1]", indent=18
+    )
+    paper.gap(6)
+    paper.wrapped(
+        "4. Draw a labelled diagram contrasting the range of a specialist with that of a "
+        "generalist.  [3]"
+    )
+    paper.gap(16)
+
+    paper.line("SECTION B", size=12, bold=True)
+    paper.line("(Attempt any one question from this Section)", size=10)
+    paper.gap(8)
+
+    paper.wrapped(
+        "5. Suggest two measures a government could take to limit the spread of an "
+        "invasive species.  [5]"
+    )
+    paper.gap(6)
+    paper.wrapped(
+        "6. Describe the tone the author adopts towards the pet trade, quoting one phrase "
+        "in support.  [5]"
+    )
+    return paper
+
+
+def asap_answers(repo: Path) -> dict[str, list[Path]]:
+    """One image per prompt, from the handwritten ASAP short-answer set."""
+    root = repo / ASAP_ROOT
+    if not root.is_dir():
+        return {}
+    return {
+        prompt: sorted((root / prompt).glob("*.png"))
+        for prompt in ("prompt-3", "prompt-4")
+    }
+
+
+def build_code_paper_files(repo: Path) -> None:
+    paper_path = repo / "samples" / "programming_lab_set1.pdf"
     build().save(paper_path)
-    print(f"question paper  {paper_path.relative_to(args.repo)}")
+    print(f"question paper  {paper_path.relative_to(repo)}")
 
-    handwriting = args.repo / "data" / "handwriting"
-    sheets = args.repo / "data" / "samples"
+    handwriting = repo / "data" / "handwriting"
+    sheets = repo / "data" / "samples"
 
     # Deliberately different shapes, so a manual pass covers more than one case.
-    #
-    #   answered_in_order  — Q1 then Q3, the ordinary case
-    #   answered_reversed  — the same two answers written in the opposite order
-    #   one_question_only  — Q3 attempted and Q1 not, so Q1 is genuinely blank
     plans = {
         "student_a_in_order": ["Closest_value2.JPEG", "Consecutive11.JPEG"],
         "student_b_reversed": ["Consecutive13.JPEG", "Closest10.JPEG"],
@@ -201,14 +278,67 @@ def main() -> int:
 
     for name, files in plans.items():
         paths = [handwriting / f for f in files]
-        missing = [p.name for p in paths if not p.is_file()]
+        missing = [path.name for path in paths if not path.is_file()]
         if missing:
             print(f"  skipped {name}: missing {', '.join(missing)}")
             continue
         out = sheets / f"{name}.pdf"
         build_sheet(paths, out)
-        print(f"answer sheet    {out.relative_to(args.repo)}  ({len(paths)} page(s))")
+        print(f"answer sheet    {out.relative_to(repo)}  ({len(paths)} page(s))")
 
+
+def build_theory_paper_files(repo: Path) -> None:
+    paper_path = repo / "samples" / "reading_comprehension_unit_test.pdf"
+    build_theory().save(paper_path)
+    print(f"question paper  {paper_path.relative_to(repo)}")
+
+    by_prompt = asap_answers(repo)
+    if not by_prompt or not all(by_prompt.values()):
+        print(
+            "  skipped the theory answer sheets: the handwritten ASAP set is not in "
+            f"{ASAP_ROOT}. Download it from "
+            "https://zenodo.org/records/8088866 (no login; non-commercial research use)."
+        )
+        return
+
+    sheets = repo / "data" / "samples"
+    three, four = by_prompt["prompt-3"], by_prompt["prompt-4"]
+
+    # Each ASAP image holds one student's answer to one prompt, so a two-page
+    # script is one answer to each. Three scripts, three shapes: both questions
+    # answered in the paper's order, both answered in the opposite order, and only
+    # the second question attempted.
+    plans = {
+        "theory_a_in_order": [three[3], four[0]],
+        "theory_b_reversed": [four[1], three[7]],
+        "theory_c_partial": [four[2]],
+    }
+    for name, paths in plans.items():
+        out = sheets / f"{name}.pdf"
+        build_sheet(paths, out)
+        print(
+            f"answer sheet    {out.relative_to(repo)}  ({len(paths)} page(s))"
+            f"  [{', '.join(p.stem for p in paths)}]"
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument(
+        "--set",
+        choices=("code", "theory", "all"),
+        default="all",
+        help="Which sample set to build.",
+    )
+    args = parser.parse_args()
+
+    if args.set in ("code", "all"):
+        print("=== programming lab (handwritten code answers)")
+        build_code_paper_files(args.repo)
+    if args.set in ("theory", "all"):
+        print("=== reading comprehension (handwritten prose answers)")
+        build_theory_paper_files(args.repo)
     return 0
 
 
