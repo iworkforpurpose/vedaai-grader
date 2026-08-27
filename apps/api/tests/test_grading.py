@@ -9,6 +9,7 @@ crossed out, and awarding marks on evidence that does not exist.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from vedaai_contracts import (
@@ -563,7 +564,7 @@ class TestClaudeGrader:
 
     def test_it_refuses_to_construct_without_a_key(self, monkeypatch) -> None:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        with pytest.raises(engine.ClaudeUnavailable):
+        with pytest.raises(engine.GraderUnavailable):
             engine.Claude()
 
 
@@ -588,3 +589,238 @@ class TestCitationProblemReporting:
             cited_line_ids=[],
         )
         assert citations.check([point], index_of(), allowed_line_ids=set()) == []
+
+
+class TestOpenAIGrader:
+    """The second provider.
+
+    Tested through a stubbed client, because what is worth testing is not that the
+    SDK works but the three things layered on top of it: that a schema is demanded
+    rather than prose, that a drawing never reaches the model, and that the
+    validation refusing a bad citation applies here exactly as it does to the other
+    provider.
+    """
+
+    @staticmethod
+    def _client(payload: dict | str):
+        content = payload if isinstance(payload, str) else json.dumps(payload)
+
+        class Message:
+            def __init__(self) -> None:
+                self.content = content
+
+        class Choice:
+            def __init__(self) -> None:
+                self.message = Message()
+
+        class Completion:
+            def __init__(self) -> None:
+                self.choices = [Choice()]
+
+        class Completions:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            async def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return Completion()
+
+        class Chat:
+            def __init__(self) -> None:
+                self.completions = Completions()
+
+        class Client:
+            def __init__(self) -> None:
+                self.chat = Chat()
+
+        return Client()
+
+    def test_a_properly_cited_grade_is_accepted(self) -> None:
+        answer = line(1, "The angle of incidence equals the angle of reflection", y0=0.10)
+        index = index_of(answer)
+        question = q("A/2", "2.", "State the laws of reflection.", 0, marks=2)
+
+        client = self._client(
+            {
+                "points": [
+                    {
+                        "index": 1,
+                        "marks_awarded": 2,
+                        "satisfied": True,
+                        "cited_line_ids": ["as:0001"],
+                        "comment": "States the law.",
+                    }
+                ],
+                "feedback": "Correct.",
+                "uncertain": False,
+            }
+        )
+        grader = engine.OpenAIGrader(client=client, model="small-test")
+        graded = asyncio.run(
+            grader.grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index,
+                line_ids=[answer.line_id],
+            )
+        )
+        assert graded.marks_awarded == 2.0
+        assert graded.rubric_points[0].cited_line_ids == ["as:0001"]
+
+    def test_an_invented_citation_is_refused_here_too(self) -> None:
+        # The safety net is what makes a small model reasonable to try: a
+        # hallucinated line ID produces no mark rather than a wrong one.
+        answer = line(1, "Some answer", y0=0.10)
+        question = q("A/2", "2.", "State the laws of reflection.", 0, marks=2)
+
+        client = self._client(
+            {
+                "points": [
+                    {
+                        "index": 1,
+                        "marks_awarded": 2,
+                        "satisfied": True,
+                        "cited_line_ids": ["as:9999"],
+                        "comment": None,
+                    }
+                ],
+                "feedback": None,
+                "uncertain": False,
+            }
+        )
+        graded = asyncio.run(
+            engine.OpenAIGrader(client=client, model="small-test").grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index_of(answer),
+                line_ids=[answer.line_id],
+            )
+        )
+        assert graded.marks_awarded == 0.0
+        assert "refused" in (graded.rubric_points[0].comment or "").lower()
+
+    def test_it_demands_a_schema_rather_than_prose(self) -> None:
+        # Strict structured output removes the failure a weak model is most likely
+        # to produce, which is malformed output rather than poor judgement.
+        answer = line(1, "Some answer", y0=0.10)
+        question = q("A/2", "2.", "State the laws of reflection.", 0, marks=2)
+        client = self._client({"points": [], "feedback": None, "uncertain": False})
+
+        asyncio.run(
+            engine.OpenAIGrader(client=client, model="small-test").grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index_of(answer),
+                line_ids=[answer.line_id],
+            )
+        )
+        sent = client.chat.completions.calls[0]
+        assert sent["response_format"]["json_schema"]["strict"] is True
+        assert sent["response_format"]["json_schema"]["schema"]["additionalProperties"] is False
+
+    def test_the_strict_schema_obeys_the_rules_of_strict_mode(self) -> None:
+        # Strict mode rejects a schema with optional keys or numeric bounds, and
+        # the rejection is an API error at marking time rather than at import.
+        schema = engine.STRICT_JUDGEMENT_SCHEMA
+
+        def check(node: dict, path: str = "root") -> None:
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False, path
+                assert set(node.get("required", [])) == set(node["properties"]), path
+                for key, child in node["properties"].items():
+                    check(child, f"{path}.{key}")
+            if node.get("type") == "array":
+                check(node["items"], f"{path}[]")
+            assert "minimum" not in node, f"{path} uses an unsupported keyword"
+            assert "maximum" not in node, f"{path} uses an unsupported keyword"
+
+        check(schema)
+
+    def test_a_drawing_never_reaches_the_model(self) -> None:
+        question = q("B/6", "6.", "Draw a diagram of the digestive system.", 0, marks=5)
+
+        class Exploding:
+            class chat:  # noqa: N801 - mirrors the SDK's shape
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**_kwargs):
+                        raise AssertionError("the model must not be called for a drawing")
+
+        graded = asyncio.run(
+            engine.OpenAIGrader(client=Exploding(), model="small-test").grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index_of(),
+                line_ids=[],
+            )
+        )
+        assert "drawing" in (graded.rubric_points[0].comment or "").lower()
+
+    def test_it_refuses_to_construct_without_a_key(self, monkeypatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(engine.GraderUnavailable):
+            engine.OpenAIGrader()
+
+
+class TestProvenance:
+    """Which engine judged a grade is recorded on the grade."""
+
+    def test_the_model_is_named(self) -> None:
+        answer = line(1, "Some answer", y0=0.10)
+        question = q("A/2", "2.", "State the laws of reflection.", 0, marks=2)
+        graded = engine.assemble(
+            question=question,
+            rubric=rubric.derive(question),
+            index=index_of(answer),
+            line_ids=[answer.line_id],
+            judgement={"points": [], "uncertain": False},
+            graded_by="openai:gpt-4o-mini",
+        )
+        assert graded.graded_by == "openai:gpt-4o-mini"
+
+    def test_the_rubric_only_grader_names_itself(self) -> None:
+        question = q("A/1", "1.", "Define refraction of light.", 0)
+        graded = asyncio.run(
+            engine.RubricOnly().grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index_of(),
+                line_ids=[],
+            )
+        )
+        assert graded.graded_by == "rubric_only"
+
+    def test_each_provider_names_itself_and_its_model(self) -> None:
+        # A small model and a large one are not interchangeable evidence, so the
+        # model matters as much as the vendor.
+        assert engine.Claude(client=object(), model="claude-x").provenance == "anthropic:claude-x"
+        assert engine.OpenAIGrader(client=object(), model="mini-x").provenance == "openai:mini-x"
+
+
+class TestProviderSelection:
+    def test_an_explicit_choice_of_none_is_honoured(self, monkeypatch) -> None:
+        monkeypatch.setattr(engine, "GRADER_PROVIDER", "none")
+        assert isinstance(engine.select_grader(), engine.RubricOnly)
+
+    def test_openai_is_used_when_only_its_key_is_present(self, monkeypatch) -> None:
+        monkeypatch.setattr(engine, "GRADER_PROVIDER", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        assert isinstance(engine.select_grader(), engine.OpenAIGrader)
+
+    def test_an_explicit_provider_wins_over_the_other_key(self, monkeypatch) -> None:
+        monkeypatch.setattr(engine, "GRADER_PROVIDER", "openai")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+        monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+        assert isinstance(engine.select_grader(), engine.OpenAIGrader)
+
+    def test_with_no_key_at_all_it_reports_both_reasons(self, monkeypatch) -> None:
+        # The message a teacher sees has to name what to do, and with two
+        # providers there are two things they could do.
+        monkeypatch.setattr(engine, "GRADER_PROVIDER", "")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        with pytest.raises(engine.GraderUnavailable) as caught:
+            engine.select_grader()
+        assert "ANTHROPIC_API_KEY" in str(caught.value)
+        assert "OPENAI_API_KEY" in str(caught.value)

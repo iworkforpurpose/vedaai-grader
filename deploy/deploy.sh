@@ -119,11 +119,15 @@ register_task() {
   [ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
   say "registering task definition"
 
+  # Referenced by ARN rather than by value, so the key is visible neither in the
+  # task definition nor to anyone who can describe the task. Either provider, or
+  # neither — marking degrades to a rubric without one.
   local secrets=""
-  if [ -n "${ANTHROPIC_SECRET_ARN:-}" ]; then
-    # From Secrets Manager rather than the environment, so the key is not visible
-    # in the task definition or to anyone who can describe the task.
-    secrets=$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")
+  local entries=()
+  [ -n "${OPENAI_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"OPENAI_API_KEY","valueFrom":"%s"}' "${OPENAI_SECRET_ARN}")")
+  [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")")
+  if [ ${#entries[@]} -gt 0 ]; then
+    secrets=$(IFS=,; echo "${entries[*]}")
   fi
 
   cat > /tmp/${APP}-task.json <<JSON
@@ -148,7 +152,8 @@ register_task() {
         { "name": "S3_PAGE_BUCKET", "value": "${BUCKET}" },
         { "name": "S3_PAGE_PREFIX", "value": "pages/" },
         { "name": "WEB_ORIGINS", "value": "${WEB_ORIGINS:-}" },
-        { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-claude-sonnet-5}" }
+        { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
+        { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" }
       ],
       "secrets": [${secrets}],
       "logConfiguration": {

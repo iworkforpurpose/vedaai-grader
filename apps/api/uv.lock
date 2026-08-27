@@ -1138,6 +1138,23 @@ wheels = [
 ]
 
 [[package]]
+name = "openai"
+version = "3.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/d3/50ffb9a7bce5097ffeb476905c0661f4468a3ca7bb489b152542f14fdd8e/openai-3.5.0.tar.gz", hash = "sha256:743738bb458a586d0d02d173bf398d29d7d7a80d182d167aa74f1c08814ecc78", size = 1355486, upload-time = "2026-08-27T01:00:49.113Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/9f/03bba05ade050f306c9b9e8b99e3681791dbb30148cd76a793c277fed494/openai-3.5.0-py3-none-any.whl", hash = "sha256:7c0873d379655f65fa515c5692c8620e73bf6a6dce3e63f37589bc99bda3fdfd", size = 1697968, upload-time = "2026-08-27T01:00:47.131Z" },
+]
+
+[[package]]
 name = "opencv-contrib-python"
 version = "4.10.0.84"
 source = { registry = "https://pypi.org/simple" }
@@ -2312,6 +2329,7 @@ dev = [
 ]
 grading = [
     { name = "anthropic" },
+    { name = "openai" },
 ]
 ocr-local = [
     { name = "paddleocr" },
@@ -2325,6 +2343,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=2.1" },
+    { name = "openai", marker = "extra == 'grading'", specifier = ">=1.50" },
     { name = "opencv-python-headless", specifier = ">=4.10,<5" },
     { name = "paddleocr", marker = "extra == 'ocr-local'", specifier = ">=3.7" },
     { name = "paddlepaddle", marker = "extra == 'ocr-local'", specifier = ">=3.3" },

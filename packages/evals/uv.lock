@@ -2127,6 +2127,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=2.1" },
+    { name = "openai", marker = "extra == 'grading'", specifier = ">=1.50" },
     { name = "opencv-python-headless", specifier = ">=4.10,<5" },
     { name = "paddleocr", marker = "extra == 'ocr-local'", specifier = ">=3.7" },
     { name = "paddlepaddle", marker = "extra == 'ocr-local'", specifier = ">=3.3" },

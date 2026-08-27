@@ -28,7 +28,9 @@ ocr-local = ["paddlepaddle>=3.3", "paddleocr>=3.7"]
 # Automatic marking. Optional because the rest of the product — extraction,
 # mapping and highlighting — is complete without it, and marking degrades to a
 # rubric the teacher fills in rather than failing.
-grading = ["anthropic>=0.40"]
+# Marking. Either provider works; the grader is chosen from whichever key is
+# present, and both are optional because marking degrades to a rubric without one.
+grading = ["anthropic>=0.40", "openai>=1.50"]
 # Hosted handwriting recognition and page storage. Small next to the local model,
 # and the only option that needs no weights shipped in the image.
 aws = ["boto3>=1.35"]

@@ -23,14 +23,24 @@ grade — it is an unfounded one.
 """
 
 from .citations import CitationProblem, check, gradable_lines
-from .engine import Claude, ClaudeUnavailable, Grader, RubricOnly, assemble
+from .engine import (
+    Claude,
+    Grader,
+    GraderUnavailable,
+    OpenAIGrader,
+    RubricOnly,
+    assemble,
+    select_grader,
+)
 from .rubric import Criterion, EvidenceKind, Rubric, derive
 from .run import grade_submission
 
 __all__ = [
     "CitationProblem",
     "Claude",
-    "ClaudeUnavailable",
+    "GraderUnavailable",
+    "OpenAIGrader",
+    "select_grader",
     "Criterion",
     "EvidenceKind",
     "Grader",

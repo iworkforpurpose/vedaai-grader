@@ -216,8 +216,8 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
         )
 
     try:
-        grader: grading.Grader = grading.Claude()
-    except grading.ClaudeUnavailable as unavailable:
+        grader: grading.Grader = grading.select_grader()
+    except grading.GraderUnavailable as unavailable:
         grader = grading.RubricOnly()
         warning = f"Answers were not marked automatically: {unavailable}"
         if warning not in submission.warnings:

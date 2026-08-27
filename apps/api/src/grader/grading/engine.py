@@ -1,8 +1,8 @@
 """Grading engines behind one interface.
 
-Two, for the same reason the transcription layer has two: the interesting
-decisions should be measurable against each other rather than assumed. Here the
-split also does something else — it keeps grading useful when no model is
+Three, for the same reason the transcription layer has more than one: the
+interesting decisions should be measurable against each other rather than assumed.
+Here the split also does something else — it keeps grading useful when no model is
 configured at all.
 
 ``RubricOnly`` proposes no marks. It derives the rubric from the paper, locates
@@ -11,9 +11,26 @@ genuine product: a marking aid that structures the work without inventing a
 score. It is also the honest fallback, because a grade nobody can justify is
 worth less than no grade.
 
-``Claude`` judges the answer and cites the lines behind each mark. Its output is
-validated before it is shown; a fabricated or out-of-scope citation invalidates
-the grade rather than being quietly dropped.
+``Claude`` and ``OpenAIGrader`` judge the answer and cite the lines behind each
+mark. Their output is validated before it is shown; a fabricated or out-of-scope
+citation invalidates the grade rather than being quietly dropped.
+
+Which one runs is configuration, and the answer is recorded on every grade. That
+matters more with two providers than it did with one: a mark is only checkable if
+you know what made it, and a small model and a large one are not interchangeable
+evidence.
+
+**On using a small model here.** It is a reasonable thing to try, and the reason is
+structural rather than optimistic. This task is not a reasoning showcase — it is
+"read a rubric, read numbered lines, decide, and cite the line IDs" — and the two
+ways a weak model fails it are both already contained. Malformed output is
+prevented by asking for a schema rather than for prose. Invented citations are
+caught by validation, which refuses the grade instead of displaying it, so the
+failure mode is *no mark* rather than a wrong one.
+
+What is not contained is judgement: deciding whether a student's own words satisfy
+a criterion, in text a recognizer has already damaged. Nothing in the architecture
+can rescue that, and it is the part worth measuring before trusting the numbers.
 """
 
 from __future__ import annotations
@@ -27,13 +44,25 @@ from vedaai_contracts import LineIndex, Question, QuestionGrade, RubricPoint
 from . import citations, prompt
 from .rubric import Rubric
 
-#: The model used when none is named. Overridable so a deployment can pin one.
-DEFAULT_MODEL = os.getenv("GRADER_MODEL", "claude-sonnet-5")
+#: Default model per provider, used when GRADER_MODEL names none.
+#:
+#: OpenAI's default is the small one deliberately. Marking is a short, highly
+#: constrained call — a rubric, a few lines, a schema to fill — and the expensive
+#: part of a large model is capability this task mostly does not use. If it proves
+#: not good enough, that shows up in the grades rather than in the bill.
+DEFAULT_MODELS = {
+    "anthropic": "claude-sonnet-5",
+    "openai": "gpt-4o-mini",
+}
+
+#: Explicit provider choice. With nothing set, whichever key is present is used —
+#: convenient, and safe only because the provider is recorded on every grade, so
+#: "which engine judged this" is never a guess.
+GRADER_PROVIDER = os.getenv("GRADER_PROVIDER", "").strip().lower()
 
 #: Cap on the answer text handed to the model, in characters. A whole script is
 #: small; this exists to bound a pathological OCR result rather than to save cost.
 MAX_ANSWER_CHARS = 20_000
-
 
 class Grader(Protocol):
     """Grades one answer, having been given the rubric and the lines to use."""
@@ -93,6 +122,7 @@ class RubricOnly:
             ),
             feedback=None,
             confidence=0.0,
+            graded_by="rubric_only",
             graded_on_partial_text=False,
         )
 
@@ -138,8 +168,12 @@ JUDGEMENT_SCHEMA: dict = {
 }
 
 
-class ClaudeUnavailable(RuntimeError):
-    """Raised when the Claude grader is asked for but cannot be built."""
+class GraderUnavailable(RuntimeError):
+    """Raised when a model-backed grader is asked for but cannot be built.
+
+    Not fatal anywhere it is raised: the caller falls back to the rubric-only
+    grader, which is a working product rather than an error path.
+    """
 
 
 class Claude:
@@ -148,20 +182,20 @@ class Claude:
     name = "claude"
 
     def __init__(self, *, model: str | None = None, client=None) -> None:
-        self.model = model or DEFAULT_MODEL
+        self.model = model or os.getenv("GRADER_MODEL") or DEFAULT_MODELS["anthropic"]
         if client is not None:
             self._client = client
             return
 
         if not os.getenv("ANTHROPIC_API_KEY"):
-            raise ClaudeUnavailable(
+            raise GraderUnavailable(
                 "ANTHROPIC_API_KEY is not set, so answers cannot be marked automatically. "
                 "The rubric and the located answer are still produced."
             )
         try:
             from anthropic import AsyncAnthropic
         except ModuleNotFoundError as exc:  # pragma: no cover - depends on extras
-            raise ClaudeUnavailable(
+            raise GraderUnavailable(
                 "the anthropic package is not installed; install the 'grading' extra"
             ) from exc
         self._client = AsyncAnthropic()
@@ -177,17 +211,7 @@ class Claude:
         # A drawing is not gradable from a transcription it does not have. Asking
         # anyway produces a confident zero for a correct answer.
         if not rubric.gradable_from_text:
-            return QuestionGrade(
-                qid=question.qid,
-                marks_available=rubric.marks_available,
-                marks_awarded=0.0,
-                rubric_points=_unjudged_points(
-                    rubric,
-                    comment="Answered by a drawing. Needs a person to look at the page.",
-                ),
-                confidence=0.0,
-                graded_on_partial_text=True,
-            )
+            return _needs_a_person(rubric, question, graded_by=self.provenance)
 
         message = await self._client.messages.create(
             model=self.model,
@@ -218,7 +242,176 @@ class Claude:
             index=index,
             line_ids=line_ids,
             judgement=judgement,
+            graded_by=self.provenance,
         )
+
+    @property
+    def provenance(self) -> str:
+        return f"anthropic:{self.model}"
+
+
+#: The same judgement, expressed for OpenAI's structured-output mode.
+#:
+#: A separate schema rather than a shared one, because strict mode is genuinely
+#: stricter and the differences are not cosmetic: every property must appear in
+#: ``required``, ``additionalProperties`` must be false, and numeric bounds like
+#: ``minimum`` are not supported. An optional field is therefore expressed as a
+#: nullable type instead of an absent key.
+#:
+#: Worth the duplication. Strict mode guarantees the response parses and matches,
+#: which removes the failure a small model is most likely to produce.
+STRICT_JUDGEMENT_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["points", "feedback", "uncertain"],
+    "properties": {
+        "points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["index", "marks_awarded", "satisfied", "cited_line_ids", "comment"],
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "1-based position of the rubric point being judged.",
+                    },
+                    "marks_awarded": {"type": "number"},
+                    "satisfied": {"type": "boolean"},
+                    "cited_line_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Line IDs copied from inside the answer fence. "
+                        "Required whenever marks are awarded.",
+                    },
+                    "comment": {"type": ["string", "null"]},
+                },
+            },
+        },
+        "feedback": {
+            "type": ["string", "null"],
+            "description": "One or two sentences addressed to the student.",
+        },
+        "uncertain": {
+            "type": "boolean",
+            "description": "True when the transcription was too damaged to judge fairly.",
+        },
+    },
+}
+
+
+class OpenAIGrader:
+    """Judges an answer with an OpenAI model, citing the lines behind each mark."""
+
+    name = "openai"
+
+    def __init__(self, *, model: str | None = None, client=None) -> None:
+        self.model = model or os.getenv("GRADER_MODEL") or DEFAULT_MODELS["openai"]
+        if client is not None:
+            self._client = client
+            return
+
+        if not os.getenv("OPENAI_API_KEY"):
+            raise GraderUnavailable(
+                "OPENAI_API_KEY is not set, so answers cannot be marked automatically. "
+                "The rubric and the located answer are still produced."
+            )
+        try:
+            from openai import AsyncOpenAI
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on extras
+            raise GraderUnavailable(
+                "the openai package is not installed; install the 'grading' extra"
+            ) from exc
+        self._client = AsyncOpenAI()
+
+    async def grade(
+        self,
+        *,
+        question: Question,
+        rubric: Rubric,
+        index: LineIndex,
+        line_ids: list[str],
+    ) -> QuestionGrade:
+        # A drawing is not gradable from a transcription it does not have. Asking
+        # anyway produces a confident zero for a correct answer.
+        if not rubric.gradable_from_text:
+            return _needs_a_person(rubric, question, graded_by=self.provenance)
+
+        completion = await self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": prompt.SYSTEM},
+                {
+                    "role": "user",
+                    "content": prompt.build(
+                        question=question, rubric=rubric, index=index, line_ids=line_ids
+                    ),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "judgement",
+                    "strict": True,
+                    "schema": STRICT_JUDGEMENT_SCHEMA,
+                },
+            },
+        )
+
+        content = completion.choices[0].message.content
+        if not content:
+            raise ValueError("the model returned no judgement")
+
+        return assemble(
+            question=question,
+            rubric=rubric,
+            index=index,
+            line_ids=line_ids,
+            judgement=json.loads(content),
+            graded_by=self.provenance,
+        )
+
+    @property
+    def provenance(self) -> str:
+        return f"openai:{self.model}"
+
+
+def select_grader() -> Grader:
+    """The grader this deployment should use.
+
+    An explicit ``GRADER_PROVIDER`` wins. Otherwise whichever key is present is
+    used, and if neither is, the rubric-only grader — which is a working product,
+    not an error path: it structures the marking without inventing a score.
+    """
+    providers: list[tuple[str, type]] = [("anthropic", Claude), ("openai", OpenAIGrader)]
+    if GRADER_PROVIDER == "openai":
+        providers.reverse()
+    elif GRADER_PROVIDER == "none":
+        return RubricOnly()
+
+    reasons: list[str] = []
+    for _name, engine in providers:
+        try:
+            return engine()
+        except GraderUnavailable as unavailable:
+            reasons.append(str(unavailable))
+
+    raise GraderUnavailable(" ".join(reasons))
+
+
+def _needs_a_person(rubric: Rubric, question: Question, *, graded_by: str) -> QuestionGrade:
+    """A question whose answer is a drawing, left for someone who can see it."""
+    return QuestionGrade(
+        qid=question.qid,
+        marks_available=rubric.marks_available,
+        marks_awarded=0.0,
+        rubric_points=_unjudged_points(
+            rubric, comment="Answered by a drawing. Needs a person to look at the page."
+        ),
+        confidence=0.0,
+        graded_by=graded_by,
+        graded_on_partial_text=True,
+    )
 
 
 def _tool_input(message) -> dict:
@@ -240,6 +433,7 @@ def assemble(
     index: LineIndex,
     line_ids: list[str],
     judgement: dict,
+    graded_by: str | None = None,
 ) -> QuestionGrade:
     """Turn a model judgement into a grade, or refuse it.
 
@@ -295,6 +489,7 @@ def assemble(
             ),
             feedback=None,
             confidence=0.0,
+            graded_by=graded_by,
             graded_on_partial_text=True,
         )
 
@@ -305,6 +500,7 @@ def assemble(
         marks_awarded=sum(p.marks_awarded for p in points),
         rubric_points=points,
         feedback=judgement.get("feedback"),
+        graded_by=graded_by,
         # Confidence is not asked of the model — a self-reported number is not
         # evidence. It is derived from whether the model flagged the transcription
         # as unreadable and from how much of the rubric it managed to cite.

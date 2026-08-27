@@ -46,6 +46,17 @@ class QuestionGrade(BaseModel):
     rubric_points: list[RubricPoint] = Field(default_factory=list)
     feedback: str | None = None
 
+    graded_by: str | None = Field(
+        default=None,
+        description=(
+            "Which engine produced this grade, e.g. 'openai:gpt-4o-mini' or "
+            "'rubric_only'. Recorded for the same reason transcription records its "
+            "engine per line: a mark is only checkable if you know what made it, and "
+            "with more than one provider configurable the answer is not obvious from "
+            "anything else in the payload."
+        ),
+    )
+
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     graded_on_partial_text: bool = Field(
         default=False,

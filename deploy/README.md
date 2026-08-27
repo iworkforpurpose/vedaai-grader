@@ -120,11 +120,14 @@ deployment.
 
 ## The marking credential
 
-Create it once in the Secrets Manager console, under a name such as
-`vedaai-grader/anthropic`, holding the Anthropic key. Copy the resulting ARN, then:
+Either provider works. Create the secret once in the Secrets Manager console under
+a name such as `vedaai-grader/openai`, holding the key. Copy the resulting ARN,
+then:
 
 ```bash
-export ANTHROPIC_SECRET_ARN=<the ARN from the console>
+export OPENAI_SECRET_ARN=<the ARN from the console>
+# or, for the other provider:
+# export ANTHROPIC_SECRET_ARN=<the ARN from the console>
 deploy/deploy.sh release
 ```
 
@@ -132,6 +135,23 @@ The task definition references it by ARN and ECS injects it at container start, 
 the value lives in neither the image nor this repository. The execution role needs
 read access to that one ARN — attach it in the console alongside the managed
 execution policy.
+
+With no `GRADER_PROVIDER` set, whichever key is present is used. That is only safe
+because the engine and model that produced a grade are recorded on the grade
+itself, so which one judged an answer is never a guess.
+
+The OpenAI default is the small model, `gpt-4o-mini`, and the reasoning is
+structural rather than optimistic. Marking is a short, tightly constrained call —
+read a rubric, read numbered lines, fill in a schema — and the two ways a weak
+model fails that are both already contained: malformed output is prevented by
+demanding a schema in strict mode rather than prose, and invented line citations
+are caught by validation, which refuses the grade rather than displaying it, so
+the failure mode is *no mark* rather than a wrong one.
+
+What is not contained is judgement — whether a student's own wording satisfies a
+criterion, in text a recognizer has already damaged. Nothing in the architecture
+rescues that. Set `GRADER_MODEL` to something larger if the marks disappoint, and
+measure rather than assume.
 
 Without any of this the app still works. Marking returns the rubric derived from
 the paper and the located answer, with every point left for the teacher, rather
