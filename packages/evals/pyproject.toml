@@ -12,6 +12,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "ruff>=0.8"]
+# Needed to score real pages: they are the only samples where transcription and
+# ink come from independent mechanisms, which is what makes the agreement metric
+# mean anything. Synthetic samples do not need it.
+ocr-local = ["paddlepaddle>=3.3", "paddleocr>=3.7"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../contracts", editable = true }

@@ -388,3 +388,57 @@ def multi_box_iou(truth: list[PageBox], predicted: list[PageBox]) -> float:
         union += t_area + p_area - inter
 
     return intersection / union if union > 0 else 0.0
+
+
+# -- cross-detector agreement (no labelling required) ---------------------
+
+
+@dataclass
+class AgreementReport:
+    """Agreement between two independent detectors on where content is.
+
+    A proxy for OCR line recall that needs no human labelling, which matters
+    because ground-truth boxes on real pages are expensive and may never exist.
+
+    The two detectors are genuinely independent in mechanism: one recognizes
+    text, the other thresholds ink. So ink found where no line was reported is
+    real evidence the recognizer missed something, not a restatement of what the
+    recognizer already believes. Bootstrapping truth from the recognizer's own
+    output would score near-perfect recall by construction and measure nothing.
+
+    What this is NOT is ground truth, and the difference has teeth:
+
+    * Ink has its own blind spots — very faint pen, writing that merges with a
+      printed rule — so content both detectors miss is invisible here. The proxy
+      therefore *overstates* recall.
+    * Ink and OCR segment differently. One line of writing can be several ink
+      regions, or vice versa, so the ratio is not a like-for-like count.
+
+    Treat it as a regression signal — a change that increases uncovered ink has
+    probably made detection worse — rather than as an absolute figure to quote.
+    """
+
+    ink_regions: int = 0
+    covered_by_text: int = 0
+    uncovered: int = 0
+
+    @property
+    def coverage(self) -> float:
+        """Share of substantive ink that the recognizer accounted for."""
+        return self.covered_by_text / self.ink_regions if self.ink_regions else 1.0
+
+
+def detector_agreement(
+    ink_covered_flags: list[bool],
+) -> AgreementReport:
+    """Summarize how much substantive ink the recognizer accounted for.
+
+    Takes the already-reconciled flags rather than recomputing overlap, so the
+    metric and the pipeline cannot disagree about what "covered" means — which is
+    exactly the kind of drift that produces a metric measuring its own
+    reimplementation.
+    """
+    report = AgreementReport(ink_regions=len(ink_covered_flags))
+    report.covered_by_text = sum(1 for covered in ink_covered_flags if covered)
+    report.uncovered = report.ink_regions - report.covered_by_text
+    return report

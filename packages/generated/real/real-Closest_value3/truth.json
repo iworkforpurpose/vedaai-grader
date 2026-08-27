@@ -1,0 +1,65 @@
+{
+  "sample_id": "real-Closest_value3",
+  "origin": "real",
+  "question_paper": "question_paper.pdf",
+  "answer_sheet": "answer_sheet.jpg",
+  "questions": [
+    {
+      "qid": "A/1",
+      "label_raw": "1.",
+      "print_order": 0,
+      "marks": 2
+    },
+    {
+      "qid": "A/2/i",
+      "label_raw": "2 (i)",
+      "print_order": 1,
+      "marks": 2
+    },
+    {
+      "qid": "A/2/i/a",
+      "label_raw": "2 (i) (a)",
+      "print_order": 2,
+      "marks": 3
+    },
+    {
+      "qid": "A/2/ii",
+      "label_raw": "2 (ii)",
+      "print_order": 3,
+      "marks": 1
+    },
+    {
+      "qid": "A/3",
+      "label_raw": "3.",
+      "print_order": 4,
+      "marks": 2
+    },
+    {
+      "qid": "B/4",
+      "label_raw": "4.",
+      "print_order": 5,
+      "marks": 5
+    },
+    {
+      "qid": "B/5/a",
+      "label_raw": "5 (a)",
+      "print_order": 6,
+      "marks": 3
+    },
+    {
+      "qid": "B/5/b",
+      "label_raw": "5 (b)",
+      "print_order": 7,
+      "marks": 2
+    },
+    {
+      "qid": "B/6",
+      "label_raw": "6.",
+      "print_order": 8,
+      "marks": 5
+    }
+  ],
+  "answers": [],
+  "lines": [],
+  "notes": "Real handwriting from Closest_value3.jpg. Unlabelled: detection metrics only. Paired with the synthetic paper, which the answers do not correspond to."
+}

@@ -549,3 +549,47 @@ def generate_case(config: CaseConfig, root: Path) -> GoldenSample:
 
 def generate_all(root: Path, cases: list[CaseConfig] | None = None) -> list[GoldenSample]:
     return [generate_case(config, root) for config in (cases or CASES)]
+
+
+def adopt_real_pages(images: list[Path], root: Path) -> list[GoldenSample]:
+    """Register real handwritten pages as unlabelled golden samples.
+
+    Their answer-level truth is unknown, so mapping and highlight metrics cannot
+    score them. What they can carry is detection: how much ink the recognizer
+    accounted for, which needs no labelling and is the only signal available on
+    real handwriting until ground-truth boxes exist.
+
+    Each is paired with the synthetic question paper. That pairing is not
+    meaningful — the answers do not correspond to those questions — and nothing
+    that depends on the correspondence is scored. It exists because the pipeline
+    ingests a pair, and the answer sheet is the half being measured.
+    """
+    paper_bytes, questions = build_question_paper()
+    samples: list[GoldenSample] = []
+
+    for image in images:
+        sample_id = f"real-{image.stem}"
+        directory = root / sample_id
+        directory.mkdir(parents=True, exist_ok=True)
+
+        (directory / "question_paper.pdf").write_bytes(paper_bytes)
+        answer_name = f"answer_sheet{image.suffix.lower()}"
+        (directory / answer_name).write_bytes(image.read_bytes())
+
+        sample = GoldenSample(
+            sample_id=sample_id,
+            origin="real",
+            question_paper="question_paper.pdf",
+            answer_sheet=answer_name,
+            questions=questions,
+            answers=[],
+            lines=[],
+            notes=(
+                f"Real handwriting from {image.name}. Unlabelled: detection metrics only. "
+                "Paired with the synthetic paper, which the answers do not correspond to."
+            ),
+        )
+        save_sample(directory, sample)
+        samples.append(sample)
+
+    return samples

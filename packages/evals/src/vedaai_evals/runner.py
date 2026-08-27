@@ -29,7 +29,7 @@ from grader.store import SubmissionStore
 from vedaai_contracts import AnswerStatus, DocumentKind, PageBox, Submission
 
 from . import metrics
-from .generate import generate_all
+from .generate import adopt_real_pages, generate_all
 from .schema import GoldenSample, load_set
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[3] / "generated"
@@ -54,10 +54,12 @@ class SampleScore:
     """Scored metrics for one sample, where the pipeline supports them."""
 
     sample_id: str
+    origin: str = "synthetic"
     extraction: metrics.ExtractionReport | None = None
     mapping: metrics.MappingReport | None = None
     ious: list[float] | None = None
     recall: metrics.RecallReport | None = None
+    agreement: metrics.AgreementReport | None = None
 
 
 def run_sample(
@@ -119,7 +121,15 @@ def run_sample(
 
 def score_sample(sample: GoldenSample, submission: Submission) -> SampleScore:
     """Score whatever the pipeline currently produces for this sample."""
-    score = SampleScore(sample_id=sample.sample_id)
+    score = SampleScore(sample_id=sample.sample_id, origin=sample.origin)
+
+    # Needs no labelling, so this is the one detection signal available on real
+    # pages today. Only meaningful where transcription and ink were produced by
+    # genuinely different mechanisms — on synthetic samples the text layer reads
+    # everything perfectly, so agreement is trivially total and says nothing.
+    substantive = [r for r in submission.ink_regions if r.is_substantive]
+    if substantive and sample.origin != "synthetic":
+        score.agreement = metrics.detector_agreement([r.covered_by_ocr for r in substantive])
 
     # Phase 4 onward.
     if submission.questions is not None and submission.questions.questions:
@@ -284,6 +294,19 @@ def report(
         out("  answer mapping           pending — Phase 6\n")
         out("  highlight IoU            pending — Phase 6\n")
 
+    agreements = [s.agreement for s in scores if s.agreement is not None]
+    if agreements:
+        ink = sum(a.ink_regions for a in agreements)
+        uncovered = sum(a.uncovered for a in agreements)
+        out(
+            f"  ink accounted for by text {_fmt_pct((ink - uncovered) / ink if ink else None)}"
+            f"   ({uncovered} of {ink} regions untranscribed)\n"
+        )
+        out(
+            "    proxy for recall, not ground truth — overstates it, since ink\n"
+            "    misses very faint writing too. Use as a regression signal.\n"
+        )
+
     recalls = [s.recall for s in scores if s.recall is not None]
     if recalls:
         matched = sum(r.matched for r in recalls)
@@ -298,7 +321,11 @@ def report(
             for text in lost[:5]:
                 out(f"      {text[:66]!r}\n")
     else:
-        out("  OCR line recall          pending — needs labelled real pages\n")
+        out(
+            "  OCR line recall          unavailable — needs ground-truth boxes on real\n"
+            "                           pages. The ink-agreement figure above is the\n"
+            "                           closest substitute that requires no labelling.\n"
+        )
 
     out("\n")
     return 1 if problems else 0
@@ -316,7 +343,16 @@ def main(argv: list[str] | None = None) -> int:
         "--real",
         type=Path,
         default=None,
-        help="Directory of real labelled samples to include.",
+        help="Directory of prepared real samples to include.",
+    )
+    parser.add_argument(
+        "--adopt-real",
+        type=Path,
+        default=None,
+        help=(
+            "Directory of raw handwritten images to register as unlabelled samples. "
+            "Scores detection only, since answer-level truth is unknown."
+        ),
     )
     parser.add_argument("--only", default=None, help="Run one case by id.")
     args = parser.parse_args(argv)
@@ -329,6 +365,16 @@ def main(argv: list[str] | None = None) -> int:
     samples: list[tuple[GoldenSample, Path]] = [
         (s, synthetic_root / s.sample_id) for s in load_set(synthetic_root)
     ]
+
+    if args.adopt_real is not None:
+        real_root = args.root / "real"
+        images = sorted(
+            p
+            for p in args.adopt_real.iterdir()
+            if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+        )
+        adopted = adopt_real_pages(images, real_root)
+        samples.extend((s, real_root / s.sample_id) for s in adopted)
     if args.real is not None:
         samples.extend((s, args.real / s.sample_id) for s in load_set(args.real))
 
