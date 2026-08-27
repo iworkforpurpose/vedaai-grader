@@ -158,19 +158,9 @@ export function ReviewSurface({
   const orphans = submission.mapping?.orphans ?? [];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--sp-4)",
-          flexWrap: "wrap",
-          padding: "var(--sp-3) var(--sp-5)",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface)",
-        }}
-      >
-        <strong style={{ fontSize: "var(--fs-lg)" }}>
+    <div className="review">
+      <header className="review-summary">
+        <strong className="review-summary-title">
           {submission.answer_sheet_file?.filename ?? "Answer sheet"}
         </strong>
 
@@ -258,15 +248,7 @@ export function ReviewSurface({
       </header>
 
       {(submission.warnings.length > 0 || notice) && (
-        <div
-          style={{
-            padding: "var(--sp-2) var(--sp-5)",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--surface)",
-            fontSize: "var(--fs-sm)",
-            color: "var(--text-2)",
-          }}
-        >
+        <div className="review-notices">
           {notice && <p style={{ margin: 0, color: "var(--status-review)" }}>{notice}</p>}
           {submission.warnings.map((warning) => (
             <p key={warning} style={{ margin: 0 }}>
@@ -276,17 +258,8 @@ export function ReviewSurface({
         </div>
       )}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <aside
-          style={{
-            width: "38%",
-            minWidth: 320,
-            maxWidth: 560,
-            borderRight: "1px solid var(--border)",
-            overflowY: "auto",
-            background: "var(--surface)",
-          }}
-        >
+      <div className="review-panes">
+        <aside className="review-pane review-pane-scroll" data-pane="questions">
           {reassignBlock !== null && (
             <div
               style={{
@@ -368,7 +341,7 @@ export function ReviewSurface({
           )}
         </aside>
 
-        <main style={{ flex: 1, minWidth: 0 }}>
+        <main className="review-pane" data-pane="sheet">
           {selected !== null && (
             <div
               style={{

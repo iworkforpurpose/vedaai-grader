@@ -933,3 +933,192 @@ body::before {
     background: var(--accent-tint);
   }
 }
+
+
+/* ══ review screen ═════════════════════════════════════════════════════════
+ *
+ * No Figma frame for this yet, so the styling here is deliberately quiet — the
+ * job is that it *works* at every size, not that it is finished. It gets the same
+ * treatment as the upload screen when the frames arrive.
+ *
+ * The split pane is the hard case, and it has no phone equivalent. Below the rail
+ * breakpoint the two panes stack: questions first, sheet beneath, one scroll.
+ * That is not the ideal phone design — the point of the product is seeing a
+ * question and its highlight together — but it is honest, and it beats what was
+ * there, which gave the answer sheet 73px of width at phone size and made the
+ * highlight impossible to see.
+ */
+
+.review {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--page-pad);
+}
+
+.review-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3) var(--sp-5);
+  flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  font-size: var(--fs-sm);
+}
+
+.review-summary-title {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.review-summary-spacer {
+  margin-left: auto;
+}
+
+.review-notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--surface-veil);
+  font-size: var(--fs-sm);
+  color: var(--body-solid);
+}
+
+/* Stacked by default. The panes become side by side only where there is room for
+   both to be useful. */
+.review-panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-3);
+}
+
+.review-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+
+.review-pane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Stacked, each pane needs a height of its own or both collapse to content. */
+@media (max-width: 1023px) {
+  .review-pane[data-pane="questions"] {
+    max-height: 55dvh;
+  }
+
+  .review-pane[data-pane="sheet"] {
+    min-height: 60dvh;
+  }
+}
+
+@media (min-width: 1024px) {
+  /*
+   * The frame, not a percentage of one.
+   *
+   * `height: 100%` resolved against a body with no height of its own, so the
+   * panes grew with their content — 2480px tall inside a 1080px window — and the
+   * document scrolled instead of each pane scrolling. The effect was that the
+   * questions list and the answer sheet could never be seen at the same scroll
+   * position, which is the entire point of a split view.
+   *
+   * dvh rather than vh: on a phone `vh` is the *largest* viewport height, so a
+   * full-height element sits partly under the browser chrome until it is
+   * dismissed.
+   */
+  .review {
+    height: 100dvh;
+    padding: var(--page-pad);
+  }
+
+  /*
+   * The questions column is fixed rather than fractional. A share of the width
+   * would give it 640px at 1920, which is more than a list of question labels can
+   * use, and would take that room from the answer sheet — where the highlight
+   * lives, and the only place extra pixels are worth anything.
+   */
+  .review-panes {
+    grid-template-columns: minmax(320px, 400px) 1fr;
+  }
+
+  .review-pane[data-pane="questions"],
+  .review-pane[data-pane="sheet"] {
+    max-height: none;
+    min-height: 0;
+  }
+}
+
+.review-selected {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--row-active);
+  font-size: var(--fs-sm);
+}
+
+.review-orphans {
+  padding: var(--sp-4);
+  border-top: 1px solid var(--row-active);
+}
+
+.review-orphans h2 {
+  font-size: var(--fs-base);
+  margin-bottom: var(--sp-2);
+}
+
+.orphan-card {
+  border: 1px solid var(--row-active);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+.link-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.pill-button {
+  padding: 2px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.pill-button:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
