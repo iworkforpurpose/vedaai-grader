@@ -779,3 +779,93 @@ def _highlight(blocks: list[AnswerBlock]) -> Highlight | None:
         ],
         derived_from=derived,
     )
+
+
+def reassign(
+    paper: QuestionPaper,
+    blocks: list[AnswerBlock],
+    mapping: MappingResult,
+    *,
+    block_id: str,
+    to_qid: str,
+) -> MappingResult:
+    """Move one block to a question because a teacher said so.
+
+    A teacher's correction outranks everything the aligner computed, and is
+    recorded as ``teacher_override`` so a later re-run does not quietly undo it.
+
+    The question losing the block does *not* become unanswered. The teacher moved
+    an answer; that says nothing about whether the original question was
+    attempted, and asserting a blank on the strength of a correction elsewhere
+    would be exactly the unfounded absence claim the rest of this module works to
+    avoid.
+    """
+    blocks_by_id = {b.block_id: b for b in blocks}
+    if block_id not in blocks_by_id or all(q.qid != to_qid for q in paper.questions):
+        return mapping
+
+    position = {b.block_id: i for i, b in enumerate(blocks)}
+
+    updated: list[Mapping] = []
+    for entry in mapping.mappings:
+        if entry.qid == to_qid:
+            # Added to what the question already holds, not substituted for it.
+            #
+            # Replacing would make the commonest correction unexpressible. When an
+            # answer is split across two blocks and the aligner gives one to the
+            # neighbouring question, moving that block back must leave the question
+            # holding both — under replace semantics the other block is displaced
+            # to the orphan list, and putting it back displaces the first, so a
+            # question could never hold two blocks after any manual edit.
+            merged = sorted({*entry.block_ids, block_id}, key=lambda bid: position.get(bid, 0))
+            owned = [blocks_by_id[bid] for bid in merged if bid in blocks_by_id]
+            lines = [lid for block in owned for lid in block.line_ids]
+            updated.append(
+                entry.model_copy(
+                    update={
+                        "status": AnswerStatus.OCR_FAILED
+                        if all(block.is_text_free for block in owned)
+                        else AnswerStatus.ANSWERED,
+                        "block_ids": merged,
+                        "start_line_id": lines[0] if lines else None,
+                        "end_line_id": lines[-1] if lines else None,
+                        "highlight": _highlight(owned),
+                        "confidence": 1.0,
+                        "teacher_override": True,
+                        "evidence": MatchEvidence(
+                            total_score=W_LABEL,
+                            signals=[MatchSignal.WRITTEN_LABEL],
+                        ),
+                    }
+                )
+            )
+            continue
+
+        if block_id in entry.block_ids:
+            remaining = [bid for bid in entry.block_ids if bid != block_id]
+            kept = [blocks_by_id[bid] for bid in remaining if bid in blocks_by_id]
+            updated.append(
+                entry.model_copy(
+                    update={
+                        "block_ids": remaining,
+                        "highlight": _highlight(kept) if kept else None,
+                        "status": entry.status if kept else AnswerStatus.UNCERTAIN,
+                    }
+                )
+            )
+            continue
+
+        updated.append(entry)
+
+    used = {bid for entry in updated for bid in entry.block_ids}
+    orphans = [
+        OrphanAnswer(
+            block_id=block.block_id,
+            text_preview=block.text[:160],
+            highlight=_highlight([block]) or Highlight(),
+        )
+        for block in blocks
+        if block.block_id not in used
+    ]
+
+    return mapping.model_copy(update={"mappings": updated, "orphans": orphans})

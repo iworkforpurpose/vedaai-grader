@@ -25,12 +25,26 @@ app = FastAPI(
     ),
 )
 
-# The browser fetches page images and the SSE progress stream directly from this
-# service, so the deployed web origin has to be allowed explicitly.
-_origins = [o for o in os.getenv("WEB_ORIGINS", "http://localhost:3000").split(",") if o]
+# The browser fetches page images, the SSE progress stream and the mapping
+# endpoints directly from this service, so the deployed web origin has to be
+# allowed explicitly.
+_origins = [o for o in os.getenv("WEB_ORIGINS", "").split(",") if o]
+
+#: Any loopback origin, used only when no explicit list is configured.
+#:
+#: A fixed dev default was worse than no default. "localhost" and "127.0.0.1" are
+#: different origins to a browser, and the dev server takes whichever port is
+#: free, so a hardcoded ``localhost:3000`` blocked the real dev setup. The failure
+#: is quiet in the worst way: server-rendered reads are unaffected because they
+#: never leave the server, so only the interactive writes break, and they present
+#: as a button that does nothing.
+_LOOPBACK_ORIGIN = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    # Deployment sets WEB_ORIGINS, which switches the loopback allowance off.
+    allow_origin_regex=None if _origins else _LOOPBACK_ORIGIN,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],

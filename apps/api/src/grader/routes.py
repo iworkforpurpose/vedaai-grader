@@ -14,11 +14,11 @@ import json
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from vedaai_contracts import DocumentKind, InkRegion, LineIndex, Submission
 
-from . import pipeline, render
+from . import align, pipeline, render
 from .render import UnsupportedDocument
 from .storage import PageStore, get_page_store
 from .store import SubmissionStore, get_store
@@ -137,6 +137,49 @@ def get_ink_regions(submission_id: str, store: StoreDep) -> list[InkRegion]:
     if submission is None:
         raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
     return submission.ink_regions
+
+
+@router.patch(
+    "/submissions/{submission_id}/mapping/{qid:path}",
+    response_model=Submission,
+    tags=["submissions"],
+)
+def reassign_answer(
+    submission_id: str,
+    qid: str,
+    store: StoreDep,
+    block_id: Annotated[str, Body(embed=True, description="Block to move.")],
+) -> Submission:
+    """Move a region of writing to a different question.
+
+    Manual correction is expected rather than exceptional. Gradescope, the
+    established tool for this task, does not locate answer regions automatically
+    at all — students mark their own, or a pre-printed template is required — and
+    it ships an explicit tool for instructors to correct regions. This endpoint is
+    that tool.
+    """
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+    if submission.mapping is None or submission.questions is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This submission has no mapping yet, so there is nothing to reassign.",
+        )
+    if all(block.block_id != block_id for block in submission.blocks):
+        raise HTTPException(status_code=404, detail=f"No block {block_id!r}")
+    if all(question.qid != qid for question in submission.questions.questions):
+        raise HTTPException(status_code=404, detail=f"No question {qid!r}")
+
+    submission.mapping = align.reassign(
+        submission.questions,
+        submission.blocks,
+        submission.mapping,
+        block_id=block_id,
+        to_qid=qid,
+    )
+    store.put(submission)
+    return submission
 
 
 @router.get("/pages/{key:path}", tags=["pages"])

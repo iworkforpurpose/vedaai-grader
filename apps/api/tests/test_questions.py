@@ -188,14 +188,76 @@ class TestFurniture:
         )
         assert role is LineRole.FURNITURE
 
-    def test_running_headers_need_three_pages_to_be_detected(self) -> None:
-        # On two pages, text appearing on both is as likely a genuine repeat as
-        # furniture, so repetition alone is not enough evidence.
+    def test_a_two_page_paper_header_is_detected_at_the_page_edge(self) -> None:
+        # Two pages cannot show three-page repetition, and a real paper proved
+        # the cost of waiting for it: "SCIENCE - UNIT TEST (page 2)" was absorbed
+        # into the last question on page 1. Position supplies the evidence
+        # repetition alone cannot at this length.
         two_pages = [
             line(1, "SCIENCE UNIT TEST", y0=0.02, page=0),
             line(2, "SCIENCE UNIT TEST", y0=0.02, page=1),
         ]
+        assert len(furniture.find_repeated_lines(two_pages)) == 2
+
+    def test_a_two_page_repeat_in_the_body_is_not_a_header(self) -> None:
+        # The other half of the same rule. Mid-page text repeated on both pages
+        # of a two-page paper is as likely a genuine repeat as furniture, and
+        # discarding a real question line is the more expensive mistake.
+        two_pages = [
+            line(1, "Draw a labelled diagram.", y0=0.45, page=0),
+            line(2, "Draw a labelled diagram.", y0=0.45, page=1),
+        ]
         assert furniture.find_repeated_lines(two_pages) == set()
+
+    def test_a_single_page_paper_has_no_headers_to_find(self) -> None:
+        one_page = [line(1, "SCIENCE UNIT TEST", y0=0.02, page=0)]
+        assert furniture.find_repeated_lines(one_page) == set()
+
+    def test_a_header_carrying_its_own_page_number_is_furniture(self) -> None:
+        # The header shape repetition can never catch: it differs on every page,
+        # so bucketing by text never groups it. Observed on a real paper, where it
+        # was appended to the text of the last question on the preceding page.
+        role = furniture.classify(
+            line(1, "SCIENCE — UNIT TEST (page 2)", y0=0.03, page=1),
+            repeated=set(),
+            previous_role=LineRole.QUESTION_START,
+        )
+        assert role is LineRole.FURNITURE
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Page 2 of 12",
+            "Page 2   Physics Higher Tier",
+            "SCIENCE UNIT TEST — Page 2",
+            "Physics Higher Tier (page 3 of 16)",
+        ],
+    )
+    def test_recognizes_the_page_marker_shapes_papers_print(self, text) -> None:
+        role = furniture.classify(
+            line(1, text, y0=0.03, page=1), repeated=set(), previous_role=None
+        )
+        assert role is LineRole.FURNITURE, text
+
+    def test_a_mid_sentence_reference_to_another_page_is_not_a_header(self) -> None:
+        # "Refer to the graph on page 2" is question text. The marker rule is
+        # anchored to a delimiter at one end of the line for exactly this case.
+        role = furniture.classify(
+            line(1, "Refer to the graph on page 2 and answer the following.", y0=0.4),
+            repeated=set(),
+            previous_role=LineRole.QUESTION_START,
+        )
+        assert role is LineRole.QUESTION_CONTINUATION
+
+    def test_a_numbered_question_opening_a_page_survives_the_marker_rule(self) -> None:
+        # Ordering guard: the label test runs first, so a question is never
+        # discarded for sitting where a header would.
+        role = furniture.classify(
+            line(1, "8. How many pages 2 sheets make?", y0=0.03, page=1),
+            repeated=set(),
+            previous_role=None,
+        )
+        assert role is LineRole.QUESTION_START
 
     def test_a_running_header_across_four_pages_is_furniture(self) -> None:
         lines = [
@@ -471,3 +533,65 @@ class TestGapValidation:
         q = Question(qid="A/1", label_raw="1.", text="One", path=["1"], print_order=0)
         problems = validate.suspicious([q, q])
         assert any("duplicate" in p for p in problems)
+
+
+class TestTheRealTwoPagePaper:
+    """Extraction over the whole chain, on the fixture paper that broke it.
+
+    The unit tests above exercise ``classify`` on a single line. This runs the
+    real path — transcribe, order, extract — because the header bug lived in the
+    interaction between three modules: the classifier saw an unlabelled line, the
+    page boundary carried the previous role across it, and the extractor appended
+    the result to the question it was still building.
+    """
+
+    @staticmethod
+    def _paper():
+        from grader import render
+        from grader.lineindex import build_index
+        from grader.ocr.base import PageInput
+        from grader.ocr.native_pdf import PdfTextLayerEngine
+
+        from .fixtures import question_paper
+
+        data, _ = question_paper()
+        engine = PdfTextLayerEngine()
+        source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
+        per_page = []
+        for page_index in range(source.page_count):
+            width, height = render.page_size(data, "paper.pdf", page_index)
+            per_page.append(
+                engine.transcribe(
+                    PageInput(
+                        index=page_index,
+                        width=width,
+                        height=height,
+                        document=data,
+                        filename="paper.pdf",
+                    )
+                )
+            )
+
+        index = build_index(
+            DocumentKind.QUESTION_PAPER, per_page, engine.engine, trust_engine_order=True
+        )
+        return extract(index)
+
+    def test_the_page_two_header_is_not_absorbed_into_a_question(self) -> None:
+        paper = self._paper()
+        for question in paper.questions:
+            assert "UNIT TEST" not in question.text, f"{question.label_raw}: {question.text}"
+            assert "page 2" not in question.text.lower(), question.label_raw
+
+    def test_the_last_question_on_page_one_keeps_its_own_text(self) -> None:
+        # The other half: the fix must not have removed the question the header
+        # was attached to, nor truncated it.
+        paper = self._paper()
+        seven = next(q for q in paper.questions if q.label_raw.startswith("7"))
+        assert seven.text == "Calculate the resistance of the circuit shown."
+
+    def test_questions_on_both_pages_are_extracted(self) -> None:
+        paper = self._paper()
+        labels = [q.label_raw for q in paper.questions]
+        assert any(label.startswith("1.") for label in labels)
+        assert any(label.startswith("11") for label in labels), "page 2 questions missing"

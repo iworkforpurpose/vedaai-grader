@@ -75,14 +75,40 @@ _PAGE_NUMBER = re.compile(
     r"^\s*(?:page\s+)?\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?\s*$", re.IGNORECASE
 )
 
+#: A page marker embedded in a longer line, as a running header carries it:
+#: ``SCIENCE - UNIT TEST (page 2)`` or ``Page 2 of 12  Physics``.
+#:
+#: Deliberately anchored to a bracket or dash at one end of the line rather than
+#: matching the words anywhere, because "Refer to the graph on page 2" is a
+#: genuine question and its marker sits mid-sentence with no delimiter.
+_PAGE_MARKER = re.compile(
+    r"^\s*[\[(\-\u2013\u2014]?\s*p(?:age|g)\.?\s*\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?"
+    r"|[\[(\-\u2013\u2014]\s*p(?:age|g)\.?\s*\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?\s*[\])]?\s*$",
+    re.IGNORECASE,
+)
+
 #: How close two lines must be vertically to count as the same running header.
 _HEADER_BAND = 0.02
 
 #: A line must appear on at least this share of pages to be a running header.
-#: Requires three pages to trigger at all — on a two-page paper, text appearing
-#: on both is as likely to be a genuine repeat as furniture.
 _REPEAT_SHARE = 0.6
+
+#: Pages needed before repetition alone is evidence. Three, because on a two-page
+#: paper text appearing on both is as likely a genuine repeat as furniture.
 _REPEAT_MIN_PAGES = 3
+
+#: Distance from the top or bottom edge within which a *repeated* line is a
+#: header or footer even on a two-page paper.
+#:
+#: Requiring three pages was too strict, and a real two-page paper showed why: its
+#: page-2 header "SCIENCE - UNIT TEST (page 2)" was absorbed into the last
+#: question on page 1, corrupting that question's text.
+#:
+#: Position supplies the missing evidence. Repetition alone is weak on two pages,
+#: but repetition *at the page edge* is not — a rubric line such as "Answer all
+#: questions" may legitimately recur once per section, and it recurs in the body,
+#: not pinned to the margin.
+_EDGE_BAND = 0.10
 
 
 def find_repeated_lines(lines: list[Line]) -> set[str]:
@@ -97,7 +123,7 @@ def find_repeated_lines(lines: list[Line]) -> set[str]:
     *same height* across most pages is furniture.
     """
     pages = {line.page for line in lines}
-    if len(pages) < _REPEAT_MIN_PAGES:
+    if len(pages) < 2:
         return set()
 
     buckets: dict[tuple[str, int], list[Line]] = defaultdict(list)
@@ -107,10 +133,21 @@ def find_repeated_lines(lines: list[Line]) -> set[str]:
 
     repeated: set[str] = set()
     threshold = max(_REPEAT_MIN_PAGES, int(len(pages) * _REPEAT_SHARE))
+
     for group in buckets.values():
-        if len({line.page for line in group}) >= threshold:
+        page_count = len({line.page for line in group})
+        if page_count >= threshold:
             repeated.update(line.line_id for line in group)
+        elif page_count >= 2 and all(_at_page_edge(line) for line in group):
+            # Repeated at the page margin. Enough on a two-page paper, where
+            # three-page repetition can never be observed.
+            repeated.update(line.line_id for line in group)
+
     return repeated
+
+
+def _at_page_edge(line: Line) -> bool:
+    return line.box.y0 <= _EDGE_BAND or line.box.y1 >= (1.0 - _EDGE_BAND)
 
 
 def classify(
@@ -157,6 +194,18 @@ def classify(
             return LineRole.QUESTION_START
         # A label with nothing usable after it — a stray number, or a
         # continuation marker. Not a question, and not worth discarding either.
+        return LineRole.FURNITURE
+
+    # A running header carrying its own page number. Checked here, after the label
+    # test, so a genuine numbered question opening a page is never caught by it.
+    #
+    # This is the one header shape repetition cannot find: a header that prints
+    # the page number differs on every page, so bucketing by text never groups it.
+    # A real two-page paper showed the cost — "SCIENCE - UNIT TEST (page 2)" read
+    # as a continuation of the last question on page 1 and was appended to its
+    # text. Both conditions are needed: the marker rules out ordinary prose, and
+    # the page edge rules out a mid-page reference to another page.
+    if _at_page_edge(line) and _PAGE_MARKER.search(text):
         return LineRole.FURNITURE
 
     if previous_role in {LineRole.QUESTION_START, LineRole.QUESTION_CONTINUATION, LineRole.STEM}:

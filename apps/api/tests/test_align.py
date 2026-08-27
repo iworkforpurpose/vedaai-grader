@@ -397,3 +397,118 @@ class TestReportShape:
         result = resolve(paper([REFRACTION]), [], [], [])
         assert result.by_qid()["A/1"].status is not AnswerStatus.ANSWERED
         assert result.orphans == []
+
+
+class TestTeacherCorrections:
+    """``reassign`` — the path a teacher's correction takes.
+
+    Worth testing directly because it is the one place where a human overrules
+    the aligner, and because its failure mode is silent: a correction that drops
+    writing leaves the teacher with a script they can no longer fully see.
+    """
+
+    PAPER = paper([REFRACTION, REFLECTION, MOTOR])
+
+    def _resolved(self, blocks):
+        return blocks, resolve(self.PAPER, blocks, [], [])
+
+    def test_a_moved_block_lands_on_the_chosen_question(self) -> None:
+        from grader.align import reassign
+
+        blocks = [
+            block("blk:000", "Light bends when it changes medium.", y0=0.10),
+            block("blk:001", "Angle of incidence equals angle of reflection.", y0=0.30),
+        ]
+        result = resolve(self.PAPER, blocks, [], [])
+        moved = reassign(
+            self.PAPER, blocks, result, block_id="blk:001", to_qid="A/3"
+        )
+
+        motor = next(m for m in moved.mappings if m.qid == "A/3")
+        assert motor.block_ids == ["blk:001"]
+        assert motor.status is AnswerStatus.ANSWERED
+        assert motor.teacher_override is True
+        assert motor.highlight is not None
+
+    def test_the_question_losing_a_block_is_never_called_blank(self) -> None:
+        # A teacher moving an answer says nothing about whether the original
+        # question was attempted. Asserting a blank on the strength of a
+        # correction elsewhere is the unfounded absence claim to avoid.
+        from grader.align import reassign
+
+        blocks = [block("blk:000", "Light bends when it changes medium.", y0=0.10)]
+        result = resolve(self.PAPER, blocks, [], [])
+        moved = reassign(
+            self.PAPER, blocks, result, block_id="blk:000", to_qid="A/3"
+        )
+
+        loser = next(m for m in moved.mappings if m.qid == "A/1")
+        assert loser.block_ids == []
+        assert loser.status is AnswerStatus.UNCERTAIN
+        assert loser.highlight is None
+
+    def test_moving_onto_an_answered_question_keeps_both_blocks(self) -> None:
+        # The correction that replace-semantics made impossible: an answer split
+        # across two blocks, one of which the aligner gave to the neighbour.
+        # Moving it back must leave the question holding both, or restoring the
+        # first block would displace the second and the split could never be
+        # repaired.
+        from grader.align import reassign
+
+        blocks = [
+            block("blk:000", "A coil carrying current sits in a magnetic field.", y0=0.10),
+            block("blk:001", "The force on it makes the coil rotate.", y0=0.30),
+        ]
+        result = resolve(self.PAPER, blocks, [], [])
+        moved = reassign(self.PAPER, blocks, result, block_id="blk:000", to_qid="A/3")
+        moved = reassign(self.PAPER, blocks, moved, block_id="blk:001", to_qid="A/3")
+
+        motor = next(m for m in moved.mappings if m.qid == "A/3")
+        assert motor.block_ids == ["blk:000", "blk:001"]
+        assert motor.highlight is not None
+        assert len(motor.highlight.boxes) >= 1
+
+    def test_merged_blocks_stay_in_document_order(self) -> None:
+        # start_line_id and end_line_id name a span, so the order the teacher
+        # happened to click in must not decide which end is which.
+        from grader.align import reassign
+
+        blocks = [
+            block("blk:000", "First part of the answer.", y0=0.10, line_ids=["as:0001"]),
+            block("blk:001", "Second part of the answer.", y0=0.30, line_ids=["as:0002"]),
+        ]
+        result = resolve(self.PAPER, blocks, [], [])
+        moved = reassign(self.PAPER, blocks, result, block_id="blk:001", to_qid="A/3")
+        moved = reassign(self.PAPER, blocks, moved, block_id="blk:000", to_qid="A/3")
+
+        motor = next(m for m in moved.mappings if m.qid == "A/3")
+        assert motor.block_ids == ["blk:000", "blk:001"]
+        assert motor.start_line_id == "as:0001"
+        assert motor.end_line_id == "as:0002"
+
+    def test_displaced_writing_is_never_lost(self) -> None:
+        # Every block must remain reachable after a correction: owned by a
+        # question, or listed as an orphan. Writing that is neither is invisible
+        # to the teacher.
+        from grader.align import reassign
+
+        blocks = [
+            block("blk:000", "Light bends when it changes medium.", y0=0.10),
+            block("blk:001", "Angle of incidence equals angle of reflection.", y0=0.30),
+            block("blk:002", "A coil rotates in a magnetic field.", y0=0.50),
+        ]
+        result = resolve(self.PAPER, blocks, [], [])
+        moved = reassign(self.PAPER, blocks, result, block_id="blk:002", to_qid="A/1")
+
+        reachable = {bid for m in moved.mappings for bid in m.block_ids}
+        reachable |= {o.block_id for o in moved.orphans}
+        assert reachable == {"blk:000", "blk:001", "blk:002"}
+
+    def test_an_unknown_block_or_question_changes_nothing(self) -> None:
+        from grader.align import reassign
+
+        blocks = [block("blk:000", "Light bends when it changes medium.", y0=0.10)]
+        result = resolve(self.PAPER, blocks, [], [])
+
+        assert reassign(self.PAPER, blocks, result, block_id="blk:999", to_qid="A/1") is result
+        assert reassign(self.PAPER, blocks, result, block_id="blk:000", to_qid="Z/9") is result

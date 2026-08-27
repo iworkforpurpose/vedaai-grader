@@ -1,0 +1,502 @@
+import { describe, expect, it } from "vitest";
+import type { AnswerStatus, Mapping, Question, Submission } from "./contracts";
+import {
+  applyReassignment,
+  blockPreview,
+  blocksOf,
+  buildRows,
+  highlightByPage,
+  questionAtPoint,
+  STATUS,
+  summarize,
+  untranscribedInkByPage,
+} from "./review";
+
+function question(qid: string, label: string, order: number, text = "Some question"): Question {
+  return {
+    qid,
+    label_raw: label,
+    text,
+    path: qid.split("/").slice(1),
+    print_order: order,
+    section_id: null,
+    stem_ref: null,
+    choice_group: null,
+    marks: 2,
+    line_ids: [],
+    geometry: [],
+    extraction_confidence: 1,
+    depth: 1,
+    is_subpart: false,
+    parent_qid: null,
+  } as unknown as Question;
+}
+
+function mapping(
+  qid: string,
+  status: AnswerStatus,
+  boxes: { page: number; x0: number; y0: number; x1: number; y1: number }[] = [],
+  blockIds: string[] = [],
+): Mapping {
+  return {
+    qid,
+    status,
+    block_ids: blockIds,
+    start_line_id: null,
+    end_line_id: null,
+    highlight: boxes.length
+      ? {
+          boxes: boxes.map((b) => ({
+            page: b.page,
+            box: { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 },
+          })),
+          derived_from: "ocr_lines",
+          pages: [...new Set(boxes.map((b) => b.page))],
+          spans_pages: new Set(boxes.map((b) => b.page)).size > 1,
+        }
+      : null,
+    confidence: 0.8,
+    evidence: {
+      label_agreement: 0,
+      semantic_similarity: null,
+      order_prior: 0,
+      length_plausibility: 0,
+      signals: [],
+      total_score: 0,
+    },
+    anchor_id: null,
+    shares_block_with: [],
+    teacher_override: false,
+    needs_review: false,
+  } as unknown as Mapping;
+}
+
+function submission(overrides: Partial<Submission> = {}): Submission {
+  return {
+    submission_id: "s1",
+    status: "complete",
+    question_paper_file: null,
+    answer_sheet_file: null,
+    pages: [],
+    question_paper_lines: null,
+    answer_sheet_lines: null,
+    ink_regions: [],
+    questions: { questions: [], sections: [], stems: [], choice_groups: [], gaps: [], total_marks: null },
+    blocks: [],
+    anchors: [],
+    mapping: null,
+    grades: null,
+    warnings: [],
+    error: null,
+    answer_sheet_page_count: 0,
+    question_count: 0,
+    ...overrides,
+  } as unknown as Submission;
+}
+
+describe("status vocabulary", () => {
+  it("only 'unanswered' claims the student left something blank", () => {
+    // The distinction the pipeline works hardest to preserve. A teacher acts on
+    // "not answered" without re-reading, so every other absence state has to read
+    // as uncertainty rather than as a finding.
+    expect(STATUS.unanswered.label).toBe("Not answered");
+    expect(STATUS.uncertain.label).toBe("Not found");
+    expect(STATUS.ocr_failed.label).toBe("Could not read");
+    expect(STATUS.pages_missing.label).toBe("Page may be missing");
+  });
+
+  it("flags the states that need a teacher's attention", () => {
+    expect(STATUS.ocr_failed.needsAttention).toBe(true);
+    expect(STATUS.uncertain.needsAttention).toBe(true);
+    expect(STATUS.pages_missing.needsAttention).toBe(true);
+    expect(STATUS.answered.needsAttention).toBe(false);
+    // A legitimately skipped optional question is not a problem to investigate.
+    expect(STATUS.not_required.needsAttention).toBe(false);
+  });
+});
+
+describe("buildRows", () => {
+  it("lists questions in printed order, not label order", () => {
+    // Labels restart per section and mix romans with letters, so they cannot
+    // order anything; print_order is the authority.
+    const sub = submission({
+      questions: {
+        questions: [question("B/1", "1.", 3), question("A/2", "2.", 1)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+    } as unknown as Partial<Submission>);
+
+    expect(buildRows(sub).map((r) => r.question.qid)).toEqual(["A/2", "B/1"]);
+  });
+
+  it("shows the label exactly as the paper printed it", () => {
+    const sub = submission({
+      questions: {
+        questions: [question("A/11/a", "11 (a)", 0)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+    } as unknown as Partial<Submission>);
+
+    expect(buildRows(sub)[0]!.question.label_raw).toBe("11 (a)");
+  });
+
+  it("defaults to unanswered when no mapping exists yet", () => {
+    const sub = submission({
+      questions: {
+        questions: [question("A/1", "1.", 0)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+    } as unknown as Partial<Submission>);
+
+    expect(buildRows(sub)[0]!.status).toBe("unanswered");
+  });
+});
+
+describe("summarize", () => {
+  const base = submission({
+    questions: {
+      questions: [question("A/1", "1.", 0), question("A/2", "2.", 1), question("A/3", "3.", 2)],
+      sections: [],
+      stems: [],
+      choice_groups: [],
+      gaps: [],
+      total_marks: null,
+    },
+  } as unknown as Partial<Submission>);
+
+  it("counts answered, unanswered and needs-checking separately", () => {
+    const sub = {
+      ...base,
+      mapping: {
+        mappings: [
+          mapping("A/1", "answered", [{ page: 0, x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 }]),
+          mapping("A/2", "unanswered"),
+          mapping("A/3", "uncertain"),
+        ],
+        orphans: [],
+        unassigned_ink_ratio: 0,
+        absence_claims_suppressed: false,
+      },
+    } as unknown as Submission;
+
+    const summary = summarize(sub, buildRows(sub));
+    expect(summary.answered).toBe(1);
+    expect(summary.notAnswered).toBe(1);
+    expect(summary.needsAttention).toBe(1);
+  });
+
+  it("reports when the unanswered count must be withheld", () => {
+    // Unplaced writing means the count would be a guess, and a wrong count here
+    // is worse than no count.
+    const sub = {
+      ...base,
+      mapping: {
+        mappings: [mapping("A/1", "uncertain")],
+        orphans: [],
+        unassigned_ink_ratio: 0.4,
+        absence_claims_suppressed: true,
+      },
+    } as unknown as Submission;
+
+    expect(summarize(sub, buildRows(sub)).absenceSuppressed).toBe(true);
+  });
+});
+
+describe("highlightByPage", () => {
+  it("groups a page-spanning highlight by page", () => {
+    const grouped = highlightByPage(
+      mapping("A/1", "answered", [
+        { page: 0, x0: 0.1, y0: 0.8, x1: 0.9, y1: 0.95 },
+        { page: 1, x0: 0.1, y0: 0.05, x1: 0.9, y1: 0.3 },
+      ]),
+    );
+    expect([...grouped.keys()]).toEqual([0, 1]);
+  });
+
+  it("returns nothing for a question with no highlight", () => {
+    expect(highlightByPage(mapping("A/1", "unanswered")).size).toBe(0);
+    expect(highlightByPage(undefined).size).toBe(0);
+  });
+});
+
+describe("questionAtPoint", () => {
+  const sub = {
+    ...submission({
+      questions: {
+        questions: [question("A/1", "1.", 0), question("A/2", "2.", 1)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+    } as unknown as Partial<Submission>),
+    mapping: {
+      mappings: [
+        // A large region, and a small one inside it.
+        mapping("A/1", "answered", [{ page: 0, x0: 0.0, y0: 0.0, x1: 1.0, y1: 1.0 }]),
+        mapping("A/2", "answered", [{ page: 0, x0: 0.4, y0: 0.4, x1: 0.6, y1: 0.6 }]),
+      ],
+      orphans: [],
+      unassigned_ink_ratio: 0,
+      absence_claims_suppressed: false,
+    },
+  } as unknown as Submission;
+
+  it("prefers the smallest containing region", () => {
+    // Otherwise a page-spanning answer swallows every click on the pages it
+    // covers, and the reverse lookup becomes useless exactly where the page is
+    // busiest.
+    const rows = buildRows(sub);
+    expect(questionAtPoint(rows, 0, 0.5, 0.5)?.question.qid).toBe("A/2");
+  });
+
+  it("falls back to the enclosing region outside the small one", () => {
+    const rows = buildRows(sub);
+    expect(questionAtPoint(rows, 0, 0.05, 0.05)?.question.qid).toBe("A/1");
+  });
+
+  it("returns null on a page with no mapped answers", () => {
+    expect(questionAtPoint(buildRows(sub), 3, 0.5, 0.5)).toBeNull();
+  });
+});
+
+describe("untranscribedInkByPage", () => {
+  it("surfaces only ink the recognizer never accounted for", () => {
+    // The first place to look when a question reads "not found".
+    const sub = submission({
+      ink_regions: [
+        { region_id: "ink:1", page: 0, is_orphan_ink: true, box: { x0: 0, y0: 0, x1: 0.2, y1: 0.2 } },
+        { region_id: "ink:2", page: 0, is_orphan_ink: false, box: { x0: 0, y0: 0.3, x1: 0.2, y1: 0.4 } },
+      ],
+    } as unknown as Partial<Submission>);
+
+    const grouped = untranscribedInkByPage(sub);
+    expect(grouped.get(0)?.map((r) => r.region_id)).toEqual(["ink:1"]);
+  });
+});
+
+describe("applyReassignment", () => {
+  const sub = {
+    ...submission({
+      questions: {
+        questions: [question("A/1", "1.", 0), question("A/2", "2.", 1)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+      blocks: [
+        {
+          block_id: "blk:000",
+          line_ids: ["as:0001"],
+          ink_region_ids: [],
+          text: "some answer",
+          geometry: [{ page: 0, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+          pages_spanned: [0],
+          has_continuation_marker: false,
+          is_text_free: false,
+          spans_pages: false,
+        },
+      ],
+    } as unknown as Partial<Submission>),
+    mapping: {
+      mappings: [
+        mapping("A/1", "answered", [{ page: 0, x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 }], ["blk:000"]),
+        mapping("A/2", "unanswered"),
+      ],
+      orphans: [],
+      unassigned_ink_ratio: 0,
+      absence_claims_suppressed: false,
+    },
+  } as unknown as Submission;
+
+  it("moves the block to the chosen question and records the override", () => {
+    const next = applyReassignment(sub, "blk:000", "A/2");
+    const target = next.mapping!.mappings.find((m) => m.qid === "A/2")!;
+
+    expect(target.status).toBe("answered");
+    expect(target.block_ids).toEqual(["blk:000"]);
+    expect(target.teacher_override).toBe(true);
+  });
+
+  it("does not declare the losing question blank", () => {
+    // The teacher moved an answer, which says nothing about whether the original
+    // question was attempted. Asserting a blank on the strength of a correction
+    // elsewhere is exactly the unfounded absence claim to avoid.
+    const next = applyReassignment(sub, "blk:000", "A/2");
+    const loser = next.mapping!.mappings.find((m) => m.qid === "A/1")!;
+
+    expect(loser.block_ids).toEqual([]);
+    expect(loser.status).not.toBe("unanswered");
+    expect(loser.status).toBe("uncertain");
+  });
+
+  it("is a no-op when there is no mapping to change", () => {
+    const bare = submission();
+    expect(applyReassignment(bare, "blk:000", "A/1")).toBe(bare);
+  });
+
+  it("keeps writing displaced from the target reachable as an orphan", () => {
+    // If this state is all the teacher has — the request failed — every block
+    // must still be visible somewhere. Writing that belongs to no question and
+    // appears in no orphan list has vanished from the interface.
+    const next = applyReassignment(sub, "blk:000", "A/2");
+    const reachable = new Set([
+      ...next.mapping!.mappings.flatMap((m) => m.block_ids),
+      ...next.mapping!.orphans.map((o) => o.block_id),
+    ]);
+    expect(reachable.has("blk:000")).toBe(true);
+  });
+});
+
+describe("appending to an answered question", () => {
+  // The client mirrors the server here on purpose: replacing would make a split
+  // answer unrepairable, and a divergence would show as the highlight jumping
+  // when the server's response arrives.
+  const twoBlocks = {
+    ...submission({
+      questions: {
+        questions: [question("A/1", "1.", 0), question("A/2", "2.", 1)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+      blocks: [
+        {
+          block_id: "blk:000",
+          line_ids: ["as:0001"],
+          ink_region_ids: [],
+          text: "first half",
+          geometry: [{ page: 0, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+          pages_spanned: [0],
+          has_continuation_marker: false,
+          is_text_free: false,
+          spans_pages: false,
+        },
+        {
+          block_id: "blk:001",
+          line_ids: ["as:0002"],
+          ink_region_ids: [],
+          text: "second half",
+          geometry: [{ page: 1, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+          pages_spanned: [1],
+          has_continuation_marker: false,
+          is_text_free: false,
+          spans_pages: false,
+        },
+      ],
+    } as unknown as Partial<Submission>),
+    mapping: {
+      mappings: [
+        mapping("A/1", "answered", [{ page: 0, x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 }], ["blk:000"]),
+        mapping("A/2", "answered", [{ page: 1, x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 }], ["blk:001"]),
+      ],
+      orphans: [],
+      unassigned_ink_ratio: 0,
+      absence_claims_suppressed: false,
+    },
+  } as unknown as Submission;
+
+  it("holds both blocks and unions their highlights", () => {
+    const next = applyReassignment(twoBlocks, "blk:001", "A/1");
+    const target = next.mapping!.mappings.find((m) => m.qid === "A/1")!;
+
+    expect(target.block_ids).toEqual(["blk:000", "blk:001"]);
+    expect(target.highlight!.boxes).toHaveLength(2);
+    expect(target.highlight!.spans_pages).toBe(true);
+    expect(target.highlight!.pages).toEqual([0, 1]);
+  });
+
+  it("orders merged blocks by position on the sheet, not click order", () => {
+    // start_line_id and end_line_id name a span, so the order the teacher
+    // happened to click in must not decide which end is which.
+    const next = applyReassignment(twoBlocks, "blk:001", "A/1");
+    expect(next.mapping!.mappings.find((m) => m.qid === "A/1")!.block_ids).toEqual([
+      "blk:000",
+      "blk:001",
+    ]);
+  });
+});
+
+describe("blocksOf", () => {
+  const sub = {
+    ...submission({
+      questions: {
+        questions: [question("A/1", "1.", 0)],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+      blocks: [
+        {
+          block_id: "blk:000",
+          line_ids: ["as:0001"],
+          ink_region_ids: [],
+          text: "  a written   answer  ",
+          geometry: [{ page: 0, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+          pages_spanned: [0],
+          has_continuation_marker: false,
+          is_text_free: false,
+          spans_pages: false,
+        },
+        {
+          block_id: "blk:001",
+          line_ids: [],
+          ink_region_ids: ["ink:1"],
+          text: "",
+          geometry: [{ page: 2, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+          pages_spanned: [2],
+          has_continuation_marker: false,
+          is_text_free: true,
+          spans_pages: false,
+        },
+      ],
+    } as unknown as Partial<Submission>),
+    mapping: {
+      mappings: [mapping("A/1", "answered", [], ["blk:001", "blk:000"])],
+      orphans: [],
+      unassigned_ink_ratio: 0,
+      absence_claims_suppressed: false,
+    },
+  } as unknown as Submission;
+
+  it("resolves the blocks a question owns", () => {
+    const rows = buildRows(sub);
+    expect(blocksOf(sub, rows[0]!.mapping).map((b) => b.block_id)).toEqual([
+      "blk:001",
+      "blk:000",
+    ]);
+  });
+
+  it("ignores block ids with no matching block", () => {
+    const rows = buildRows(sub);
+    const stale = { ...rows[0]!.mapping!, block_ids: ["blk:000", "blk:missing"] };
+    expect(blocksOf(sub, stale).map((b) => b.block_id)).toEqual(["blk:000"]);
+  });
+
+  it("names a block with no readable text by where it is", () => {
+    // A diagram, or handwriting the recognizer failed on, still needs a label
+    // the teacher can act on.
+    const textFree = sub.blocks.find((b) => b.block_id === "blk:001")!;
+    expect(blockPreview(textFree)).toBe("writing on page 3");
+    expect(blockPreview(sub.blocks[0]!)).toBe("a written answer");
+  });
+});
