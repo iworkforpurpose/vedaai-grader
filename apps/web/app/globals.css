@@ -220,9 +220,27 @@ body::before {
   padding: var(--page-pad);
 }
 
+/* From the rail breakpoint the shell is exactly the viewport and the content
+   column scrolls inside it, so the rail cannot be scrolled away from a long
+   screen and the page has no outer scrollbar of its own. */
+@media (min-width: 1024px) {
+  .shell {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .shell-main {
+    overflow-y: auto;
+  }
+}
+
 .shell-main {
   flex: 1;
   min-width: 0;
+  /* Needed for the child to be allowed to shrink: a flex item defaults to
+     min-height: auto, which is min-content, and that is what leaves a column
+     unable to fit its own container. */
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -555,11 +573,28 @@ body::before {
 
 /* ══ upload screen ═════════════════════════════════════════════════════════ */
 
+/*
+ * Fills the space it is given, and centres within it.
+ *
+ * The frame is 787 tall with a 694 content block, so in the design the content
+ * effectively fills the screen. Laid out at its natural height it instead sat at
+ * the top of a 1117px viewport and left roughly 550px of empty background
+ * underneath — which reads as the page not fitting rather than as generous
+ * spacing.
+ *
+ * `justify-content: center` alone would clip the top of the content once the
+ * viewport is shorter than the content — centring overflows in both directions
+ * and only one of them is reachable by scrolling. `margin: auto 0` on the flex
+ * child does the same centring while still respecting the container's bounds, so
+ * a short window scrolls instead of hiding the title.
+ */
 .upload {
+  flex: 1;
+  min-height: 0;
   width: 100%;
   max-width: var(--content-max);
   margin: 0 auto;
-  padding: var(--sp-6) 0 var(--sp-8);
+  padding: var(--sp-6) 0 var(--sp-6);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -567,6 +602,14 @@ body::before {
      before the action block. One value for both reads noticeably airier. */
   gap: 20px;
   text-align: center;
+}
+
+.upload-heading {
+  margin-top: auto;
+}
+
+.upload .actions {
+  margin-bottom: auto;
 }
 
 .upload-heading {
@@ -671,8 +714,25 @@ body::before {
   background: var(--surface-veil);
 }
 
+/* The wrapper owns the drag handlers; the input is its first child so it is a
+   sibling of the label rather than a descendant. See UploadForm for why. */
+.dropzone-slot {
+  display: flex;
+  min-width: 0;
+}
+
+.dropzone-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .dropzone {
   position: relative;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -696,14 +756,6 @@ body::before {
 .dropzone[data-filled="true"] {
   border-style: solid;
   border-color: var(--status-answered);
-}
-
-.dropzone input[type="file"] {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .dropzone-icon {
@@ -826,13 +878,26 @@ body::before {
 @media (min-width: 1024px) {
   .shell {
     flex-direction: row;
-    align-items: flex-start;
+    /*
+     * Stretch, not flex-start.
+     *
+     * `align-items: flex-start` was here to stop the rail stretching, which it
+     * did not need — the rail sets its own height. What it actually did was give
+     * the content column its *content* height: 710px inside a 1117px viewport,
+     * with the remaining 400px showing as empty page below the fold. Every
+     * attempt to centre the content within that column then had nothing to
+     * centre within.
+     *
+     * The rail's own `align-self` keeps it from stretching where that matters.
+     */
+    align-items: stretch;
   }
 
   .rail {
     position: sticky;
     top: 0;
     inset: auto;
+    align-self: flex-start;
     z-index: 1;
     width: var(--rail-w);
     flex: none;

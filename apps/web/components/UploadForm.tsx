@@ -134,11 +134,8 @@ function DropZone({
   const id = `pick-${slot}`;
 
   return (
-    <label
-      className="dropzone"
-      htmlFor={id}
-      data-filled={file !== null}
-      data-dragging={dragging}
+    <div
+      className="dropzone-slot"
       onDragOver={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -151,10 +148,22 @@ function DropZone({
         if (dropped) onPick(dropped);
       }}
     >
-      {/* Associated by id rather than nested. A file input inside its own label is
-          activated twice by one click — the picker opens, and a second opens on
-          top of it. */}
+      {/*
+       * The input is a SIBLING of the label, not a child.
+       *
+       * `htmlFor` on a label whose own subtree contains the input activates it
+       * twice for one click: once because the click landed on the control's
+       * label, and again when the label forwards activation to its target. For a
+       * checkbox that is harmless. For a file input it opens the picker, then
+       * opens a second picker on top of it, and choosing a file appears to do
+       * nothing — which is exactly how this presented.
+       *
+       * This bug was found and fixed once already, then reintroduced here by
+       * wrapping the card in the label for convenience. Sibling placement makes
+       * it structurally impossible rather than a thing to remember.
+       */}
       <input
+        className="dropzone-input"
         id={id}
         type="file"
         name={slot}
@@ -162,6 +171,12 @@ function DropZone({
         onChange={(event) => onPick(event.target.files?.[0] ?? null)}
       />
 
+      <label
+        className="dropzone"
+        htmlFor={id}
+        data-filled={file !== null}
+        data-dragging={dragging}
+      >
       <span className="dropzone-icon">
         <UploadIcon size={20} />
       </span>
@@ -173,7 +188,8 @@ function DropZone({
       ) : (
         <span className="dropzone-file">{file.name}</span>
       )}
-    </label>
+      </label>
+    </div>
   );
 }
 
