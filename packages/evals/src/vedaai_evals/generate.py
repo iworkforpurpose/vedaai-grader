@@ -65,11 +65,21 @@ class SyntheticQuestion:
     qid: str
     label: str
     text: str
-    marks: int
+    marks: int | None
     section: str
     indent: float = 0.0
     answer: str = ""
     required: bool = True
+
+    is_stem: bool = False
+    """Introduces the parts below and asks nothing itself.
+
+    Included because real papers are full of them — "2. Answer the following:" —
+    and because the harness could not see the failure they cause. A stem left in
+    the matching candidate list can absorb the answer to its own sub-part, which
+    costs two mappings rather than one, and it is reported unanswered when nothing
+    was ever asked.
+    """
 
 
 #: The canonical paper. Structures here mirror what official CBSE, CISCE, AQA and
@@ -83,6 +93,14 @@ PAPER: list[SyntheticQuestion] = [
         marks=2,
         section="A",
         answer="Refraction is the bending of light when it passes from one medium to another.",
+    ),
+    SyntheticQuestion(
+        qid="A/2",
+        label="2.",
+        text="Answer the following:",
+        marks=None,
+        section="A",
+        is_stem=True,
     ),
     SyntheticQuestion(
         qid="A/2/i",
@@ -377,7 +395,10 @@ def build_question_paper() -> tuple[bytes, list[GoldenQuestion]]:
             sheet.line(instruction, size=9.5)
             sheet.gap(6)
 
-        sheet.line(f"{q.label} {q.text}  [{q.marks}]", indent=q.indent)
+        # A stem prints no allocation, which is exactly what makes it a stem —
+        # the marks live on the parts below it.
+        allocation = "" if q.marks is None else f"  [{q.marks}]"
+        sheet.line(f"{q.label} {q.text}{allocation}", indent=q.indent)
         truth.append(
             GoldenQuestion(qid=q.qid, label_raw=q.label, print_order=order, marks=q.marks)
         )
@@ -400,13 +421,23 @@ def build_answer_sheet(config: CaseConfig) -> tuple[bytes, list[GoldenAnswer]]:
     mislabels = dict(config.mislabel)
     by_qid = {q.qid: q for q in PAPER}
 
-    order = [q.qid for q in PAPER]
+    # Stems are excluded from the ordering rather than skipped inside the loop.
+    # A stem has no answer, so its place in an answer order is meaningless — and
+    # leaving it in makes the shuffled and reversed cases depend on how many
+    # headings the paper happens to have, which silently changes every one of
+    # those fixtures whenever the paper gains one.
+    order = [q.qid for q in PAPER if not q.is_stem]
     if config.answer_order == "shuffled":
         rng.shuffle(order)
     elif config.answer_order == "reversed":
         order.reverse()
 
-    answers: dict[str, GoldenAnswer] = {}
+    answers: dict[str, GoldenAnswer] = {
+        # Recorded directly: nothing was asked, so nothing is expected.
+        q.qid: GoldenAnswer(qid=q.qid, status=AnswerStatus.NOT_REQUIRED)
+        for q in PAPER
+        if q.is_stem
+    }
     written_groups: set[tuple[str, ...]] = set()
 
     sheet.line("Name: Test Student        Class: 6C", size=10)

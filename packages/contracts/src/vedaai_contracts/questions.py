@@ -150,6 +150,18 @@ class Question(BaseModel):
 
     extraction_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
+    is_stem: bool = Field(
+        default=False,
+        description=(
+            "This introduces the parts beneath it and carries no marks of its own, so it "
+            "cannot be answered separately. A fact about the paper, not an inference: the "
+            "question has children and printed no allocation. Kept as an extracted question "
+            "because the requirement is to preserve the paper's numbering, but excluded from "
+            "answer matching — a stem left in the candidate list can absorb the answer to its "
+            "own sub-part — and never reported as unanswered, because nothing was asked."
+        ),
+    )
+
     @computed_field
     @property
     def depth(self) -> int:

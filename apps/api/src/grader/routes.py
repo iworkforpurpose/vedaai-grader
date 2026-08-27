@@ -18,7 +18,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, UploadF
 from fastapi.responses import Response, StreamingResponse
 from vedaai_contracts import DocumentKind, InkRegion, LineIndex, Submission
 
-from . import align, pipeline, render
+from . import align, grading, pipeline, regions, render
 from .render import UnsupportedDocument
 from .storage import PageStore, get_page_store
 from .store import SubmissionStore, get_store
@@ -177,6 +177,64 @@ def reassign_answer(
         submission.mapping,
         block_id=block_id,
         to_qid=qid,
+    )
+    store.put(submission)
+    return submission
+
+
+@router.post(
+    "/submissions/{submission_id}/grades",
+    response_model=Submission,
+    tags=["submissions"],
+)
+async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
+    """Propose marks for a submission, citing the lines behind each one.
+
+    Explicitly requested rather than part of ingestion, for two reasons. Locating
+    answers is useful on its own and must not wait behind marking, and marking is
+    the one step whose output a teacher may not want at all — a proposed score is
+    hard to unsee once shown.
+
+    Without ``ANTHROPIC_API_KEY`` this still succeeds. It returns the rubric and
+    the located answer with every point unjudged, which is a marking aid rather
+    than a grade. Inventing a score from keyword overlap would be worse than
+    offering none: a plausible wrong mark is the error a teacher is least likely
+    to catch.
+    """
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+    if submission.mapping is None or submission.questions is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This submission has no mapping yet, so there are no answers to mark.",
+        )
+    if submission.answer_sheet_lines is None:
+        raise HTTPException(
+            status_code=409,
+            detail="The answer sheet was never transcribed, so there is no text to mark.",
+        )
+
+    try:
+        grader: grading.Grader = grading.Claude()
+    except grading.ClaudeUnavailable as unavailable:
+        grader = grading.RubricOnly()
+        warning = f"Answers were not marked automatically: {unavailable}"
+        if warning not in submission.warnings:
+            submission.warnings.append(warning)
+
+    # Computed here rather than stored, so a re-run picks up any change to region
+    # classification. The set is small and the calculation is geometric.
+    excluded = regions.lines_excluded_from_grading(
+        submission.ink_regions, submission.answer_sheet_lines.lines
+    )
+
+    submission.grades = await grading.grade_submission(
+        paper=submission.questions,
+        mapping=submission.mapping,
+        index=submission.answer_sheet_lines,
+        grader=grader,
+        excluded_line_ids=excluded,
     )
     store.put(submission)
     return submission

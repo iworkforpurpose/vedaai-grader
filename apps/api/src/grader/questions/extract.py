@@ -211,6 +211,7 @@ def extract(index: LineIndex) -> QuestionPaper:
         questions.append(building.finish())
 
     sections = _apply_requirements(sections, instructions, section_instructions)
+    questions = mark_stems(questions)
     paper = QuestionPaper(
         questions=questions,
         sections=sections,
@@ -218,6 +219,31 @@ def extract(index: LineIndex) -> QuestionPaper:
         total_marks=_sum_marks(questions),
     )
     return paper
+
+
+def mark_stems(questions: list[Question]) -> list[Question]:
+    """Flag the questions that introduce others rather than asking anything.
+
+    "2. Answer the following:" followed by (i), (a), (b), (ii) is a heading. It is
+    kept as an extracted question, because the requirement is to preserve the
+    paper's numbering and the teacher expects to see it — but it is not answerable,
+    and treating it as though it were causes two distinct errors: it sits in the
+    matching candidate list where it can absorb the answer to its own sub-part,
+    and it is reported unanswered when nothing was ever asked.
+
+    Decided by structure alone rather than by wording. A question is a stem when
+    another question's path extends it and it printed no marks of its own; both
+    conditions are facts about the paper. Where a parent does print marks, it is
+    answerable and left alone, because the allocation says something is expected.
+    """
+    paths = {tuple(q.path) for q in questions}
+    return [
+        q.model_copy(update={"is_stem": True})
+        if q.marks is None
+        and any(len(p) > len(q.path) and p[: len(q.path)] == tuple(q.path) for p in paths)
+        else q
+        for q in questions
+    ]
 
 
 def _resolve_path(

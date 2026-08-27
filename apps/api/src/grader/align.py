@@ -196,7 +196,11 @@ def align(
     written in order.
     """
     similarity = similarity or default_similarity
-    questions = paper.in_print_order()
+    # Stems are excluded from candidacy. "2. Answer the following:" is a heading
+    # with no marks and no answer of its own, and leaving it in the candidate list
+    # lets it absorb the answer to its own sub-part — which costs two mappings,
+    # not one, since the sub-part then reads as unanswered.
+    questions = [q for q in paper.in_print_order() if not q.is_stem]
     if not questions or not blocks:
         return []
 
@@ -574,6 +578,19 @@ def resolve(
                     confidence=0.75,
                     evidence=assignment.evidence,
                     shares_block_with=assignment.shared_with,
+                )
+            )
+            continue
+
+        if question.is_stem:
+            # A heading, not a question. Nothing was asked here, so there is
+            # nothing to be absent — and the absence logic below would otherwise
+            # report a blank the paper never invited.
+            mappings.append(
+                Mapping(
+                    qid=question.qid,
+                    status=AnswerStatus.NOT_REQUIRED,
+                    confidence=1.0,
                 )
             )
             continue

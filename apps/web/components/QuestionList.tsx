@@ -40,6 +40,35 @@ export function QuestionList({
       {rows.map((row) => {
         const selected = row.question.qid === selectedQid;
         const confidence = row.mapping?.confidence ?? 0;
+
+        if (row.question.is_stem) {
+          // A heading, not a question. It gets no status chip because it has no
+          // status: nothing was asked here, and a chip saying "not answered"
+          // would be a claim about a question the paper never put.
+          return (
+            <li key={row.question.qid}>
+              <h2
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: "var(--sp-2)",
+                  margin: 0,
+                  padding: "var(--sp-3) var(--sp-4) var(--sp-2)",
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  fontSize: "var(--fs-base)",
+                  fontWeight: 600,
+                }}
+              >
+                <span style={{ fontFamily: "var(--font-mono)", minWidth: "4.5em" }}>
+                  {row.question.label_raw}
+                </span>
+                <span>{row.question.text}</span>
+              </h2>
+            </li>
+          );
+        }
+
         return (
           <li key={row.question.qid}>
             <button

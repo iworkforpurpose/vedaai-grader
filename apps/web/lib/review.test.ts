@@ -5,6 +5,9 @@ import {
   blockPreview,
   blocksOf,
   buildRows,
+  citationHighlight,
+  gradeFor,
+  summarizeMarks,
   highlightByPage,
   questionAtPoint,
   STATUS,
@@ -498,5 +501,174 @@ describe("blocksOf", () => {
     const textFree = sub.blocks.find((b) => b.block_id === "blk:001")!;
     expect(blockPreview(textFree)).toBe("writing on page 3");
     expect(blockPreview(sub.blocks[0]!)).toBe("a written answer");
+  });
+});
+
+describe("citationHighlight", () => {
+  // The mechanism that makes a mark checkable. The model named lines and never
+  // coordinates; resolving those names is what turns a citation into something
+  // the teacher can look at.
+  const sub = submission({
+    answer_sheet_lines: {
+      kind: "answer_sheet",
+      engine: "paddle_ocr_vl",
+      lines: [
+        {
+          line_id: "as:0001",
+          page: 0,
+          box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.14 },
+          text: "first",
+        },
+        {
+          line_id: "as:0002",
+          page: 1,
+          box: { x0: 0.1, y0: 0.2, x1: 0.9, y1: 0.24 },
+          text: "second",
+        },
+      ],
+    },
+  } as unknown as Partial<Submission>);
+
+  it("resolves cited line ids to their boxes, grouped by page", () => {
+    const grouped = citationHighlight(sub, ["as:0001", "as:0002"]);
+    expect([...grouped.keys()].sort()).toEqual([0, 1]);
+    expect(grouped.get(0)![0]!.box.y0).toBeCloseTo(0.1);
+  });
+
+  it("shows nothing for a citation that does not resolve", () => {
+    // Better than a rectangle over the wrong place: an unresolvable citation is
+    // exactly the case the validation exists to catch, and drawing a guess would
+    // hide it.
+    expect(citationHighlight(sub, ["as:9999"]).size).toBe(0);
+  });
+
+  it("returns nothing when the sheet was never transcribed", () => {
+    expect(citationHighlight(submission(), ["as:0001"]).size).toBe(0);
+  });
+});
+
+describe("summarizeMarks", () => {
+  function grade(qid: string, awarded: number, available: number, cited: string[]) {
+    return {
+      qid,
+      marks_available: available,
+      marks_awarded: awarded,
+      rubric_points: [
+        {
+          point_id: `${qid}#1`,
+          criterion: "something",
+          marks_available: available,
+          marks_awarded: awarded,
+          satisfied: awarded > 0,
+          cited_line_ids: cited,
+          comment: null,
+        },
+      ],
+      feedback: null,
+      confidence: 0.8,
+      graded_on_partial_text: false,
+      fraction: available ? awarded / available : null,
+      needs_review: false,
+    };
+  }
+
+  it("reports nothing marked before marking has run", () => {
+    expect(summarizeMarks(submission()).marked).toBe(false);
+  });
+
+  it("separates a rubric with no marks from a genuine zero", () => {
+    // A script that was never marked and one that scored nothing look identical
+    // in a total, and only one of them is a result.
+    const rubricOnly = submission({
+      grades: {
+        grades: [grade("A/1", 0, 2, [])],
+        overall_feedback: null,
+        weak_topics: [],
+        committed: false,
+        total_awarded: 0,
+        total_available: 2,
+        review_count: 0,
+      },
+    } as unknown as Partial<Submission>);
+    expect(summarizeMarks(rubricOnly).rubricOnly).toBe(true);
+
+    const scoredZero = submission({
+      grades: {
+        grades: [grade("A/1", 0, 2, ["as:0001"])],
+        overall_feedback: null,
+        weak_topics: [],
+        committed: false,
+        total_awarded: 0,
+        total_available: 2,
+        review_count: 0,
+      },
+    } as unknown as Partial<Submission>);
+    expect(summarizeMarks(scoredZero).rubricOnly).toBe(false);
+    expect(summarizeMarks(scoredZero).marked).toBe(true);
+  });
+});
+
+describe("gradeFor", () => {
+  it("finds the grade for one question", () => {
+    const sub = submission({
+      grades: {
+        grades: [{ qid: "A/2", marks_awarded: 1, marks_available: 2, rubric_points: [] }],
+        overall_feedback: null,
+        weak_topics: [],
+        committed: false,
+        total_awarded: 1,
+        total_available: 2,
+        review_count: 0,
+      },
+    } as unknown as Partial<Submission>);
+    expect(gradeFor(sub, "A/2")?.marks_awarded).toBe(1);
+    expect(gradeFor(sub, "A/1")).toBeUndefined();
+  });
+
+  it("is undefined before marking has run", () => {
+    expect(gradeFor(submission(), "A/1")).toBeUndefined();
+  });
+});
+
+describe("stems", () => {
+  // "2. Answer the following:" is a heading. It is kept as a question because the
+  // paper printed it and the teacher expects to see it, but it asks nothing.
+  const sub = {
+    ...submission({
+      questions: {
+        questions: [
+          { ...question("A/1", "1.", 0), is_stem: false },
+          { ...question("A/2", "2.", 1, "Answer the following:"), is_stem: true },
+          { ...question("A/2/i", "(i)", 2), is_stem: false },
+        ],
+        sections: [],
+        stems: [],
+        choice_groups: [],
+        gaps: [],
+        total_marks: null,
+      },
+    } as unknown as Partial<Submission>),
+    mapping: {
+      mappings: [
+        mapping("A/1", "answered", [{ page: 0, x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 }]),
+        mapping("A/2", "not_required"),
+        mapping("A/2/i", "unanswered"),
+      ],
+      orphans: [],
+      unassigned_ink_ratio: 0,
+      absence_claims_suppressed: false,
+    },
+  } as unknown as Submission;
+
+  it("is not counted as a question that could be answered", () => {
+    // Otherwise "1 of 3 answered" reports a denominator the paper never asked.
+    const summary = summarize(sub, buildRows(sub));
+    expect(summary.total).toBe(2);
+    expect(summary.answered).toBe(1);
+    expect(summary.notAnswered).toBe(1);
+  });
+
+  it("is still listed, so the paper's numbering is preserved", () => {
+    expect(buildRows(sub).map((r) => r.question.label_raw)).toEqual(["1.", "2.", "(i)"]);
   });
 });

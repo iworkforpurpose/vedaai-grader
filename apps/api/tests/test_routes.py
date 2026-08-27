@@ -269,3 +269,126 @@ def test_real_handwriting_end_to_end(tmp_path, monkeypatch) -> None:
         )
     finally:
         app.dependency_overrides.clear()
+
+
+class TestGradingEndpoint:
+    """The marking endpoint.
+
+    Marking is requested rather than automatic. Locating answers is useful on its
+    own and must not wait behind it, and a proposed score is hard to unsee — so
+    the teacher asks for it.
+    """
+
+    def test_an_unknown_submission_is_a_404(self, client) -> None:
+        assert client.post("/submissions/nope/grades").status_code == 404
+
+    def test_an_untranscribed_sheet_is_refused_with_a_reason(self, client) -> None:
+        # The state this fixture is actually in: recognition is disabled, so the
+        # answer sheet has no text. Marking must say that rather than mark an
+        # empty script and report a zero.
+        paper, _ = question_paper()
+        sheet, _ = answer_sheet_with_text()
+        submission_id = client.post(
+            "/submissions",
+            files={
+                "question_paper": ("paper.pdf", paper, "application/pdf"),
+                "answer_sheet": ("student.pdf", sheet, "application/pdf"),
+            },
+        ).json()["submission_id"]
+
+        refused = client.post(f"/submissions/{submission_id}/grades")
+        assert refused.status_code == 409
+        assert "never transcribed" in refused.json()["detail"]
+
+    def test_it_returns_a_rubric_with_no_model_configured(self, client, monkeypatch) -> None:
+        # The degraded path is the one most likely to run, so it is the one worth
+        # testing end to end: rubric and located answer, no invented marks.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        submission_id = _submission_ready_to_mark(client)
+
+        graded = client.post(f"/submissions/{submission_id}/grades")
+        assert graded.status_code == 200
+        body = graded.json()
+
+        assert body["grades"]["grades"], "expected one grade per question"
+        assert body["grades"]["total_awarded"] == 0.0
+        assert body["grades"]["committed"] is False
+        assert any("not marked automatically" in w for w in body["warnings"])
+
+    def test_the_marks_available_come_from_the_paper(self, client, monkeypatch) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        submission_id = _submission_ready_to_mark(client)
+
+        body = client.post(f"/submissions/{submission_id}/grades").json()
+        assert body["grades"]["total_available"] > 0
+        for grade in body["grades"]["grades"]:
+            assert grade["rubric_points"], grade["qid"]
+
+    def test_marking_twice_replaces_rather_than_accumulates(self, client, monkeypatch) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        submission_id = _submission_ready_to_mark(client)
+
+        first = client.post(f"/submissions/{submission_id}/grades").json()["grades"]
+        second = client.post(f"/submissions/{submission_id}/grades").json()["grades"]
+        assert len(second["grades"]) == len(first["grades"])
+
+
+def _submission_ready_to_mark(client: TestClient) -> str:
+    """A submission with answer-sheet lines, which this fixture cannot produce.
+
+    Recognition is disabled for these tests, so the sheet arrives with no text.
+    Attaching a small index directly is what lets the marking route be exercised
+    over HTTP without a minute of model loading — and the route is worth covering
+    because its guards and its degraded path are the parts most likely to be hit.
+    """
+    from vedaai_contracts import (
+        AnswerStatus,
+        BBox,
+        DocumentKind,
+        Line,
+        LineIndex,
+        Mapping,
+        MappingResult,
+        OcrEngine,
+    )
+
+    paper, _ = question_paper()
+    sheet, _ = answer_sheet_with_text()
+    submission_id = client.post(
+        "/submissions",
+        files={
+            "question_paper": ("paper.pdf", paper, "application/pdf"),
+            "answer_sheet": ("student.pdf", sheet, "application/pdf"),
+        },
+    ).json()["submission_id"]
+
+    submission = store_module.store.get(submission_id)
+    assert submission is not None and submission.questions is not None
+
+    line = Line(
+        line_id="as:0001",
+        kind=DocumentKind.ANSWER_SHEET,
+        page=0,
+        box=BBox(x0=0.1, y0=0.1, x1=0.9, y1=0.14),
+        text="Light bends when it passes from one medium into another.",
+        confidence=0.9,
+        engine=OcrEngine.PADDLE_OCR_VL,
+    )
+    submission.answer_sheet_lines = LineIndex(
+        kind=DocumentKind.ANSWER_SHEET, lines=[line], engine=OcrEngine.PADDLE_OCR_VL
+    )
+    first = submission.questions.questions[0]
+    submission.mapping = MappingResult(
+        mappings=[
+            Mapping(
+                qid=first.qid,
+                status=AnswerStatus.ANSWERED,
+                start_line_id=line.line_id,
+                end_line_id=line.line_id,
+            )
+        ],
+        orphans=[],
+        unassigned_ink_ratio=0.0,
+    )
+    store_module.store.put(submission)
+    return submission_id

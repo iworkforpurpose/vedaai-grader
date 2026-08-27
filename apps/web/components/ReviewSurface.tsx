@@ -3,19 +3,23 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { API_BASE } from "@/lib/api";
-import type { Page, Submission } from "@/lib/contracts";
+import type { Page, RubricPoint, Submission } from "@/lib/contracts";
 import {
   applyReassignment,
   blockPreview,
   blocksOf,
   buildRows,
+  citationHighlight,
+  gradeFor,
   highlightByPage,
   questionAtPoint,
   summarize,
+  summarizeMarks,
   untranscribedInkByPage,
 } from "@/lib/review";
 import { firstPage } from "@/lib/geometry";
 import { AnswerSheetView } from "./AnswerSheetView";
+import { GradePanel } from "./GradePanel";
 import { QuestionList } from "./QuestionList";
 import { StatusChip } from "./StatusChip";
 
@@ -41,11 +45,25 @@ export function ReviewSurface({
   const [reassignBlock, setReassignBlock] = useState<string | null>(null);
   const [showUntranscribed, setShowUntranscribed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [citedPoint, setCitedPoint] = useState<RubricPoint | null>(null);
+  const [marking, setMarking] = useState(false);
 
   const rows = useMemo(() => buildRows(submission), [submission]);
   const summary = useMemo(() => summarize(submission, rows), [submission, rows]);
+  const marks = useMemo(() => summarizeMarks(submission), [submission]);
   const selected = rows.find((r) => r.question.qid === selectedQid) ?? null;
-  const highlights = useMemo(() => highlightByPage(selected?.mapping), [selected]);
+  const grade = selected ? gradeFor(submission, selected.question.qid) : undefined;
+
+  // A cited rubric point narrows the highlight to the lines behind that one mark.
+  // Without it the teacher sees the whole answer lit up and still has to find the
+  // sentence the mark rests on, which is the work the citation exists to save.
+  const highlights = useMemo(
+    () =>
+      citedPoint
+        ? citationHighlight(submission, citedPoint.cited_line_ids)
+        : highlightByPage(selected?.mapping),
+    [citedPoint, submission, selected],
+  );
   const ink = useMemo(() => untranscribedInkByPage(submission), [submission]);
   const selectedBlocks = useMemo(
     () => blocksOf(submission, selected?.mapping ?? undefined),
@@ -62,6 +80,7 @@ export function ReviewSurface({
 
   function select(qid: string): void {
     setSelectedQid(qid);
+    setCitedPoint(null);
     const row = rows.find((r) => r.question.qid === qid);
     const boxes = row?.mapping?.highlight?.boxes ?? [];
     const page = firstPage(boxes);
@@ -78,6 +97,7 @@ export function ReviewSurface({
     const hit = questionAtPoint(rows, page, x, y);
     if (hit) {
       setSelectedQid(hit.question.qid);
+      setCitedPoint(null);
       setNotice(null);
       return;
     }
@@ -111,6 +131,27 @@ export function ReviewSurface({
       setNotice(null);
     } catch {
       setNotice("The change was not saved — the service could not be reached.");
+    }
+  }
+
+  async function proposeMarks(): Promise<void> {
+    setMarking(true);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/submissions/${submission.submission_id}/grades`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+        setNotice(body?.detail ?? "Marking could not be run.");
+        return;
+      }
+      setSubmission((await response.json()) as Submission);
+    } catch {
+      setNotice("Marking could not be run — the service could not be reached.");
+    } finally {
+      setMarking(false);
     }
   }
 
@@ -153,9 +194,48 @@ export function ReviewSurface({
           )}
         </span>
 
-        <label
+        {marks.marked && (
+          <span style={{ fontSize: "var(--fs-sm)" }}>
+            {marks.rubricOnly ? (
+              <>Rubric ready · {marks.available} marks to award</>
+            ) : (
+              <>
+                <strong>
+                  {marks.awarded} / {marks.available}
+                </strong>{" "}
+                proposed
+                {marks.needsReview > 0 && (
+                  <span style={{ color: "var(--status-review)" }}>
+                    {" "}
+                    · {marks.needsReview} to check
+                  </span>
+                )}
+              </>
+            )}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void proposeMarks()}
+          disabled={marking}
           style={{
             marginLeft: "auto",
+            font: "inherit",
+            fontSize: "var(--fs-sm)",
+            padding: "2px 10px",
+            border: "1px solid var(--accent)",
+            borderRadius: "var(--radius-sm)",
+            background: "transparent",
+            color: "var(--accent)",
+            cursor: marking ? "progress" : "pointer",
+          }}
+        >
+          {marking ? "Marking…" : marks.marked ? "Mark again" : "Propose marks"}
+        </button>
+
+        <label
+          style={{
             display: "flex",
             alignItems: "center",
             gap: "var(--sp-2)",
@@ -343,6 +423,18 @@ export function ReviewSurface({
                   </button>
                 ))}
             </div>
+          )}
+
+          {selected !== null && grade !== undefined && (
+            <GradePanel
+              grade={grade}
+              citedPointId={citedPoint?.point_id ?? null}
+              onCite={(point) =>
+                setCitedPoint((current) =>
+                  current?.point_id === point.point_id ? null : point,
+                )
+              }
+            />
           )}
 
           {answerPages.length === 0 ? (

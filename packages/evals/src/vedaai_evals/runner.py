@@ -331,6 +331,49 @@ def report(
     return 1 if problems else 0
 
 
+#: Records which version of the generator produced the fixtures on disk.
+_STAMP = ".generator"
+
+
+def _generator_fingerprint() -> str:
+    """A hash of the code that builds the synthetic cases."""
+    import hashlib
+
+    from . import generate as generate_module
+    from . import schema as schema_module
+
+    digest = hashlib.sha256()
+    for module in (generate_module, schema_module):
+        digest.update(Path(module.__file__).read_bytes())
+    return digest.hexdigest()
+
+
+def _generator_changed(root: Path) -> bool:
+    """Whether the fixtures on disk were built by a different generator.
+
+    Regenerating on a source change rather than only when asked, because the
+    alternative silently reports the wrong number. These fixtures exist to answer
+    "did that change help", and scoring a new algorithm against a paper generated
+    before it — with a structure it was written to handle absent from the set —
+    produces a figure that looks like a result and is not one. Observed exactly
+    that way: a question shape was added to the paper and the reported accuracy
+    did not move, because nothing had been rebuilt.
+
+    Fingerprinted rather than compared by timestamp, so a checkout or a copy
+    cannot make stale fixtures look current.
+    """
+    if not root.is_dir():
+        return True
+    stamp = root / _STAMP
+    if not stamp.is_file():
+        return True
+    return stamp.read_text().strip() != _generator_fingerprint()
+
+
+def _record_generator(root: Path) -> None:
+    (root / _STAMP).write_text(_generator_fingerprint() + "\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Score the grader against the golden set.")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
@@ -358,9 +401,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     synthetic_root = args.root / "synthetic"
-    if args.regenerate or not synthetic_root.is_dir():
+    if args.regenerate or _generator_changed(synthetic_root):
         synthetic_root.mkdir(parents=True, exist_ok=True)
         generate_all(synthetic_root)
+        _record_generator(synthetic_root)
 
     samples: list[tuple[GoldenSample, Path]] = [
         (s, synthetic_root / s.sample_id) for s in load_set(synthetic_root)

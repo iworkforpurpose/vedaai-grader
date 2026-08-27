@@ -20,6 +20,7 @@ import type {
   MappingResult,
   PageBox,
   Question,
+  QuestionGrade,
   Submission,
 } from "./contracts";
 
@@ -134,11 +135,15 @@ export interface ReviewSummary {
  */
 export function summarize(submission: Submission, rows: QuestionRow[]): ReviewSummary {
   const result: MappingResult | null = submission.mapping;
+  // Stems are excluded from every count. "6 of 22 answered" is wrong if some of
+  // those 22 are headings that could not be answered — the denominator has to be
+  // the number of questions the paper actually asked.
+  const asked = rows.filter((r) => !r.question.is_stem);
   return {
-    total: rows.length,
-    answered: rows.filter((r) => r.status === "answered" || r.status === "ocr_failed").length,
-    notAnswered: rows.filter((r) => r.status === "unanswered").length,
-    needsAttention: rows.filter((r) => r.presentation.needsAttention).length,
+    total: asked.length,
+    answered: asked.filter((r) => r.status === "answered" || r.status === "ocr_failed").length,
+    notAnswered: asked.filter((r) => r.status === "unanswered").length,
+    needsAttention: asked.filter((r) => r.presentation.needsAttention).length,
     absenceSuppressed: result?.absence_claims_suppressed ?? false,
     orphanCount: result?.orphans.length ?? 0,
   };
@@ -329,4 +334,71 @@ export function blockPreview(block: AnswerBlock): string {
   // handwriting the recognizer failed on. Name it by where it is.
   const page = block.pages_spanned[0];
   return page === undefined ? "writing with no readable text" : `writing on page ${page + 1}`;
+}
+
+
+/** The grade for one question, if the submission has been marked. */
+export function gradeFor(submission: Submission, qid: string): QuestionGrade | undefined {
+  return submission.grades?.grades.find((grade) => grade.qid === qid);
+}
+
+/**
+ * Where the lines a rubric point cites actually are.
+ *
+ * This is what makes a mark checkable rather than merely plausible. The model
+ * named lines and never coordinates; resolving those names here is what turns a
+ * citation into something the teacher can look at, and a citation that cannot be
+ * resolved shows as nothing rather than as a rectangle over the wrong place.
+ */
+export function citationHighlight(
+  submission: Submission,
+  lineIds: readonly string[],
+): Map<number, PageBox[]> {
+  const wanted = new Set(lineIds);
+  const grouped = new Map<number, PageBox[]>();
+
+  for (const line of submission.answer_sheet_lines?.lines ?? []) {
+    if (!wanted.has(line.line_id)) continue;
+    const existing = grouped.get(line.page);
+    const entry = { page: line.page, box: line.box };
+    if (existing) existing.push(entry);
+    else grouped.set(line.page, [entry]);
+  }
+  return grouped;
+}
+
+export interface MarkSummary {
+  awarded: number;
+  available: number;
+  /** Questions whose marks a teacher should look at before accepting them. */
+  needsReview: number;
+  /** True once marking has run at all. */
+  marked: boolean;
+  /** True when marking produced a rubric but proposed no marks. */
+  rubricOnly: boolean;
+}
+
+/**
+ * The marking summary for the header.
+ *
+ * ``rubricOnly`` is reported separately from a genuine zero. A script that was
+ * never marked and a script that scored nothing look identical in a total, and
+ * only one of them is a result.
+ */
+export function summarizeMarks(submission: Submission): MarkSummary {
+  const grades = submission.grades;
+  if (!grades) {
+    return { awarded: 0, available: 0, needsReview: 0, marked: false, rubricOnly: false };
+  }
+
+  const judged = grades.grades.some((grade) =>
+    grade.rubric_points.some((point) => point.cited_line_ids.length > 0),
+  );
+  return {
+    awarded: grades.total_awarded,
+    available: grades.total_available,
+    needsReview: grades.review_count,
+    marked: true,
+    rubricOnly: !judged,
+  };
 }

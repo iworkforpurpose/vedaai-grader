@@ -65,7 +65,11 @@ class TestQuestionPaper:
     def test_marks_are_printed_and_recorded(self) -> None:
         data, truth = generate.build_question_paper()
         text = pdf_text(data)
-        assert all(q.marks is not None for q in truth)
+        stems = {q.qid for q in generate.PAPER if q.is_stem}
+        # Every question that asks something carries an allocation. A stem does
+        # not, and that absence is the thing that identifies it.
+        assert all(q.marks is not None for q in truth if q.qid not in stems)
+        assert all(q.marks is None for q in truth if q.qid in stems)
         assert "[5]" in text
 
 
@@ -188,7 +192,13 @@ class TestCaseStructures:
         data, _answers = generate.build_answer_sheet(config)
         text = pdf_text(data)
 
-        positions = [text.index(q.answer[:24]) for q in generate.PAPER if q.answer[:24] in text]
+        # ``q.answer`` is empty for a stem, and an empty needle is found at index
+        # 0 — which would silently break the ordering check rather than skip.
+        positions = [
+            text.index(q.answer[:24])
+            for q in generate.PAPER
+            if q.answer and q.answer[:24] in text
+        ]
         assert positions != sorted(positions), "the shuffle produced the printed order"
 
     def test_baseline_is_in_order_and_complete(self) -> None:
@@ -196,8 +206,17 @@ class TestCaseStructures:
         data, answers = generate.build_answer_sheet(config)
         text = pdf_text(data)
 
-        assert all(a.is_answered for a in answers)
-        positions = [text.index(q.answer[:24]) for q in generate.PAPER if q.answer[:24] in text]
+        stems = {q.qid for q in generate.PAPER if q.is_stem}
+        assert all(a.is_answered for a in answers if a.qid not in stems)
+        # A stem is never answered, and must not be expected to be.
+        assert all(not a.is_answered for a in answers if a.qid in stems)
+        # ``q.answer`` is empty for a stem, and an empty needle is found at index
+        # 0 — which would break the ordering check rather than skip the entry.
+        positions = [
+            text.index(q.answer[:24])
+            for q in generate.PAPER
+            if q.answer and q.answer[:24] in text
+        ]
         assert positions == sorted(positions)
 
     def test_the_combined_case_exercises_several_structures_at_once(self) -> None:

@@ -26,6 +26,14 @@ packages/contracts/schema/
 # rendered page images — regenerable, and may contain real student work
 .pagestore/
 
+# golden-set fixtures — derived, and partly student work
+#
+# The synthetic cases rebuild themselves whenever the generator changes, so a
+# tracked copy adds binary churn and cannot go stale in a way anyone would notice.
+# The adopted real samples are copies of handwritten scripts and rendered pages of
+# them, which do not belong in version control at all.
+packages/generated/
+
 # tooling scratch
 .playwright-mcp/
 .pytest_cache/
