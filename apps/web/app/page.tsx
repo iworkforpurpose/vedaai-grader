@@ -29,18 +29,10 @@ export default async function Home(): Promise<React.JSX.Element> {
   const dpiAgrees = health !== null && health.render_dpi === EXPECTED_RENDER_DPI;
 
   return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "var(--sp-7) var(--sp-5)",
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--sp-5)",
-      }}
-    >
-      <header>
+    <main className="upload-page">
+      <header className="upload-hero">
         <p
+          className="eyebrow"
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: "var(--fs-xs)",
@@ -52,28 +44,13 @@ export default async function Home(): Promise<React.JSX.Element> {
         >
           Teacher review
         </p>
-        <h1 style={{ fontSize: "var(--fs-xl)", margin: 0, letterSpacing: "-0.02em" }}>
-          Answer Sheet Review
-        </h1>
-        <p style={{ color: "var(--text-2)", margin: "var(--sp-2) 0 0" }}>
-          Upload a question paper and a handwritten answer sheet to see which question was
-          answered, where the answer is, and which questions were left unanswered.
-        </p>
+        <h1>Grade handwritten answers with confidence.</h1>
+        <p>Upload an exam paper and answer sheet to map answers, surface gaps, and review marks in one focused workspace.</p>
       </header>
 
-      <section
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderLeft: `3px solid ${
-            error ? "var(--status-missing)" : dpiAgrees ? "var(--status-answered)" : "var(--status-review)"
-          }`,
-          borderRadius: "var(--radius)",
-          padding: "var(--sp-4) var(--sp-5)",
-          boxShadow: "var(--shadow)",
-        }}
-      >
-        <h2 style={{ fontSize: "var(--fs-base)", margin: "0 0 var(--sp-3)" }}>Service check</h2>
+      <div className="upload-grid">
+        <section className="upload-card service-card">
+          <div className="card-heading"><span className="step-number">01</span><h2>Service check</h2></div>
 
         {error !== null ? (
           <p style={{ margin: 0, color: "var(--status-missing)" }}>{error}</p>
@@ -110,20 +87,13 @@ export default async function Home(): Promise<React.JSX.Element> {
             </dd>
           </dl>
         )}
-      </section>
+        </section>
 
-      <section
-        style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "var(--sp-5)",
-          boxShadow: "var(--shadow)",
-        }}
-      >
-        <h2 style={{ fontSize: "var(--fs-lg)", margin: "0 0 var(--sp-4)" }}>Upload</h2>
+        <section className="upload-card upload-card-main">
+          <div className="card-heading"><span className="step-number">02</span><h2>Upload documents</h2></div>
         <UploadForm />
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

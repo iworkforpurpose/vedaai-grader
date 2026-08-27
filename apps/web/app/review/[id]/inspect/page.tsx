@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { DebugReview } from "@/components/DebugReview";
-import { API_BASE } from "@/lib/api";
+import { INTERNAL_API_BASE } from "@/lib/api";
 import type { InkRegion, LineIndex, Submission } from "@/lib/contracts";
 
 /**
@@ -15,7 +15,7 @@ import type { InkRegion, LineIndex, Submission } from "@/lib/contracts";
 export const dynamic = "force-dynamic";
 
 async function getJson<T>(path: string): Promise<T | null> {
-  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const response = await fetch(`${INTERNAL_API_BASE}${path}`, { cache: "no-store" });
   // A 404 on a line index is expected, not exceptional: a document without a
   // configured transcription engine simply has none.
   if (!response.ok) return null;

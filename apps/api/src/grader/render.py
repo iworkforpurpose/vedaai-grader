@@ -25,7 +25,7 @@ import fitz  # PyMuPDF
 from vedaai_contracts import DocumentKind, Page, SourceFile
 from vedaai_contracts.geometry import RENDER_DPI
 
-from .storage import PageStore
+from .storage import AnyPageStore
 
 #: Refuse documents beyond this many pages. A grading run is one paper and one
 #: student's script; anything far larger is a misuse or an accident, and
@@ -210,7 +210,7 @@ def inspect(data: bytes, filename: str, kind: DocumentKind) -> SourceFile:
 def render_pages(
     data: bytes,
     source: SourceFile,
-    page_store: PageStore,
+    page_store: AnyPageStore,
     *,
     dpi: int = RENDER_DPI,
 ) -> Iterator[RenderedPage]:

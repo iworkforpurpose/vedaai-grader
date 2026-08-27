@@ -20,13 +20,13 @@ from vedaai_contracts import DocumentKind, InkRegion, LineIndex, Submission
 
 from . import align, grading, pipeline, regions, render
 from .render import UnsupportedDocument
-from .storage import PageStore, get_page_store
+from .storage import AnyPageStore, get_page_store
 from .store import SubmissionStore, get_store
 
 router = APIRouter()
 
 StoreDep = Annotated[SubmissionStore, Depends(get_store)]
-PageStoreDep = Annotated[PageStore, Depends(get_page_store)]
+PageStoreDep = Annotated[AnyPageStore, Depends(get_page_store)]
 
 
 @router.post("/submissions", response_model=Submission, tags=["submissions"])

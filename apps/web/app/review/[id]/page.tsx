@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ReviewSurface } from "@/components/ReviewSurface";
-import { API_BASE } from "@/lib/api";
+import { INTERNAL_API_BASE } from "@/lib/api";
 import type { Submission } from "@/lib/contracts";
 
 /**
@@ -20,7 +20,7 @@ export default async function ReviewPage({
 }): Promise<React.JSX.Element> {
   const { id } = await params;
 
-  const response = await fetch(`${API_BASE}/submissions/${id}`, { cache: "no-store" });
+  const response = await fetch(`${INTERNAL_API_BASE}/submissions/${id}`, { cache: "no-store" });
   if (!response.ok) {
     return (
       <main style={{ maxWidth: 640, margin: "0 auto", padding: "var(--sp-7) var(--sp-5)" }}>

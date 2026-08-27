@@ -52,6 +52,7 @@ export function UploadForm(): React.JSX.Element {
   return (
     <form
       onSubmit={onSubmit}
+      className="upload-form"
       style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}
     >
       <Field
@@ -67,6 +68,7 @@ export function UploadForm(): React.JSX.Element {
 
       <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
         <button
+          className="process-button"
           type="submit"
           disabled={busy}
           style={{
@@ -131,7 +133,7 @@ function Field({
   // opens a modal dialog, that cannot survive it.
   const id = `upload-${name}`;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
+    <div className="upload-field" style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
       <label htmlFor={id} style={{ fontWeight: 600 }}>
         {label}
       </label>
@@ -139,6 +141,7 @@ function Field({
         {hint}
       </span>
       <input
+        className="file-input"
         id={id}
         type="file"
         name={name}

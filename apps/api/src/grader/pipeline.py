@@ -35,7 +35,7 @@ from .ocr import (
     select_engine,
     trusts_own_order,
 )
-from .storage import PageStore
+from .storage import AnyPageStore
 from .store import SubmissionStore
 
 
@@ -44,7 +44,7 @@ def ingest_document(
     submission: Submission,
     data: bytes,
     source: SourceFile,
-    page_store: PageStore,
+    page_store: AnyPageStore,
     submission_store: SubmissionStore,
     engine_override: TranscriptionEngine | None = None,
 ) -> tuple[list[Page], LineIndex | None, list[str], list[InkRegion]]:
@@ -225,7 +225,7 @@ def ingest(
     submission_id: str,
     question_paper: tuple[bytes, SourceFile] | None,
     answer_sheet: tuple[bytes, SourceFile] | None,
-    page_store: PageStore,
+    page_store: AnyPageStore,
     submission_store: SubmissionStore,
     answer_engine_override: TranscriptionEngine | None = None,
 ) -> Submission:

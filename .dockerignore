@@ -1,0 +1,27 @@
+# Student work and downloaded corpora. Never in an image.
+data/
+packages/generated/
+.pagestore/
+
+# Build output and caches, rebuilt inside the image.
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+.venv/
+**/.venv/
+.turbo/
+**/.turbo/
+__pycache__/
+**/__pycache__/
+.uv-cache/
+
+# Local configuration. The task definition supplies these, and baking a key into
+# an image layer is how it ends up in a registry.
+.env
+.env.*
+!.env.example
+
+.git/
+.playwright-mcp/
+samples/
