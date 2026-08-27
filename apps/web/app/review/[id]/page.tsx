@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { DebugReview } from "@/components/DebugReview";
 import { API_BASE } from "@/lib/api";
-import type { LineIndex, Submission } from "@/lib/contracts";
+import type { InkRegion, LineIndex, Submission } from "@/lib/contracts";
 
 /**
  * Geometry inspection surface for one submission.
@@ -43,9 +43,10 @@ export default async function ReviewPage({
     );
   }
 
-  const [questionLines, answerLines] = await Promise.all([
+  const [questionLines, answerLines, inkRegions] = await Promise.all([
     getJson<LineIndex>(`/submissions/${id}/lines/question_paper`),
     getJson<LineIndex>(`/submissions/${id}/lines/answer_sheet`),
+    getJson<InkRegion[]>(`/submissions/${id}/ink`),
   ]);
 
   return (
@@ -87,6 +88,7 @@ export default async function ReviewPage({
         submission={submission}
         questionLines={questionLines}
         answerLines={answerLines}
+        inkRegions={inkRegions ?? []}
       />
     </main>
   );

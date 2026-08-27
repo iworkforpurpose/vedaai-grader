@@ -9,7 +9,7 @@ The most important thing defined here is the coordinate contract in
 ``geometry``. Read that module before touching anything spatial.
 """
 
-from .answers import Anchor, AnchorStatus, AnswerBlock, InkRegion
+from .answers import Anchor, AnchorStatus, AnswerBlock, InkRegion, InkRegionKind
 from .documents import DocumentKind, Page, SourceFile
 from .geometry import HGBENCH_SCALE, RENDER_DPI, BBox, PageBox
 from .grading import GradeResult, QuestionGrade, RubricPoint
@@ -92,6 +92,7 @@ __all__ = [
     "AnswerBlock",
     "Anchor",
     "AnchorStatus",
+    "InkRegionKind",
     "AnswerStatus",
     "MatchSignal",
     "MatchEvidence",

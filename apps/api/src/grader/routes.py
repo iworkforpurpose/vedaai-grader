@@ -16,7 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from vedaai_contracts import DocumentKind, LineIndex, Submission
+from vedaai_contracts import DocumentKind, InkRegion, LineIndex, Submission
 
 from . import pipeline, render
 from .render import UnsupportedDocument
@@ -119,6 +119,24 @@ def get_lines(submission_id: str, kind: DocumentKind, store: StoreDep) -> LineIn
             + "; ".join(submission.warnings),
         )
     return index
+
+
+@router.get(
+    "/submissions/{submission_id}/ink",
+    response_model=list[InkRegion],
+    tags=["submissions"],
+)
+def get_ink_regions(submission_id: str, store: StoreDep) -> list[InkRegion]:
+    """Ink regions for the answer sheet.
+
+    The second geometry source, and the answer to two things transcription
+    cannot report: where a diagram is, and where the recognizer missed a line
+    that is nonetheless covered in ink.
+    """
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+    return submission.ink_regions
 
 
 @router.get("/pages/{key:path}", tags=["pages"])

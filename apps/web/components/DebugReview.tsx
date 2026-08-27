@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { DocumentKind, LineIndex, Page, Submission } from "@/lib/contracts";
+import type { DocumentKind, InkRegion, LineIndex, Page, Submission } from "@/lib/contracts";
 import { DebugOverlay } from "./DebugOverlay";
+import { InkOverlay, summarizeInk } from "./InkOverlay";
 import { PageCanvas } from "./PageCanvas";
 
 /**
@@ -21,14 +22,19 @@ export function DebugReview({
   submission,
   questionLines,
   answerLines,
+  inkRegions,
 }: {
   submission: Submission;
   questionLines: LineIndex | null;
   answerLines: LineIndex | null;
+  inkRegions: readonly InkRegion[];
 }): React.JSX.Element {
   const [kind, setKind] = useState<DocumentKind>("question_paper");
   const [showWords, setShowWords] = useState(false);
   const [showText, setShowText] = useState(true);
+  const [showInk, setShowInk] = useState(false);
+  const [showNoise, setShowNoise] = useState(false);
+  const [orphansOnly, setOrphansOnly] = useState(false);
 
   const index = kind === "question_paper" ? questionLines : answerLines;
   const pages = useMemo(
@@ -47,6 +53,19 @@ export function DebugReview({
   }, [index]);
 
   const lowConfidence = (index?.lines ?? []).filter((l) => l.is_low_confidence).length;
+
+  // Ink exists only for the answer sheet; a printed paper has no student marking.
+  const inkForKind = kind === "answer_sheet" ? inkRegions : [];
+  const inkByPage = useMemo(() => {
+    const out = new Map<number, InkRegion[]>();
+    for (const region of inkForKind) {
+      const bucket = out.get(region.page);
+      if (bucket) bucket.push(region);
+      else out.set(region.page, [region]);
+    }
+    return out;
+  }, [inkForKind]);
+  const inkSummary = useMemo(() => summarizeInk(inkForKind), [inkForKind]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
@@ -75,6 +94,21 @@ export function DebugReview({
         />
         <Toggle checked={showText} onChange={setShowText} label="Line IDs" />
         <Toggle checked={showWords} onChange={setShowWords} label="Word boxes" />
+        {kind === "answer_sheet" && (
+          <>
+            <Toggle checked={showInk} onChange={setShowInk} label="Ink" />
+            {showInk && (
+              <>
+                <Toggle
+                  checked={orphansOnly}
+                  onChange={setOrphansOnly}
+                  label="Untranscribed only"
+                />
+                <Toggle checked={showNoise} onChange={setShowNoise} label="Not-the-page" />
+              </>
+            )}
+          </>
+        )}
 
         <span
           style={{
@@ -87,6 +121,9 @@ export function DebugReview({
           {pages.length} pages · {index?.lines.length ?? 0} lines
           {index ? ` · ${index.engine}` : ""}
           {lowConfidence > 0 ? ` · ${lowConfidence} low-confidence` : ""}
+          {showInk && inkForKind.length > 0
+            ? ` · ink: ${inkSummary.substantive} regions, ${inkSummary.orphans} untranscribed`
+            : ""}
         </span>
       </div>
 
@@ -128,6 +165,13 @@ export function DebugReview({
               showWords={showWords}
               showText={showText}
             />
+            {showInk && (
+              <InkOverlay
+                regions={inkByPage.get(page.index) ?? []}
+                showNoise={showNoise}
+                orphansOnly={orphansOnly}
+              />
+            )}
           </PageCanvas>
         ))}
       </div>

@@ -21,6 +21,7 @@ export type {
   GradeResult,
   Highlight,
   InkRegion,
+  InkRegionKind,
   Line,
   LineIndex,
   Mapping,

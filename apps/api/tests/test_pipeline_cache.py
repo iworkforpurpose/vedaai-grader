@@ -94,7 +94,7 @@ def ingest_once(
     source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
     submissions.put(Submission(submission_id=submission_id))
 
-    result_pages, index, warnings = pipeline.ingest_document(
+    result_pages, index, warnings, _ink = pipeline.ingest_document(
         submission=submissions.require(submission_id),
         data=data,
         source=source,
