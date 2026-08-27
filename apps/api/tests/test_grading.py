@@ -176,7 +176,7 @@ class TestExcludingAbandonedWork:
         struck = line(1, "an abandoned attempt", y0=0.10)
         index = index_of(struck)
 
-        result = asyncio.run(
+        result, _failures = asyncio.run(
             run.grade_submission(
                 paper=QuestionPaper(
                     questions=[q("A/1", "1.", "Define refraction of light.", 0)], sections=[]
@@ -401,7 +401,7 @@ class TestWholeSubmission:
             unassigned_ink_ratio=0.0,
         )
 
-        result = asyncio.run(
+        result, _failures = asyncio.run(
             run.grade_submission(
                 paper=self.PAPER,
                 mapping=mapping,
@@ -418,7 +418,7 @@ class TestWholeSubmission:
     def test_grades_are_returned_in_printed_order(self) -> None:
         index = index_of(line(1, "anything", y0=0.10))
         mapping = MappingResult(mappings=[], orphans=[], unassigned_ink_ratio=0.0)
-        result = asyncio.run(
+        result, _failures = asyncio.run(
             run.grade_submission(
                 paper=self.PAPER,
                 mapping=mapping,
@@ -434,7 +434,7 @@ class TestWholeSubmission:
         # would be worse than none, so it invents nothing.
         answer = line(1, "Light bends when it changes medium", y0=0.10)
         index = index_of(answer)
-        result = asyncio.run(
+        result, _failures = asyncio.run(
             run.grade_submission(
                 paper=self.PAPER,
                 mapping=mapping_of(
@@ -455,7 +455,7 @@ class TestWholeSubmission:
         # Naming a topic weak because a page could not be read would be a finding
         # invented out of a failure to read.
         index = index_of(line(1, "anything", y0=0.10))
-        result = asyncio.run(
+        result, _failures = asyncio.run(
             run.grade_submission(
                 paper=self.PAPER,
                 mapping=MappingResult(mappings=[], orphans=[], unassigned_ink_ratio=0.0),
@@ -824,3 +824,109 @@ class TestProviderSelection:
             engine.select_grader()
         assert "ANTHROPIC_API_KEY" in str(caught.value)
         assert "OPENAI_API_KEY" in str(caught.value)
+
+
+class TestMarkingFailuresAreNotFatal:
+    """A model that cannot be reached must not fail the submission.
+
+    The rubric is already derived from the paper and the answer already located,
+    which is most of the value. Only the mark is missing, and the message has to
+    name what to change — a raw "401" arrives beside a student's script, where it
+    is not actionable.
+    """
+
+    PAPER = QuestionPaper(
+        questions=[
+            q("A/1", "1.", "Define refraction of light.", 0),
+            q("A/2", "2.", "State the laws of reflection.", 1),
+        ],
+        sections=[],
+    )
+
+    class Refusing:
+        """A grader whose provider always refuses."""
+
+        name = "refusing"
+
+        def __init__(self, error: Exception) -> None:
+            self.error = error
+            self.calls = 0
+
+        async def grade(self, **_kwargs):
+            self.calls += 1
+            raise self.error
+
+    def _run(self, error: Exception):
+        from vedaai_contracts import Mapping
+
+        first = line(1, "Light bends when it changes medium", y0=0.10)
+        second = line(2, "The angles are equal", y0=0.30)
+        index = index_of(first, second)
+        mapping = MappingResult(
+            mappings=[
+                Mapping(
+                    qid="A/1",
+                    status=AnswerStatus.ANSWERED,
+                    start_line_id=first.line_id,
+                    end_line_id=first.line_id,
+                ),
+                Mapping(
+                    qid="A/2",
+                    status=AnswerStatus.ANSWERED,
+                    start_line_id=second.line_id,
+                    end_line_id=second.line_id,
+                ),
+            ],
+            orphans=[],
+            unassigned_ink_ratio=0.0,
+        )
+        grader = self.Refusing(error)
+        result, failures = asyncio.run(
+            run.grade_submission(
+                paper=self.PAPER,
+                mapping=mapping,
+                index=index,
+                grader=grader,
+                excluded_line_ids=set(),
+            )
+        )
+        return result, failures, grader
+
+    def test_the_rubric_still_comes_back(self) -> None:
+        result, _failures, _grader = self._run(RuntimeError("boom"))
+        assert len(result.grades) == 2
+        assert result.total_available > 0
+        assert result.total_awarded == 0.0
+        for grade in result.grades:
+            assert grade.rubric_points, grade.qid
+
+    def test_one_refusal_does_not_discard_the_others(self) -> None:
+        # They run concurrently, so catching around the whole batch would throw
+        # away grades that succeeded beside the one that failed.
+        _result, _failures, grader = self._run(RuntimeError("boom"))
+        assert grader.calls == 2, "every question should still have been attempted"
+
+    def test_the_same_failure_is_reported_once(self) -> None:
+        # A bad key fails identically on every question, and a teacher does not
+        # need to read the same sentence eight times.
+        _result, failures, _grader = self._run(RuntimeError("boom"))
+        assert len(failures) == 1
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("AuthenticationError", "API key was rejected"),
+            ("PermissionDeniedError", "not permitted to use this model"),
+            ("NotFoundError", "model name was not recognised"),
+            ("RateLimitError", "rate limiting"),
+            ("APIConnectionError", "could not be reached"),
+        ],
+    )
+    def test_provider_errors_name_what_to_change(self, name: str, expected: str) -> None:
+        error = type(name, (Exception,), {})("upstream detail")
+        _result, failures, _grader = self._run(error)
+        assert expected in failures[0], failures
+
+    def test_an_unrecognised_failure_still_says_something(self) -> None:
+        _result, failures, _grader = self._run(ValueError("something odd"))
+        assert "something odd" in failures[0]

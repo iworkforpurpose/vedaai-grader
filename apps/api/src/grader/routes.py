@@ -229,13 +229,16 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
         submission.ink_regions, submission.answer_sheet_lines.lines
     )
 
-    submission.grades = await grading.grade_submission(
+    submission.grades, marking_failures = await grading.grade_submission(
         paper=submission.questions,
         mapping=submission.mapping,
         index=submission.answer_sheet_lines,
         grader=grader,
         excluded_line_ids=excluded,
     )
+    for failure in marking_failures:
+        if failure not in submission.warnings:
+            submission.warnings.append(failure)
     store.put(submission)
     return submission
 

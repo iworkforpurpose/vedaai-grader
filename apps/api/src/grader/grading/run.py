@@ -130,13 +130,61 @@ async def grade_submission(
             )
 
         async with semaphore:
-            return await grader.grade(
-                question=question, rubric=spec, index=index, line_ids=line_ids
-            )
+            try:
+                return await grader.grade(
+                    question=question, rubric=spec, index=index, line_ids=line_ids
+                )
+            except Exception as exc:  # noqa: BLE001 - reported, never fatal
+                # A model that cannot be reached is not a failed submission. The
+                # rubric is already derived and the answer already located, which
+                # is most of the value; the mark is what is missing.
+                #
+                # Caught per question rather than around the whole batch because
+                # these run concurrently, and one refused request would otherwise
+                # discard the grades that succeeded beside it.
+                failures.append(_describe(exc))
+                return _ungraded(
+                    question.qid,
+                    spec.marks_available,
+                    spec.criteria,
+                    reason="Could not be marked automatically. The rubric is ready "
+                    "for you.",
+                )
 
+    failures: list[str] = []
     ordered = sorted(paper.questions, key=lambda q: q.print_order)
     grades = await asyncio.gather(*(one(q) for q in ordered))
-    return GradeResult(grades=list(grades), weak_topics=_weak_topics(list(grades), paper))
+    result = GradeResult(grades=list(grades), weak_topics=_weak_topics(list(grades), paper))
+
+    # Deduplicated, because a bad key fails identically on every question and a
+    # teacher does not need to read the same sentence eight times.
+    return result, list(dict.fromkeys(failures))
+
+
+#: Provider errors translated into the thing to change. The raw messages arrive in
+#: a warning beside a student's script, where "401" is not actionable.
+_MARKING_EXPLANATIONS = (
+    ("authenticationerror", "the API key was rejected. Check OPENAI_API_KEY or "
+     "ANTHROPIC_API_KEY in .env."),
+    ("permissiondenied", "the key is valid but not permitted to use this model. "
+     "Try another via GRADER_MODEL."),
+    ("notfounderror", "the model name was not recognised. Set GRADER_MODEL to one "
+     "the account can use."),
+    ("ratelimit", "the provider is rate limiting or the account is out of credit."),
+    ("badrequest", "the provider rejected the request. If GRADER_MODEL was changed, "
+     "it may not support structured output."),
+    ("apiconnection", "the provider could not be reached. Check network access."),
+    ("apitimeout", "the provider timed out."),
+)
+
+
+def _describe(error: Exception) -> str:
+    """A marking failure phrased as something the operator can act on."""
+    name = type(error).__name__.lower()
+    for needle, explanation in _MARKING_EXPLANATIONS:
+        if needle in name:
+            return f"Answers were not marked: {explanation}"
+    return f"Answers were not marked: {type(error).__name__}: {error}"
 
 
 def _answer_lines(entry, index: LineIndex) -> list[str]:
