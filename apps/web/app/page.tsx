@@ -1,5 +1,4 @@
-import { AppShell } from "@/components/AppShell";
-import { UploadForm } from "@/components/UploadForm";
+import { ExamsScreen } from "@/components/ExamsScreen";
 
 /**
  * The Exams tab — the only reachable screen, as scoped.
@@ -13,9 +12,5 @@ import { UploadForm } from "@/components/UploadForm";
 export const dynamic = "force-dynamic";
 
 export default function ExamsPage(): React.JSX.Element {
-  return (
-    <AppShell crumb="Exams">
-      <UploadForm />
-    </AppShell>
-  );
+  return <ExamsScreen />;
 }

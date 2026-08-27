@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { LoadingStage } from "./LoadingStage";
 import {
   ArrowRightIcon,
   ClockGlyph,
@@ -30,7 +31,12 @@ type Slot = "question_paper" | "answer_sheet";
 
 const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp";
 
-export function UploadForm(): React.JSX.Element {
+export function UploadForm({
+  onWorkingChange,
+}: {
+  /** Reported upward so the shell can collapse the rail, as the frame shows it. */
+  onWorkingChange?: (working: boolean) => void;
+}): React.JSX.Element {
   const router = useRouter();
   const [files, setFiles] = useState<Record<Slot, File | null>>({
     question_paper: null,
@@ -47,6 +53,7 @@ export function UploadForm(): React.JSX.Element {
 
     setError(null);
     setBusy(true);
+    onWorkingChange?.(true);
 
     const body = new FormData();
     body.append("question_paper", files.question_paper as File);
@@ -68,7 +75,27 @@ export function UploadForm(): React.JSX.Element {
       setError(`Cannot reach the grader service at ${API_BASE}. Check that it is running.`);
     } finally {
       setBusy(false);
+      onWorkingChange?.(false);
     }
+  }
+
+  /*
+   * The waiting screen, while the request is in flight.
+   *
+   * This is where the loading frame belongs, and it was unreachable. The review
+   * screen renders it when a submission reads `processing`, but the POST only
+   * resolves once ingest has finished — so by the time the router navigates the
+   * status is already `complete`, and the frame could never appear. All a teacher
+   * saw for the better part of a minute was a button that said "Mapping…", which
+   * is indistinguishable from a click that did nothing.
+   *
+   * Rendered from inside this component rather than swapped in by the parent, so
+   * the component that owns the request stays mounted: unmounting it mid-flight
+   * would drop the error path, and a failed upload would hang on this screen
+   * forever instead of coming back and saying why.
+   */
+  if (busy) {
+    return <LoadingStage />;
   }
 
   return (

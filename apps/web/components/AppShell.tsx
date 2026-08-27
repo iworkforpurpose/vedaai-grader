@@ -79,6 +79,14 @@ export function AppShell({
   const [navOpen, setNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(collapsedRail);
 
+  // Follow the prop when it changes, which is the upload-to-loading transition.
+  // `useState` takes it as an initial value only, so without this the rail stayed
+  // expanded through a screen the frame draws collapsed. A manual toggle in
+  // between survives, because this runs only when the prop itself changes.
+  useEffect(() => {
+    setCollapsed(collapsedRail);
+  }, [collapsedRail]);
+
   // Escape closes the drawer — expected of anything that covers the page, and
   // cheap enough that omitting it is just an omission.
   useEffect(() => {
