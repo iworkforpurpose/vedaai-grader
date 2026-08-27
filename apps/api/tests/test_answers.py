@@ -127,11 +127,29 @@ class TestSegmentation:
         text_blocks = [b for b in segment_blocks(lines, faint) if b.line_ids]
         assert len(text_blocks) == 2
 
-    def test_a_page_break_alone_does_not_split(self) -> None:
-        # Answers spanning pages is an explicit requirement, so the page boundary
-        # is left for the aligner and the continuation marker to interpret.
+    def test_a_page_break_splits_unless_continuation_is_stated(self) -> None:
+        # Deferring this to the aligner does not work, because the aligner assigns
+        # whole blocks and cannot divide one — so a page break that never splits
+        # fuses two answers permanently. Observed on a real two-page script: both
+        # programs became one block, the second question read as unanswered, and
+        # the first claimed writing from a page it had nothing to do with.
+        #
+        # The asymmetry runs the other way than it does within a page. A wrongly
+        # split page-spanning answer is repairable by the ``continue`` move; a
+        # wrongly merged pair of answers is repairable by nothing.
         lines = [
-            line(1, "Answer continues", y0=0.90, page=0),
+            line(1, "The first answer ends here.", y0=0.90, page=0),
+            line(2, "A different answer starts here.", y0=0.08, page=1),
+        ]
+        blocks = segment_blocks(lines, [])
+        assert len(blocks) == 2
+        assert [b.pages_spanned for b in blocks] == [[0], [1]]
+
+    def test_a_stated_continuation_carries_an_answer_across_the_break(self) -> None:
+        # The requirement that answers may span pages, honoured on evidence rather
+        # than on assumption.
+        lines = [
+            line(1, "Answer continues, cont. on next page", y0=0.90, page=0),
             line(2, "onto the next page.", y0=0.08, page=1),
         ]
         blocks = segment_blocks(lines, [])

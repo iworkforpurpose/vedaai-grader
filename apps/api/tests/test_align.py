@@ -206,10 +206,9 @@ class TestFourStateStatus:
 
         assert result.by_qid()["A/3"].status is AnswerStatus.UNANSWERED
 
-    def test_ink_with_no_readable_text_is_ocr_failed_not_answered_text(self) -> None:
-        # A diagram, or handwriting the recognizer could not read. Answered, but
-        # nothing gradeable — and very different from blank.
-        diagram = AnswerBlock(
+    @staticmethod
+    def _ink_block() -> AnswerBlock:
+        return AnswerBlock(
             block_id="blk:ink000",
             line_ids=[],
             ink_region_ids=["ink:001"],
@@ -217,12 +216,45 @@ class TestFourStateStatus:
             geometry=[PageBox(page=0, box=BBox(x0=0.1, y0=0.3, x1=0.6, y1=0.6))],
             pages_spanned=[0],
         )
-        result = resolve(paper([REFRACTION]), [diagram], [], [])
-        mapping = result.by_qid()["A/1"]
+
+    @staticmethod
+    def _ink_region() -> InkRegion:
+        return InkRegion(
+            region_id="ink:001",
+            page=0,
+            box=BBox(x0=0.1, y0=0.3, x1=0.6, y1=0.6),
+            kind=InkRegionKind.WRITING,
+            ink_ratio=0.2,
+            pixel_count=40_000,
+        )
+
+    def test_a_drawing_question_accepts_a_region_with_no_text(self) -> None:
+        # The case the ink pipeline exists for. A diagram has no text by nature,
+        # so refusing it would leave every drawn answer unfindable.
+        drawing = q("A/6", "6.", "Draw a labelled diagram of the eye.", 0, ["6"], marks=5)
+        result = resolve(paper([drawing]), [self._ink_block()], [], [self._ink_region()])
+        mapping = result.by_qid()["A/6"]
 
         assert mapping.status is AnswerStatus.OCR_FAILED
         assert mapping.highlight is not None
         assert mapping.highlight.derived_from == "ink_regions"
+
+    def test_an_unreadable_region_is_not_handed_to_a_prose_question(self) -> None:
+        # A region with no readable text says nothing about *which* question it
+        # answers. Attached to one anyway it would vanish from the orphan list and
+        # stop counting towards unassigned ink — and that total is what downgrades
+        # absence claims elsewhere on the page. Reporting it honestly keeps both.
+        result = resolve(paper([REFRACTION]), [self._ink_block()], [], [self._ink_region()])
+        mapping = result.by_qid()["A/1"]
+
+        assert [o.block_id for o in result.orphans] == ["blk:ink000"]
+        assert mapping.status is not AnswerStatus.ANSWERED
+
+    def test_and_it_is_never_reported_as_blank(self) -> None:
+        # The claim that must not be made. There is writing on the page; we simply
+        # could not read it or place it.
+        result = resolve(paper([REFRACTION]), [self._ink_block()], [], [self._ink_region()])
+        assert result.by_qid()["A/1"].status is not AnswerStatus.UNANSWERED
 
     def test_an_optional_question_may_be_skipped(self) -> None:
         # "Attempt any one" satisfied by one answer means the other is not an

@@ -83,6 +83,91 @@ class LexicalOverlap:
         return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
 
+#: Length of the character runs compared by ``CharacterTrigrams``. Three is the
+#: usual choice for fuzzy text matching: long enough to carry meaning, short
+#: enough that a single misread letter only damages the runs it appears in.
+_NGRAM = 3
+
+_NON_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
+
+
+def character_ngrams(text: str, n: int = _NGRAM) -> Counter[str]:
+    """Overlapping character runs of a normalized string.
+
+    Punctuation and spacing are removed first, so ``for(i=0;i<n;i++)`` and
+    ``for (i = 0; i < n; i++)`` are the same text — which matters, because
+    handwriting recognition is inconsistent about exactly those characters.
+    """
+    flat = _NON_ALPHANUMERIC.sub("", text.lower())
+    if len(flat) < n:
+        return Counter([flat] if flat else [])
+    return Counter(flat[i : i + n] for i in range(len(flat) - n + 1))
+
+
+class CharacterTrigrams:
+    """Cosine similarity over character trigrams.
+
+    Adopted after measuring the word-level scorer on real handwritten scripts,
+    where it returned **exactly zero for every question against every answer**.
+    Not weak — dead. Recognition had turned "sorted array" into "forted armayb"
+    and "elements" into "demenbou", and a scorer that needs whole words to match
+    has nothing left to work with. The mapping was left resting on position alone,
+    which is how a page of code answering one question came to be filed under
+    another.
+
+    Trigrams survive that damage because a misread letter only breaks the three
+    runs containing it: "forted" and "sorted" still share "ort", "rte" and "ted".
+    Word overlap is not lost either — identical words share all of their trigrams,
+    so this subsumes the previous measure rather than trading it away.
+
+    The cost is a higher floor, since any two English texts share runs like "the"
+    and "ing". That would have been a problem before and is not now: the aligner
+    subtracts each block's mean similarity across all questions, so a constant
+    shared by every pairing cancels and only the differences between questions
+    survive.
+    """
+
+    def score(self, a: str, b: str) -> float:
+        first = character_ngrams(a)
+        second = character_ngrams(b)
+        if not first or not second:
+            return 0.0
+
+        shared = set(first) & set(second)
+        if not shared:
+            return 0.0
+
+        dot = sum(first[gram] * second[gram] for gram in shared)
+        norm_a = math.sqrt(sum(count * count for count in first.values()))
+        norm_b = math.sqrt(sum(count * count for count in second.values()))
+        return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+
+class StrongerOf:
+    """The higher of two views of the same pair of texts.
+
+    Both measures were built and both were measured, and neither dominates:
+
+      * Word overlap scores slightly better on the synthetic golden set, where the
+        generated answers deliberately reuse the question's vocabulary and exact
+        matches are therefore available and meaningful.
+      * On real handwritten scripts word overlap returns exactly zero for every
+        pairing, because recognition had destroyed the words it needs. Trigrams
+        still find "ort", "rte" and "ted" shared between "sorted" and "forted".
+
+    Taking the maximum keeps each where it works. It can only raise a score that
+    word overlap already found, so the precision of an exact match is never traded
+    away — and where exactness is unavailable, something still answers.
+    """
+
+    def __init__(self) -> None:
+        self._word = LexicalOverlap()
+        self._trigram = CharacterTrigrams()
+
+    def score(self, a: str, b: str) -> float:
+        return max(self._word.score(a, b), self._trigram.score(a, b))
+
+
 #: The default. Swapped by passing a different implementation rather than by
 #: changing this, so an experiment does not require editing the pipeline.
-default_similarity: Similarity = LexicalOverlap()
+default_similarity: Similarity = StrongerOf()

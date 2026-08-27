@@ -12,13 +12,19 @@ Pipeline order within this package:
 5. ``validate`` — check the result against the numbering the paper itself printed.
 """
 
-from .extract import extract, question_lines
+from .expects import EvidenceKind, evidence_kind, expects_a_drawing
+from .extract import extract, mark_stems, question_lines, reads_as_a_heading
 from .furniture import classify_all, section_label
 from .numbering import ParsedLabel, canonical_qid, extract_marks, parse_label
 from .optionality import parse_requirement, satisfied
 from .validate import find_gaps, suspicious
 
 __all__ = [
+    "EvidenceKind",
+    "evidence_kind",
+    "expects_a_drawing",
+    "mark_stems",
+    "reads_as_a_heading",
     "extract",
     "question_lines",
     "classify_all",

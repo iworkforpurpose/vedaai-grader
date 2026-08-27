@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
+from math import inf
 
 from vedaai_contracts import (
     Anchor,
@@ -56,6 +57,7 @@ from vedaai_contracts import (
 )
 
 from .answers.similarity import Similarity, default_similarity
+from .questions.expects import expects_a_drawing
 
 #: Weights on the match score. Starting values, tuned against the golden set.
 #:
@@ -106,10 +108,22 @@ SHARE_LENGTH_FACTOR = 1.4
 SHARE_LENGTH_BONUS = 0.55
 SHARE_LENGTH_PENALTY = -0.9
 
-#: Below this combined score a match is not worth making at all; the aligner
-#: prefers a gap. Without a floor the DP will pair anything with anything rather
-#: than pay a gap penalty.
-MATCH_FLOOR = -0.35
+#: Below this combined score a match is not worth making at all, and the aligner
+#: must prefer a gap.
+#:
+#: Enforced by making such a pairing *unavailable*, which is not what the first
+#: version did. It clamped low scores up to this value with ``max``, and since a
+#: clamped -0.35 beats ``SKIP_QUESTION`` at -0.40, the floor guaranteed the DP
+#: could never choose a gap at all — the precise opposite of the intent stated
+#: here. On a real script with far more blocks than questions the effect was
+#: total: every question received an answer, including ones nothing on the page
+#: addressed.
+#:
+#: The golden set could not see it. There, blocks and questions are roughly equal
+#: in number, so the DP has no surplus blocks it must place somewhere; the fault
+#: only appears when a page carries several times more writing than the paper has
+#: questions, which is the ordinary case for a real answer sheet.
+MATCH_MINIMUM = -0.35
 
 #: Share of substantive ink left unassigned that suppresses absence claims.
 #:
@@ -352,7 +366,19 @@ def _align_segment(
             # Continue and share are only available immediately after a pairing,
             # which is what keeps them from chaining arbitrarily.
             last = table[(i, j, base_state)].move
-            if last is not None and last.kind in {"match", "continue"} and j < m and i > 0:
+            if (
+                last is not None
+                and last.kind in {"match", "continue"}
+                and j < m
+                and i > 0
+                # A region with no readable text needs the same reason to continue
+                # an answer as it needs to start one. Without this the move became
+                # the loophole for exactly what the match gate was added to stop:
+                # unreadable margin fragments were swept into whichever answer
+                # preceded them, and one answer collected the leftover ink of two
+                # pages while every other question read as blank.
+                and _may_continue_into(questions[i - 1], blocks[j])
+            ):
                 bonus = 0.0
                 if blocks[j - 1].has_continuation_marker if j > 0 else False:
                     bonus = 0.5  # the student said so themselves
@@ -365,7 +391,14 @@ def _align_segment(
                     _Move("continue", i - 1, j),
                     (i, j, base_state),
                 )
-            if last is not None and last.kind in {"match", "share"} and i < n and j > 0:
+            if (
+                last is not None
+                and last.kind in {"match", "share"}
+                and i < n
+                and j > 0
+                and last.question_index is not None
+                and _may_share(questions[last.question_index], questions[i], blocks[j - 1])
+            ):
                 _offer(
                     table,
                     (i + 1, j, _State.IN_SHARE),
@@ -412,19 +445,100 @@ def _score_matrix(
     DP with nothing but a position prior that reversal had inverted.
     """
     hints = label_hints or {}
+    raw = [
+        [_semantic(question, block, similarity) for block in blocks] for question in questions
+    ]
+    # Each block's similarities re-expressed as deviations from its own mean.
+    #
+    # Centring says the necessary thing: a block equally similar to every question
+    # is evidence for none of them. It also makes the flat value a text-free block
+    # receives self-cancelling — as an absolute score that constant was a free win
+    # the block could spend against a gap penalty on every question in the paper.
+    #
+    # Standardizing as well — dividing by each block's spread — was tried and
+    # measured, because on real scripts the deviations are around ±0.06 against an
+    # order prior worth ±0.3, which is genuine evidence far too quiet to be heard.
+    # It cost the golden set five points of accuracy and four of mean IoU. The
+    # reason is instructive: dividing by the spread discards magnitude, so a block
+    # that barely prefers one question shouts as loudly as one that clearly does.
+    #
+    # The two regimes differ by nearly an order of magnitude in how much signal
+    # they carry, and no single weight or rescaling serves both. That is not a
+    # scoring problem to be solved but a recognition ceiling to be reported: where
+    # the writing cannot be read, the mapping rests on position, and the honest
+    # response is to say so in the confidence rather than to amplify noise until it
+    # outvotes a real prior.
+    baselines = [
+        sum(raw[i][j] for i in range(len(questions))) / len(questions)
+        for j in range(len(blocks))
+    ]
+
     matrix: list[list[float]] = []
     for i, question in enumerate(questions):
         row: list[float] = []
         for j, block in enumerate(blocks):
+            hint = hints.get((question.qid, block.block_id), 0.0)
+
+            if not _text_free_match_is_plausible(question, block, hint):
+                row.append(-inf)
+                continue
+
             score = (
-                W_SEMANTIC * _semantic(question, block, similarity)
+                W_SEMANTIC * (raw[i][j] - baselines[j])
                 + W_ORDER * _order_prior(i, j, len(questions), len(blocks))
                 + W_LENGTH * _length_plausibility(question, block)
-                + hints.get((question.qid, block.block_id), 0.0)
+                + hint
             )
-            row.append(max(score, MATCH_FLOOR))
+            # Unavailable, not clamped. A pairing this weak must lose to a gap,
+            # and clamping would instead make it beat one.
+            row.append(score if score > MATCH_MINIMUM else -inf)
         matrix.append(row)
     return matrix
+
+
+def _may_continue_into(question: Question, block: AnswerBlock) -> bool:
+    """Whether an answer can plausibly carry on into this block.
+
+    Text blocks always may — that is what the move is for, and the score decides.
+    A text-free block may only when the question expects a drawing or the block
+    says it is a continuation, since otherwise "carries on the same answer" is an
+    assertion with nothing behind it.
+    """
+    if not block.is_text_free and block.text.strip():
+        return True
+    return block.has_continuation_marker or expects_a_drawing(question.text)
+
+
+def _text_free_match_is_plausible(
+    question: Question, block: AnswerBlock, label_hint: float
+) -> bool:
+    """Whether a region with no readable text could be this question's answer.
+
+    A block with no text carries no evidence about *which* question it answers,
+    only that something is written. Left free to compete, such a block attaches to
+    whichever question the position prior happens to favour — on real scripts,
+    unreadable margin fragments were landing on whatever questions were left over,
+    including "Explain why a sorted array...".
+
+    So it needs a reason, and there are exactly two honest ones:
+
+      * The question asks for a drawing. A diagram legitimately has no text, and
+        refusing these would lose the case this whole ink pipeline exists for.
+      * The student wrote a label pointing at it. Their own say-so outranks
+        anything inferred from the text they did not manage to write legibly.
+
+    With neither, the region becomes an orphan — which is not a loss of
+    information but a more accurate report of it. The teacher sees it under
+    "writing that matches no question", the unassigned-ink total rises, and that
+    total is what downgrades every absence claim on the page from "not answered"
+    to "check this". An unreadable region attached to an arbitrary question would
+    have hidden all of that behind a confident answer.
+    """
+    if not block.is_text_free and block.text.strip():
+        return True
+    if label_hint > 0.0:
+        return True
+    return expects_a_drawing(question.text)
 
 
 def _semantic(question: Question, block: AnswerBlock, similarity: Similarity) -> float:
@@ -434,6 +548,34 @@ def _semantic(question: Question, block: AnswerBlock, similarity: Similarity) ->
         # against a gap — leaving a question answered by a drawing unanswered.
         return 0.25
     return similarity.score(question.text, block.text)
+
+
+def _may_share(owner: Question, candidate: Question, block: AnswerBlock) -> bool:
+    """Whether one block can legitimately answer both of these questions.
+
+    Sharing means a student answered several sub-parts of one question in a single
+    run of writing — "11 (a)" and "11 (b)" answered as one paragraph. Two
+    conditions make that plausible, and without them the move does real damage.
+
+    They must be **relatives**: siblings under the same parent, or a parent and its
+    own child. Unconstrained, the move chained across a whole paper — on a real
+    script one unreadable ink region was assigned to five questions spanning three
+    sections, which is not a shared answer but the same evidence spent five times.
+
+    And the block must have **text**. Splitting a shared answer between questions
+    means dividing its lines; a region with no readable text has nothing to divide,
+    so claiming it answers several questions asserts something unfounded rather
+    than something merely uncertain.
+    """
+    if block.is_text_free or not block.text.strip():
+        return False
+
+    owner_path, candidate_path = tuple(owner.path), tuple(candidate.path)
+    if owner_path[:-1] == candidate_path[:-1]:
+        return True
+    # Parent and child, in either direction.
+    shorter, longer = sorted((owner_path, candidate_path), key=len)
+    return longer[: len(shorter)] == shorter
 
 
 def _share_support(question: Question, block: AnswerBlock) -> float:

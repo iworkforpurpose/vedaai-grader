@@ -139,10 +139,30 @@ def _normal_spacing(lines: list[Line]) -> float:
 
 def _is_gap(previous: Line, current: Line, spacing: float) -> bool:
     if previous.page != current.page:
-        # A page break is not itself a boundary. Answers routinely continue over
-        # one, which is an explicit requirement, so the decision is left to the
-        # continuation marker and to the aligner.
-        return False
+        # A page break is a boundary unless the student said otherwise.
+        #
+        # This was the opposite way round, on the reasoning that answers routinely
+        # continue over a page and the decision could be deferred to the aligner.
+        # It cannot be: the aligner assigns whole blocks and has no means of
+        # dividing one, so a page break that never splits fuses two answers
+        # permanently. On a real two-page script that is exactly what happened —
+        # both programs became a single block, and the second question read as
+        # unanswered while the first claimed writing from a page it had nothing to
+        # do with.
+        #
+        # The asymmetry runs the other way here than it does within a page. A
+        # wrongly split page-spanning answer is repairable, because the aligner's
+        # ``continue`` move can rejoin consecutive blocks under one question; a
+        # wrongly merged pair of answers is not repairable by anything. So the
+        # default is to split, and continuation has to be evidenced rather than
+        # assumed.
+        #
+        # Geometry deliberately plays no part. "Ran out of room mid-answer" and
+        # "filled the page, then started the next answer" both put the last line
+        # at the bottom and the next at the top, so position cannot tell them
+        # apart and using it would just restore the old assumption with extra
+        # steps.
+        return not _mentions_continuation(previous.text)
     return (current.box.y0 - previous.box.y1) > spacing * _GAP_MULTIPLE
 
 

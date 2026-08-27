@@ -10,10 +10,10 @@ assert that structures which look like noise are kept.
 from __future__ import annotations
 
 import pytest
-from vedaai_contracts import BBox, DocumentKind, Line, LineRole, OcrEngine
+from vedaai_contracts import BBox, DocumentKind, Line, LineRole, OcrEngine, Question
 
 from grader.questions import furniture, numbering, optionality, validate
-from grader.questions.extract import extract
+from grader.questions.extract import extract, mark_stems, reads_as_a_heading
 from grader.reading_order import order_lines
 
 
@@ -533,6 +533,94 @@ class TestGapValidation:
         q = Question(qid="A/1", label_raw="1.", text="One", path=["1"], print_order=0)
         problems = validate.suspicious([q, q])
         assert any("duplicate" in p for p in problems)
+
+
+class TestStems:
+    """Telling a heading apart from a task whose marks are itemised below it.
+
+    Structurally identical — a parent with no marks of its own — and the
+    consequence of confusing them is asymmetric. Calling a heading a question
+    reports a blank the paper never invited and lets it absorb its own sub-part's
+    answer. Calling a task a heading removes the question the student answered
+    from the candidate list entirely, which is worse.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Answer the following:",
+            "Answer the following about the program you wrote for question 1:",
+            "Answer both parts:",
+            "Distinguish between the following pairs:",
+            "Attempt all parts of the question below:",
+            # A question in isolation, but a heading when sub-parts follow: the
+            # equations are the answerable parts, and this line is meaningless
+            # without them. The structural test decides whether it matters.
+            "Balance the following equations:",
+        ],
+    )
+    def test_recognizes_a_heading(self, text) -> None:
+        assert reads_as_a_heading(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # The case that forced the wording check. No marks of its own — they
+            # sit on its (a) and (b) — but it is the task the student answered.
+            "Write a program that reads an array of 0s and 1s and prints the length "
+            "of the longest run of 1s in that array.",
+            "Explain the working of an electric motor.",
+            # A colon, but nothing pointing at parts below it.
+            "State Ohm's law and write its formula:",
+        ],
+    )
+    def test_does_not_mistake_a_question_for_a_heading(self, text) -> None:
+        assert reads_as_a_heading(text) is False
+
+    def test_a_parent_that_prints_marks_is_answerable(self) -> None:
+        # An allocation says something is expected here, whatever the wording.
+        marked = Question(
+            qid="A/2",
+            label_raw="2.",
+            text="Answer the following:",
+            path=["2"],
+            print_order=0,
+            marks=4,
+        )
+        child = Question(
+            qid="A/2/i", label_raw="(i)", text="One.", path=["2", "i"], print_order=1, marks=2
+        )
+        flagged = mark_stems([marked, child])
+        assert flagged[0].is_stem is False
+
+    def test_a_leaf_is_never_a_stem(self) -> None:
+        # Nothing extends its path, so there are no parts for it to introduce —
+        # even though its wording would otherwise qualify.
+        leaf = Question(
+            qid="A/2",
+            label_raw="2.",
+            text="Answer the following:",
+            path=["2"],
+            print_order=0,
+            marks=None,
+        )
+        assert mark_stems([leaf])[0].is_stem is False
+
+    def test_flags_a_heading_with_children_and_no_marks(self) -> None:
+        parent = Question(
+            qid="A/2",
+            label_raw="2.",
+            text="Answer the following:",
+            path=["2"],
+            print_order=0,
+            marks=None,
+        )
+        child = Question(
+            qid="A/2/i", label_raw="(i)", text="One.", path=["2", "i"], print_order=1, marks=2
+        )
+        flagged = mark_stems([parent, child])
+        assert flagged[0].is_stem is True
+        assert flagged[1].is_stem is False
 
 
 class TestTheRealTwoPagePaper:

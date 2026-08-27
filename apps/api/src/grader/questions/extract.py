@@ -17,6 +17,7 @@ by rendering density.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from vedaai_contracts import (
@@ -221,6 +222,36 @@ def extract(index: LineIndex) -> QuestionPaper:
     return paper
 
 
+#: A heading's text points forward at the parts beneath it. Matched together with
+#: a trailing colon, because that pairing is what separates a heading from a task
+#: whose marks happen to be itemised below it.
+#:
+#: Structure alone is not enough, and a real paper showed why. "3. Write a program
+#: that reads an array of 0s and 1s and prints the length of the longest run of
+#: 1s." carries no marks — they sit on its (a) and (b) — but it is the task, and
+#: calling it a heading would leave the question the student actually answered out
+#: of the candidate list. "2. Answer the following about the program you wrote for
+#: question 1:" is a heading, and the difference between them is not structural: it
+#: is that one is self-contained and the other is meaningless without its parts.
+_POINTS_AT_ITS_PARTS = re.compile(
+    r"\b(?:the following|both parts?|all parts?|each part|the parts? below|"
+    r"these questions?|the questions? below)\b",
+    re.IGNORECASE,
+)
+
+
+def reads_as_a_heading(text: str) -> bool:
+    """Whether a question's text introduces other questions rather than asking one.
+
+    Both conditions are needed. The colon alone would catch "Balance the following
+    equation:", which is a question. The phrase alone would catch "Answer any two
+    of the following questions", which is rubric handled elsewhere and never a
+    question in the first place.
+    """
+    stripped = text.strip()
+    return stripped.endswith(":") and _POINTS_AT_ITS_PARTS.search(stripped) is not None
+
+
 def mark_stems(questions: list[Question]) -> list[Question]:
     """Flag the questions that introduce others rather than asking anything.
 
@@ -231,15 +262,18 @@ def mark_stems(questions: list[Question]) -> list[Question]:
     matching candidate list where it can absorb the answer to its own sub-part,
     and it is reported unanswered when nothing was ever asked.
 
-    Decided by structure alone rather than by wording. A question is a stem when
-    another question's path extends it and it printed no marks of its own; both
-    conditions are facts about the paper. Where a parent does print marks, it is
-    answerable and left alone, because the allocation says something is expected.
+    Three conditions, all necessary: another question's path extends this one, it
+    printed no marks of its own, and its text reads as a pointer to those parts
+    rather than as a question. Dropping the last of those was a mistake — a task
+    statement whose marks are itemised on its sub-parts looks structurally
+    identical to a heading, and treating it as one removes the question the student
+    actually answered.
     """
     paths = {tuple(q.path) for q in questions}
     return [
         q.model_copy(update={"is_stem": True})
         if q.marks is None
+        and reads_as_a_heading(q.text)
         and any(len(p) > len(q.path) and p[: len(q.path)] == tuple(q.path) for p in paths)
         else q
         for q in questions
