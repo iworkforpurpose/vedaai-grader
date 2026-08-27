@@ -22,6 +22,7 @@ from vedaai_contracts import (
     SubmissionStatus,
 )
 
+from . import align as align_module
 from . import answers as answers_module
 from . import ink as ink_module
 from . import questions as questions_module
@@ -270,6 +271,12 @@ def ingest(
         )
         warnings.extend(segment_answers(submission))
 
+        submission_store.emit(
+            submission_id,
+            ProgressEvent(stage=Stage.MAPPING, message="Matching answers to questions"),
+        )
+        warnings.extend(map_answers(submission))
+
         submission.warnings = warnings
         submission.status = SubmissionStatus.COMPLETE
         submission_store.put(submission)
@@ -364,6 +371,49 @@ def segment_answers(submission: Submission) -> list[str]:
             f"{len(text_free)} region(s) contain writing that could not be read — "
             "a diagram, or handwriting the recognizer missed. They are still "
             "highlightable but carry no text."
+        )
+    return warnings
+
+
+def map_answers(submission: Submission) -> list[str]:
+    """Assign answer blocks to questions and decide each question's status.
+
+    Separate from ingest for the same reason the earlier stages are: it consumes
+    only already-computed structure, so alignment weights can be re-tuned and
+    re-scored without re-rendering or re-transcribing.
+    """
+    if submission.questions is None or not submission.questions.questions:
+        return ["No questions were extracted, so answers could not be mapped."]
+
+    answer_pages = sum(
+        1 for page in submission.pages if page.kind is DocumentKind.ANSWER_SHEET
+    )
+    result = align_module.resolve(
+        submission.questions,
+        submission.blocks,
+        submission.anchors,
+        submission.ink_regions,
+        pages_uploaded=answer_pages,
+    )
+    submission.mapping = result
+
+    warnings: list[str] = []
+    if result.absence_claims_suppressed:
+        warnings.append(
+            f"{result.unassigned_ink_ratio:.0%} of the writing on this sheet could not be "
+            "matched to any question, so no question is reported as unanswered — some "
+            "answers are present but unplaced. Check the highlighted regions."
+        )
+    if result.orphans:
+        warnings.append(
+            f"{len(result.orphans)} region(s) of writing match no question on the paper."
+        )
+
+    missing_pages = [m for m in result.mappings if m.status.value == "pages_missing"]
+    if missing_pages:
+        warnings.append(
+            "An answer appears to continue past the last uploaded page. "
+            "A page may be missing from the upload."
         )
     return warnings
 
