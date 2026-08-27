@@ -1095,43 +1095,153 @@ body::before {
   text-align: center;
 }
 
-.sparkles {
-  position: relative;
+/*
+ * The mark, at the file's own box: 128.1543 x 134.4925.
+ *
+ * Sized in rem so it scales with the type, and `width` alone — the viewBox fixes
+ * the ratio, so giving it a height too is how a shape gets stretched.
+ */
+.loader-mark {
   width: 128px;
-  height: 134px;
+  height: auto;
+  overflow: visible;
 }
 
-.sparkles svg {
-  position: absolute;
-  color: var(--accent);
+/*
+ * Motion.
+ *
+ * The file specifies exactly one animation and it is on the text, not the mark:
+ * "Extracting..." is filled with a horizontal grey gradient, dark at the ends and
+ * #808080 in the middle, which is a shimmer highlight at rest. Sweeping it is the
+ * animation the design is asking for, and the previous build missed it entirely —
+ * it painted the text one flat colour and instead invented an opacity twinkle on
+ * the sparkles that the file does not have.
+ *
+ * The sparkles keep a slow stagger, because a loader with a still mark reads as a
+ * hung loader. It animates transform only, never opacity, so the small sparkle's
+ * 0.5198 stays exactly what the file says and the mark at rest is the frame.
+ */
+/* The centre of the shared outline, so each sparkle scales about itself. Correct
+   for all three because the animated group carries no transform of its own. */
+.mark-twinkle {
+  transform-origin: 47.8278px 47.9973px;
 }
-
-/* Sizes and positions from the frame: 96, 72, 29 and a 12px dot. */
-.sparkles [data-s="lg"] { width: 96px; height: 96px; top: 0; right: 0; }
-.sparkles [data-s="md"] { width: 72px; height: 72px; bottom: 0; left: 4px; }
-.sparkles [data-s="sm"] { width: 29px; height: 29px; bottom: 18px; right: 6px; }
-.sparkles [data-s="dot"] { width: 12px; height: 12px; top: 44px; left: 0; opacity: 0.75; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .sparkles [data-s="lg"] { animation: twinkle 2.4s ease-in-out infinite; }
-  .sparkles [data-s="md"] { animation: twinkle 2.4s ease-in-out 0.5s infinite; }
-  .sparkles [data-s="sm"] { animation: twinkle 2.4s ease-in-out 1s infinite; }
+  .loader-mark [data-s="lg"] {
+    animation: mark-pulse 2.6s ease-in-out infinite;
+  }
+
+  .loader-mark [data-s="md"] {
+    animation: mark-pulse 2.6s ease-in-out 0.45s infinite;
+  }
+
+  .loader-mark [data-s="sm"] {
+    animation: mark-pulse 2.6s ease-in-out 0.9s infinite;
+  }
+
+  .loader-mark [data-s="dot"] {
+    animation: mark-pulse 2.6s ease-in-out 1.35s infinite;
+    /* Its own centre, in user space — this one has no parent transform. */
+    transform-origin: 23.749px 53.7474px;
+  }
 }
 
-@keyframes twinkle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.55; transform: scale(0.9); }
+/*
+ * `scale()` on top of the element's own `transform` would replace it, taking each
+ * sparkle back to the origin. The individual property composes with it instead,
+ * which is why this is `scale` and not a transform keyframe.
+ */
+@keyframes mark-pulse {
+  0%,
+  100% {
+    scale: 1;
+  }
+
+  50% {
+    scale: 0.9;
+  }
 }
 
 .stage-title {
-  font-size: 1.875rem; /* 30/36 */
+  /* 30/36, letter-spacing -1.2px — all three from the node. */
+  font-size: 1.875rem;
   font-weight: 700;
   line-height: 1.2;
-  color: var(--title);
+  letter-spacing: -0.04em;
+  /* The darkest stop, so the text is still legible if the clip below does not
+     apply. Painting transparent first is how this kind of heading goes blank. */
+  color: #303030;
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .stage-title {
+    /*
+     * The node's five stops — #303030, #606060, #808080, #606060, #303030 at
+     * 20/40/50/60/80% — written twice inside a 200%-wide image, so each copy
+     * spans exactly one text width.
+     *
+     * Two copies rather than one, for two reasons that pull the same way. A
+     * percentage `background-position` is resolved against (box - image), so at
+     * `background-size: 100%` that is zero and nothing moves however much you
+     * animate it. And stretching a single ramp to 300% to make it move showed only
+     * a third of it at a time, which flattened the contrast to almost nothing —
+     * the highlight is the entire point of the fill. At 200% with the ramp
+     * repeated, sweeping the position by one full text width lands on the next
+     * copy, so the loop is seamless and every frame shows the design's contrast.
+     */
+    background-image: linear-gradient(
+      90deg,
+      #303030 10%,
+      #606060 20%,
+      #808080 25%,
+      #606060 30%,
+      #303030 40%,
+      #303030 60%,
+      #606060 70%,
+      #808080 75%,
+      #606060 80%,
+      #303030 90%
+    );
+    background-size: 200% 100%;
+    background-position: 0 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .stage-title {
+      animation: title-shimmer 2.6s linear infinite;
+    }
+  }
+}
+
+@keyframes title-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: 0 0;
+  }
 }
 
 .stage-note {
-  font-size: 1.25rem; /* 20/36 */
+  /* 20/36 — a 1.8 ratio, not the body default. */
+  font-size: 1.25rem;
+  line-height: 1.8;
+  letter-spacing: -0.06em;
+  /*
+   * #464646, and the fill's own 0.75 — which renders as #757575 over white, the
+   * colour the exported PNG actually contains.
+   *
+   * This was already right and a previous pass "corrected" it to flat #464646 on
+   * the strength of the fill's colour alone. Figma carries three separate
+   * opacities — on the node, on the paint, and in the colour's alpha — and this
+   * one is on the paint, so a reading that stops at `color.a` reports full
+   * strength and is wrong by a third.
+   */
   color: rgb(70 70 70 / 0.75);
 }
 

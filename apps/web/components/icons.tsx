@@ -282,18 +282,131 @@ export function PlusIcon({ size = 18 }: IconProps): React.JSX.Element {
  * The loading frame composes four of these at 96, 72, 29 and a 12px dot, all in
  * the accent. Drawn as a single reusable shape rather than four hand-tuned paths.
  */
-export function SparkleShape({ size = 96 }: IconProps): React.JSX.Element {
+/*
+ * The loader mark, exported from the file rather than drawn by eye.
+ *
+ * One `d` for all three sparkles: the file's own three are the same outline at
+ * 1, 0.75 and 0.3 scale, which is why the transforms below are exact rather than
+ * fitted. Every number here is read off the node — the 128.1543 x 134.4925 box,
+ * the four offsets, the 0.5198 and 0.83 group opacities — and the outline is the
+ * node's own `fillGeometry` path.
+ *
+ * Two things the previous version got wrong, both of them the reason it read as a
+ * different graphic rather than a slightly-off one:
+ *
+ *   The outline was a hand-drawn symmetric four-point star. The file's star is not
+ *   symmetric — each arm's control points differ, so the waist of every arm sits
+ *   in a different place.
+ *
+ *   Every sparkle carries a white inner shadow at zero offset, which is what makes
+ *   the arms fade out toward their tips. Painted flat, the shape is a hard orange
+ *   diamond; the fade is most of what the mark looks like. The API reports the
+ *   fill as SOLID, so this only shows up in `effects` — worth naming, because
+ *   reading the fills and stopping there is exactly what produced the flat one.
+ */
+const SPARKLE_PATH =
+  "M0 47.8277C37.4479 47.5563 47.4883 15.8295 47.8276 0C47.8276 37.7194 79.7126 " +
+  "47.6016 95.6557 47.8277C57.6645 47.285 47.9407 79.7129 47.8276 95.9946C47.8276 " +
+  "57.1897 15.9426 47.7147 0 47.8277Z";
+
+/**
+ * Figma's zero-offset inner shadow, as a filter.
+ *
+ * Blur the *inverted* alpha, keep only what falls inside the shape, flood it with
+ * the shadow colour, and lay that over the fill. That is what "a shadow cast
+ * inward from the edges" reduces to.
+ *
+ * `stdDeviation` is half the Figma radius, the same relation CSS uses between a
+ * box-shadow blur and its Gaussian sigma. It is in viewBox units, which is why the
+ * filter sits above the per-sparkle `scale()` rather than inside it — inside, the
+ * 0.3 sparkle would have its glow shrunk to a third of the specified width.
+ *
+ * `color-interpolation-filters="sRGB"` is not optional. Filters default to
+ * linearRGB, where a blurred white glow spreads visibly wider and paler than the
+ * same glow composited in sRGB, which is what the design tool did.
+ */
+function InnerGlow({ id, radius }: { id: string; radius: number }): React.JSX.Element {
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor" aria-hidden>
-      <path d="M50 0c3.4 22.4 10.9 34 27.6 38.1C89.4 41 95.6 44.6 100 50c-22.4 3.4-34 10.9-38.1 27.6C59 89.4 55.4 95.6 50 100c-3.4-22.4-10.9-34-27.6-38.1C10.6 59 4.4 55.4 0 50c22.4-3.4 34-10.9 38.1-27.6C41 10.6 44.6 4.4 50 0z" />
-    </svg>
+    <filter
+      id={id}
+      x="-40%"
+      y="-40%"
+      width="180%"
+      height="180%"
+      colorInterpolationFilters="sRGB"
+    >
+      <feComponentTransfer in="SourceAlpha" result="inverted">
+        <feFuncA type="table" tableValues="1 0" />
+      </feComponentTransfer>
+      <feGaussianBlur in="inverted" stdDeviation={radius / 2} result="spread" />
+      <feFlood floodColor="#FFFFFF" floodOpacity="1" result="tint" />
+      <feComposite in="tint" in2="spread" operator="in" result="edge" />
+      <feComposite in="edge" in2="SourceAlpha" operator="in" result="glow" />
+      <feMerge>
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="glow" />
+      </feMerge>
+    </filter>
   );
 }
 
-export function DotShape({ size = 12 }: IconProps): React.JSX.Element {
+export function LoaderMark(): React.JSX.Element {
   return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="currentColor" aria-hidden>
-      <circle cx="6" cy="6" r="6" />
+    <svg
+      className="loader-mark"
+      viewBox="0 0 128.1543 134.4925"
+      fill="#FF5623"
+      aria-hidden
+    >
+      <defs>
+        <InnerGlow id="mark-glow-7" radius={7.4996} />
+        <InnerGlow id="mark-glow-5" radius={4.9997} />
+        <InnerGlow id="mark-glow-10" radius={9.9994} />
+      </defs>
+
+      {/*
+        * Three nested groups per sparkle, each with one job: the effect and group
+        * opacity outermost in viewBox units, then placement, then the animation.
+        *
+        * Split because a `transform-origin` written in viewBox units on the same
+        * element that carries `scale(0.75)` resolves in that element's *scaled*
+        * space and lands somewhere else — which threw the cluster off position and
+        * pushed the small sparkle out of the box entirely. The innermost group has
+        * no transform of its own, so one origin is correct for all three.
+        */}
+
+      {/* 95.6557 x 95.9946 at 32.498, 0 */}
+      <g filter="url(#mark-glow-7)">
+        <g transform="translate(32.498 0)">
+          <g className="mark-twinkle" data-s="lg">
+            <path d={SPARKLE_PATH} />
+          </g>
+        </g>
+      </g>
+
+      {/* 71.7414 x 71.996 at 12.5, 62.4965 — the same outline at 0.75 */}
+      <g filter="url(#mark-glow-7)">
+        <g transform="translate(12.5 62.4965) scale(0.75)">
+          <g className="mark-twinkle" data-s="md">
+            <path d={SPARKLE_PATH} />
+          </g>
+        </g>
+      </g>
+
+      {/* 28.6966 x 28.7984 at 89.995, 83.7454 — at 0.3, group opacity 0.5198 */}
+      <g filter="url(#mark-glow-5)" opacity="0.5198">
+        <g transform="translate(89.995 83.7454) scale(0.3)">
+          <g className="mark-twinkle" data-s="sm">
+            <path d={SPARKLE_PATH} />
+          </g>
+        </g>
+      </g>
+
+      {/* 12.5 circle at 17.499, 47.4974 — group opacity 0.83, and a radius-10 glow
+          on a 12.5px shape, which is why it reads as pale rather than solid */}
+      <g filter="url(#mark-glow-10)" opacity="0.83">
+        <circle data-s="dot" cx="23.749" cy="53.7474" r="6.25" />
+      </g>
     </svg>
   );
 }

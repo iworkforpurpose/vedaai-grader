@@ -1,4 +1,4 @@
-import { DotShape, SparkleShape } from "./icons";
+import { LoaderMark } from "./icons";
 
 /**
  * The waiting screen, from the loading frame.
@@ -24,21 +24,7 @@ export function LoadingStage({
   return (
     <div className="stage" role="status" aria-live="polite">
       <div className="stage-inner">
-        {/* Four sparkles at the frame's sizes: 96, 72, 29, and a 12px dot. */}
-        <div className="sparkles" aria-hidden>
-          <span data-s="lg">
-            <SparkleShape size={96} />
-          </span>
-          <span data-s="md">
-            <SparkleShape size={72} />
-          </span>
-          <span data-s="sm">
-            <SparkleShape size={29} />
-          </span>
-          <span data-s="dot">
-            <DotShape size={12} />
-          </span>
-        </div>
+        <LoaderMark />
 
         <div>
           <p className="stage-title">{title}</p>
