@@ -24,6 +24,7 @@ from __future__ import annotations
 from vedaai_contracts import AnswerBlock, BBox, InkRegion, InkRegionKind, Line, PageBox
 
 from ..questions.numbering import parse_label
+from . import furniture
 
 #: A vertical gap this many times the normal line spacing suggests a new block.
 #: Generous, because over-splitting is the more damaging error: two blocks where
@@ -55,7 +56,11 @@ def segment_blocks(
     ink_regions: list[InkRegion],
 ) -> list[AnswerBlock]:
     """Group answer-sheet lines into blocks, using ink to avoid false splits."""
-    usable = [line for line in lines if line.text.strip()]
+    # Script details — name, class, roll number, "Set 3" — are removed before
+    # anything is grouped. They are not answers, and left in they become candidate
+    # blocks: on the golden set the line "Name: Test Student  Class: 6C" was
+    # assigned to a question the student had left blank.
+    usable, _details = furniture.strip([line for line in lines if line.text.strip()])
     writing_ink = [
         region
         for region in ink_regions

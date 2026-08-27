@@ -28,6 +28,7 @@ from vedaai_contracts import (
 )
 
 from grader.answers import anchors
+from grader.answers import furniture as answer_furniture
 from grader.answers.segment import segment_blocks
 from grader.answers.similarity import LexicalOverlap
 
@@ -372,3 +373,85 @@ class TestLexicalOverlap:
         overlap = LexicalOverlap()
         assert overlap.score("", "anything") == 0.0
         assert overlap.score("anything", "") == 0.0
+
+
+class TestScriptDetails:
+    """Separating a student's answers from the details they wrote at the top.
+
+    Question papers have had their headers stripped from the beginning; answer
+    sheets had nothing, so a name badge was a candidate answer. On the golden set
+    "Name: Test Student  Class: 6C" was assigned to "Describe an experiment to show
+    that air has mass" — a question the student left blank.
+
+    The asymmetry is the usual one: keeping a stray line costs a teacher one glance,
+    discarding a real answer loses a mark. So these tests are weighted toward
+    refusing to strip.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Name: Test Student        Class: 6C",
+            "Name - Anjana S Kamath",
+            "Roll No: 41",
+            "Roll number: 22CS041",
+            "Register No : 6282350749",
+            "Class: 6C",
+            "Semester: 8",
+            "Branch - CSE",
+            "Subject: Physics",
+            "Date: 12/03/2026",
+        ],
+    )
+    def test_recognizes_the_fields_a_student_fills_in(self, text: str) -> None:
+        assert answer_furniture.is_furniture(line(1, text, y0=0.02)) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # The words themselves appear inside real answers, which is why the
+            # pattern requires them to be used as labelled fields.
+            "Name the type of reaction shown above.",
+            "The class of the compound is an alkane.",
+            "Date the sample was collected is not given, so assume today.",
+            "Refraction is the bending of light when it changes medium.",
+            "R = V / I = 10 / 2 = 5 ohm",
+        ],
+    )
+    def test_never_strips_an_answer(self, text: str) -> None:
+        assert answer_furniture.is_furniture(line(1, text, y0=0.02)) is False
+
+    def test_a_paper_set_marker_is_stripped_only_in_the_header(self) -> None:
+        assert answer_furniture.is_furniture(line(1, "Set 3", y0=0.02)) is True
+        # Further down the page it could be part of an answer — "Set 3 is empty",
+        # for instance — and position is the only thing separating the two.
+        assert answer_furniture.is_furniture(line(2, "Set 3", y0=0.55)) is False
+
+    def test_a_long_number_is_stripped_only_in_the_header(self) -> None:
+        assert answer_furniture.is_furniture(line(1, "6282350749", y0=0.01)) is True
+        assert answer_furniture.is_furniture(line(2, "6282350749", y0=0.60)) is False
+
+    def test_a_bare_page_number_is_stripped_anywhere(self) -> None:
+        assert answer_furniture.is_furniture(line(1, "2", y0=0.97)) is True
+        assert answer_furniture.is_furniture(line(2, "Page 2 of 4", y0=0.98)) is True
+
+    def test_strip_returns_both_halves(self) -> None:
+        # Neither half is discarded, so a caller can report what was set aside
+        # rather than have it disappear.
+        lines = [
+            line(1, "Name: Test Student   Class: 6C", y0=0.02),
+            line(2, "1. Refraction is the bending of light.", y0=0.12),
+        ]
+        answers, details = answer_furniture.strip(lines)
+        assert [ln.line_id for ln in answers] == ["as:0002"]
+        assert [ln.line_id for ln in details] == ["as:0001"]
+
+    def test_the_header_does_not_become_an_answer_block(self) -> None:
+        # The end-to-end shape of the fix.
+        lines = [
+            line(1, "Name: Test Student   Class: 6C", y0=0.02),
+            line(2, "1. Refraction is the bending of light.", y0=0.12),
+        ]
+        blocks = segment_blocks(lines, [])
+        assert len(blocks) == 1
+        assert "Name" not in blocks[0].text

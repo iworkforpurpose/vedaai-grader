@@ -280,6 +280,41 @@ def report(
             + f"{_fmt_pct(len(all_missed) / answered if answered else 0.0)}"
             + "   <- the error a teacher acts on unchecked\n"
         )
+        # The full breakdown, not only the headline. Accuracy folds four distinct
+        # outcomes into one number, and they call for different fixes: a wrong
+        # region is an alignment problem, a poor box is a geometry problem, a
+        # missed answer is a recall problem, and a false answer is the aligner
+        # refusing to leave a gap.
+        #
+        # Printed because it was computed and withheld. While only the
+        # false-unanswered rate was on screen, false *answers* stayed invisible —
+        # and quoting a clean safety figure beside an unreported error in the
+        # opposite direction is worse than reporting neither.
+        wrong = [q for m in mappings for q in m.wrong_region]
+        invented = [q for m in mappings for q in m.false_answer]
+        out(
+            f"    correct {total_correct}"
+            f" · wrong question {len(wrong)}"
+            f" · missed {len(all_missed)}"
+            f" · invented {len(invented)}"
+            f"  of {total_scored}\n"
+        )
+        if invented:
+            # Named for what it actually counts. A question the paper left blank
+            # is scored against us whenever the prediction does not assert
+            # absence — which includes "uncertain", where nothing was assigned and
+            # the system merely declined to commit. That is deliberate: hedging on
+            # a blank question still sends a teacher to look at nothing, and a
+            # metric that forgave it would reward evasion. But it is not the same
+            # as presenting unrelated writing as an answer, and calling both
+            # "invented" overstated the milder one.
+            out(
+                f"  BLANKS NOT CALLED BLANK  {_fmt_pct(len(invented) / total_scored)}"
+                "   <- assigned or flagged when nothing was written\n"
+            )
+            for qid in invented[:6]:
+                out(f"    {qid}\n")
+
         violated = [q for m in mappings for q in m.not_required_violated]
         if violated:
             out(f"    optional questions wrongly reported missing: {len(violated)}\n")
