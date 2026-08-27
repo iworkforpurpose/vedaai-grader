@@ -1,109 +1,119 @@
 /*
- * Design tokens.
+ * Design tokens and layout, from the VedaAI Figma file.
  *
- * Declared as custom properties from the first commit for a specific reason:
- * the real designs exist in Figma and will be applied in a later pass. If
- * components hardcode colour and spacing, that pass becomes a rewrite. If they
- * read tokens, it is largely a matter of changing values here.
+ * Every value here was read from the REST API, not measured off the PNG exports —
+ * those were rendered at 1.389x and 2x, so pixels taken from them were wrong by
+ * that factor, and the desktop frame is 1440 wide rather than the 1000 the raster
+ * implied. Full spec and divergences: design/SPEC.md.
  *
- * The palette below is deliberately plain. It is not a design — it is a neutral
- * substrate that keeps the interface legible while the accuracy work proceeds.
+ * The design supplies two fixed widths, 1440 and 393. Neither is what most people
+ * have — 1536x864 and 1920x1080 dominate — so the frames are treated as intent
+ * rather than as targets: fixed where a thing should not grow (the rail, control
+ * heights), clamped where it should (type, page inset), capped where sprawl would
+ * hurt (the content column).
  *
- * Two things here are NOT arbitrary and must survive the Figma pass:
- *   --hl-*        highlight colours carry meaning (confidence, review state)
- *   --status-*    answer statuses map to colour; changing which colour means
- *                 "needs review" changes what a teacher believes at a glance
+ * Type sizes are in rem so a reader who raises their browser font size gets
+ * larger text. A px-based scale silently ignores that preference, which is
+ * WCAG 1.4.4.
  */
 
 :root {
-  /* neutrals — slight blue bias so they read as chosen rather than inherited */
-  --bg: #f5f1e9;
-  --surface: #fffdf8;
-  --surface-2: #f2eadc;
-  --border: #ded5c5;
-  --text: #202824;
-  --text-2: #59625c;
-  --text-muted: #8a9089;
+  /* ── palette, from the file ──────────────────────────────────────────── */
+  --accent: #ff5623;
+  --accent-tint: rgb(255 147 80 / 0.15); /* block behind the accent title */
+  --accent-ring-outer: rgb(255 86 35 / 0.1);
+  --accent-ring-inner: rgb(255 86 35 / 0.26);
 
-  --accent: #e76f42;
-  --accent-contrast: #ffffff;
+  --ink: #303030; /* primary button, active nav text */
+  --ink-hover: #1f1f1f;
+  --title: #2b2b2b;
+  --body: rgb(94 94 94 / 0.8);
+  --body-solid: #5e5e5e;
+  --muted: #a9a9a9;
 
-  /* answer status — semantic, not decorative */
-  --status-answered: #146b4f;
-  --status-unanswered: #69737f;
-  --status-review: #8f5308;
-  --status-missing: #9c1120;
-  --status-not-required: #4a5568;
-  --status-ok: #146b4f;
+  --surface: #ffffff;
+  --surface-glass: rgb(255 255 255 / 0.75); /* top bar */
+  --surface-veil: rgb(255 255 255 / 0.5); /* drop-zone container */
+  --chip: #f6f6f6; /* circular icon buttons */
+  --row-active: #f0f0f0; /* selected nav row, school card */
+  --page: #ececec;
+  --hairline: rgb(48 48 48 / 0.1);
+  --dashed: #d4d4d4;
 
-  /* highlight overlay */
-  --hl-fill: rgba(31, 84, 128, 0.18);
-  --hl-stroke: #1f5480;
-  --hl-fill-low: rgba(143, 83, 8, 0.18);
-  --hl-stroke-low: #8f5308;
-  --hl-fill-ink: rgba(20, 107, 79, 0.16);
-  --hl-stroke-ink: #146b4f;
+  --on-accent: #ffffff;
+  --on-ink: #ffffff;
 
-  /* debug overlay — OCR boxes and ink components, Phase 1/2 */
-  --debug-line: rgba(220, 38, 38, 0.9);
-  --debug-word: rgba(37, 99, 235, 0.55);
-  --debug-ink: rgba(16, 185, 129, 0.75);
+  /*
+   * Statuses, for the review screen. Not in the upload frame, and deliberately
+   * not folded into the accent: which colour means "needs review" is what a
+   * teacher reads at a glance, so these are named by role and must survive any
+   * restyle.
+   */
+  --status-answered: #1f8a52;
+  --status-answered-soft: #e8f4ed;
+  --status-missing: #c0392b;
+  --status-missing-soft: #fbeae8;
+  --status-review: #b26a00;
+  --status-review-soft: #fdf2e2;
+  --status-neutral: #6b6d72;
+  --status-neutral-soft: #f0f0f1;
 
-  /* spacing scale */
+  --hl-fill: rgb(255 86 35 / 0.16);
+  --hl-stroke: #ff5623;
+  --hl-fill-ink: rgb(178 106 0 / 0.14);
+  --hl-stroke-ink: #b26a00;
+
+  /* ── type ────────────────────────────────────────────────────────────── */
+  --font-ui: var(--font-display), -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-alt: var(--font-sans), var(--font-display), sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Frame values are the upper bound; the lower is the phone frame. */
+  --fs-xs: 0.75rem; /* 12 */
+  --fs-sm: 0.875rem; /* 14 — caption, button label */
+  --fs-base: 1rem; /* 16 — nav, breadcrumb, name */
+  --fs-lg: clamp(1rem, 0.9rem + 0.5vw, 1.25rem); /* 16 → 20 subtitle */
+  --fs-title: clamp(1.5rem, 1.05rem + 1.9vw, 2.5rem); /* 24 phone → 40 desktop */
+
+  --lh-title: 1.2; /* 48/40 */
+  --lh-snug: 1.375; /* 22/16 */
+  --lh-body: 1.5;
+
+  /* ── space ───────────────────────────────────────────────────────────── */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 24px;
   --sp-6: 32px;
-  --sp-7: 48px;
+  --sp-7: 36px;
+  --sp-8: 56px;
 
-  --radius-sm: 3px;
-  --radius: 8px;
+  --page-pad: clamp(10px, 2.2vw, 24px);
 
-  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* ── shape, exactly the radii in the file ────────────────────────────── */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-2xl: 40px;
+  --r-pill: 64px;
+  --r-circle: 100px;
 
-  --fs-xs: 11px;
-  --fs-sm: 13px;
-  --fs-base: 15px;
-  --fs-lg: 18px;
-  --fs-xl: 26px;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.03), 0 12px 32px -12px rgb(0 0 0 / 0.12);
 
-  --shadow: 0 1px 2px rgba(19, 23, 30, 0.06), 0 8px 24px -16px rgba(19, 23, 30, 0.18);
+  /* ── layout ──────────────────────────────────────────────────────────── */
+  --rail-w: 304px; /* fixed: 21% of 1440 would be 403px at 1920 */
+  --topbar-h: 56px;
+  /* The file's *inner* content frame, not the outer one. 1103 is the outer
+     frame including its padding; everything inside — title, hero, drop zones —
+     is laid out in a 789px column, and using the outer number stretched the drop
+     zones by nearly 300px. */
+  --content-max: 789px;
 }
 
-.upload-page { width: 100%; max-width: 1180px; margin: 0 auto; padding: 72px 48px 96px; }
-.upload-hero { max-width: 760px; margin-bottom: 52px; }
-.upload-hero .eyebrow { margin: 0 0 18px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .16em; }
-.upload-hero h1 { max-width: 680px; margin: 0; color: var(--text); font-size: clamp(42px, 5vw, 72px); line-height: 1.04; letter-spacing: -.045em; font-weight: 700; }
-.upload-hero > p:last-child { max-width: 620px; margin: 24px 0 0; color: var(--text-2); font-size: 18px; line-height: 1.55; }
-.upload-grid { display: grid; grid-template-columns: minmax(270px, .72fr) minmax(0, 1.28fr); gap: 24px; align-items: stretch; }
-.upload-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: 0 12px 32px rgba(68, 55, 34, .07); padding: 30px; }
-.upload-card-main { padding: 34px; }
-.card-heading { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
-.card-heading h2 { margin: 0; font-size: 21px; letter-spacing: -.02em; }
-.step-number { color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
-.service-card { background: #eee4d3; }
-.service-card dl { line-height: 1.8; }
-.upload-field .file-input { width: 100%; min-height: 40px; color: var(--text-2); }
-.process-button { min-width: 105px; min-height: 40px; font-weight: 600; transition: transform 160ms ease, box-shadow 160ms ease; }
-.process-button:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 5px 12px rgba(40, 100, 215, 0.22); }
-@media (max-width: 760px) {
-  .upload-page { padding: 42px 18px 64px !important; }
-  .upload-hero { margin-bottom: 34px; }
-  .upload-hero h1 { font-size: clamp(36px, 10.8vw, 43px); }
-  .upload-hero > p:last-child { font-size: 16px; line-height: 1.45; }
-  .upload-grid { grid-template-columns: 1fr; }
-  .upload-card, .upload-card-main { padding: 24px; }
-  .card-heading { margin-bottom: 22px; }
-  .card-heading h2 { font-size: 20px; }
-  .service-card dl { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) !important; gap: 8px 16px !important; }
-  .upload-field .file-input { font-size: 13px; }
-  .upload-page > header p { max-width: 100%; }
-  .upload-form > div { align-items: stretch !important; flex-direction: column; }
-  .upload-form .process-button { width: 100%; }
-}
+/* ── reset ─────────────────────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -111,40 +121,48 @@
   box-sizing: border-box;
 }
 
-html,
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
-  padding: 0;
-  height: 100%;
-}
-
-body {
-  background: var(--bg);
-  color: var(--text);
+  min-height: 100dvh;
+  background: var(--page);
+  color: var(--title);
   font-family: var(--font-ui);
   font-size: var(--fs-base);
-  line-height: 1.55;
+  line-height: var(--lh-body);
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
 }
 
-a {
-  color: var(--accent);
+h1,
+h2,
+h3,
+p,
+ul {
+  margin: 0;
 }
 
-/* Keyboard focus must stay visible. The review surface is dense and heavily
-   clickable, and a teacher tabbing through a question list needs to know
-   where they are. */
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
-}
-
-code,
-.mono {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
+  border-radius: var(--r-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -152,7 +170,701 @@ code,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══ page atmosphere ═══════════════════════════════════════════════════════
+ *
+ * Two large blurred ellipses sit behind everything in the file — #171717 and
+ * #4C4C4C, both at 40%. They are what stops the page reading as flat grey, and
+ * they are the reason the top bar and the drop-zone container have something to
+ * be translucent over. Rendered as fixed radial gradients rather than as two
+ * absolutely-positioned divs, so they cost no layout and cannot be scrolled off.
+ */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      68% 44% at 50% 88%,
+      rgb(23 23 23 / 0.16) 0%,
+      rgb(23 23 23 / 0) 70%
+    ),
+    radial-gradient(
+      58% 40% at 50% 96%,
+      rgb(76 76 76 / 0.2) 0%,
+      rgb(76 76 76 / 0) 72%
+    );
+}
+
+/* ══ app shell ═════════════════════════════════════════════════════════════
+ *
+ * Phone first, so each breakpoint only ever adds. One set of markup for both
+ * layouts: on the phone the rail is a drawer over the content, from 1024px it is
+ * a column beside it. A second copy of the navigation for mobile is how the two
+ * silently drift apart.
+ */
+
+.shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--page-pad);
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* ── rail ──────────────────────────────────────────────────────────────── */
+
+.rail {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  width: min(304px, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  padding: var(--sp-5);
+  background: var(--surface);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  box-shadow: var(--shadow-panel);
+  transform: translateX(-102%);
+  transition: transform 220ms ease;
+  overflow-y: auto;
+}
+
+.rail[data-open="true"] {
+  transform: translateX(0);
+}
+
+.rail-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  border: 0;
+  padding: 0;
+  background: rgb(0 0 0 / 0.3);
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.brand-word {
+  font-size: 1.75rem; /* 28 */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.rail-collapse {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--body-solid);
+  cursor: pointer;
+}
+
+.rail-collapse:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.toolkit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 42px;
+  padding: var(--sp-2) var(--sp-4);
+  border: 0;
+  border-radius: var(--r-circle);
+  background: #272727;
+  color: var(--on-ink);
+  font-family: var(--font-alt);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.toolkit:hover {
+  background: #111;
+}
+
+.rail-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 9px var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--body);
+  font-size: var(--fs-base);
+  font-weight: 400;
+  line-height: var(--lh-snug);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.nav-row:hover {
+  background: var(--chip);
+}
+
+.nav-row[aria-current="page"] {
+  background: var(--row-active);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/*
+ * Everything except Exams is unavailable, and it is rendered exactly as the file
+ * draws it — normal nav weight, no dimming and no blur.
+ *
+ * A first pass added `blur(0.3px)` and `opacity: 0.55` to make unavailability
+ * visible. That was invention: the file styles these rows identically to any
+ * other, and the brief was to match it. Blur also reads as a rendering fault
+ * rather than as a state, which is a poor way to say "not yet".
+ *
+ * So the unavailability is behavioural, not decorative, and holds three
+ * independent ways: no href, `aria-disabled` so assistive technology announces
+ * it, and `pointer-events: none` so a click cannot land even if the styling is
+ * overridden. The cursor stays default for the same reason.
+ */
+.nav-row[aria-disabled="true"] {
+  pointer-events: none;
+}
+
+.nav-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+}
+
+.nav-badge {
+  margin-left: auto;
+  min-width: 37px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.school {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r-lg);
+  background: var(--row-active);
+}
+
+.school-crest {
+  width: 46px;
+  flex: none;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.school-name {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.school-place {
+  font-size: var(--fs-sm);
+  color: var(--body);
+}
+
+/* ── top bar ───────────────────────────────────────────────────────────── */
+
+.topbar {
+  position: sticky;
+  top: var(--page-pad);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--topbar-h);
+  padding: 0 var(--sp-2) 0 var(--sp-5);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+}
+
+.round-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  background: var(--chip);
+  color: var(--ink);
+  cursor: pointer;
+  position: relative;
+}
+
+.round-button:hover {
+  background: #ececec;
+}
+
+.round-button[data-plain="true"] {
+  background: transparent;
+}
+
+.round-button[data-plain="true"]:hover {
+  background: var(--chip);
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+
+.crumb span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.notify-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.user-button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 6px var(--sp-3);
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  cursor: pointer;
+}
+
+.user-button:hover {
+  background: var(--chip);
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--r-circle);
+  overflow: hidden;
+  background: var(--chip);
+}
+
+.user-name {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* The name and chevron go first when the bar runs out of room; the avatar alone
+   still identifies the account. */
+@media (max-width: 639px) {
+  .user-name,
+  .user-chevron {
+    display: none;
+  }
+}
+
+.only-wide {
+  display: none;
+}
+
+.only-narrow {
+  display: grid;
+}
+
+/* ══ upload screen ═════════════════════════════════════════════════════════ */
+
+.upload {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--sp-6) 0 var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* The file nests two gaps: 20 between title, hero and drop zones, and 36
+     before the action block. One value for both reads noticeably airier. */
+  gap: 20px;
+  text-align: center;
+}
+
+.upload-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.upload-title {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  line-height: var(--lh-title);
+  letter-spacing: -0.015em;
+  color: var(--title);
+  text-wrap: balance;
+}
+
+/*
+ * The two frames genuinely differ here, and the API settles it where the raster
+ * could not: the desktop title is two nodes — dark "Upload " plus an
+ * accent-coloured phrase on a tinted block — while the phone title is a single
+ * node, entirely #2B2B2B at 24/29, with a deliberate line break.
+ *
+ * So below the rail breakpoint the phrase is not accented at all. That is also
+ * the right call typographically: at phone width it wraps, and a tinted box
+ * broken across a wrap reads as damage.
+ *
+ * The drop-zone labels are the opposite case — they carry #FF5623 character
+ * overrides in *both* frames, which is why the accent survives there at every
+ * width. Reading the style-override table rather than the flattened PNG is what
+ * distinguished the two.
+ */
+.upload-title em {
+  font-style: normal;
+  color: inherit;
+}
+
+.upload-subtitle {
+  font-size: var(--fs-lg);
+  color: var(--ink);
+}
+
+/* ── hero ──────────────────────────────────────────────────────────────── */
+
+.hero {
+  position: relative;
+  width: clamp(110px, 26vw, 138px);
+  aspect-ratio: 1;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-ring-outer);
+  display: grid;
+  place-items: center;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  /* 108 of 138 — the inner ellipse in the file. */
+  inset: 10.9%;
+  border-radius: 50%;
+  background: var(--accent-ring-inner);
+}
+
+.hero-portrait {
+  position: relative;
+  width: 57%; /* 79 of 138 */
+  display: grid;
+  place-items: end center;
+}
+
+.hero-badge {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  display: grid;
+  place-items: center;
+}
+
+.hero-badge svg {
+  width: 8px;
+  height: 8px;
+}
+
+.hero-badge[data-at="tr"] { top: 8%; right: 12%; }
+.hero-badge[data-at="tl"] { top: 33%; left: 1%; }
+.hero-badge[data-at="br"] { bottom: 27%; right: 1%; }
+.hero-badge[data-at="bl"] { bottom: 9%; left: 30%; }
+
+/* ── drop zones ────────────────────────────────────────────────────────── */
+
+.dropzones {
+  display: grid;
+  gap: var(--sp-4);
+  width: 100%;
+  padding: var(--sp-3);
+  border-radius: var(--r-xl);
+  background: var(--surface-veil);
+}
+
+.dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 133px;
+  padding: var(--sp-5) var(--sp-4);
+  border: 1.5px dashed var(--dashed);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.dropzone:hover,
+.dropzone[data-dragging="true"] {
+  border-color: var(--accent);
+  background: #fffaf8;
+}
+
+.dropzone[data-filled="true"] {
+  border-style: solid;
+  border-color: var(--status-answered);
+}
+
+.dropzone input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dropzone-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-md);
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.dropzone-label {
+  font-size: 1.125rem; /* 18/25 in both frames */
+  line-height: 1.39;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dropzone-label em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.dropzone-hint {
+  font-size: 0.75rem; /* 12/17 */
+  color: rgb(94 94 94 / 0.55);
+}
+
+.dropzone-file {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--status-answered);
+}
+
+/* ── primary action ────────────────────────────────────────────────────── */
+
+.actions {
+  /* 36 from the drop zones, per the outer stack in the file. */
+  margin-top: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+@media (min-width: 1024px) {
+  .actions {
+    margin-top: var(--sp-4);
+  }
+}
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  padding: var(--sp-3) 20px var(--sp-3) var(--sp-5);
+  border: 2px solid rgb(255 255 255 / 0.15);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cta:hover:not(:disabled) {
+  background: var(--ink-hover);
+}
+
+/*
+ * The frame fills this dark even in the empty state, where nothing has been
+ * uploaded. Rendered disabled instead: a control that looks ready invites a
+ * click that cannot work, and the caption underneath already explains why.
+ */
+.cta:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cta-caption {
+  max-width: 34ch;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+  color: var(--body);
+  text-wrap: balance;
+}
+
+.form-error {
+  width: 100%;
+  max-width: 60ch;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  border-left: 3px solid var(--status-missing);
+  background: var(--status-missing-soft);
+  font-size: var(--fs-sm);
+  text-align: left;
+  color: var(--title);
+}
+
+/* ══ breakpoints ═══════════════════════════════════════════════════════════
+ *
+ * Two, placed where the content stops working rather than at device names:
+ *   600px  — the two drop zones stop being cramped side by side
+ *   1024px — there is room for a permanent rail beside the content
+ */
+
+@media (min-width: 600px) {
+  .dropzones {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (min-width: 1024px) {
+  .shell {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    inset: auto;
+    z-index: 1;
+    width: var(--rail-w);
+    flex: none;
+    height: calc(100dvh - (var(--page-pad) * 2));
+    border-radius: var(--r-lg);
+    transform: none;
+    transition: none;
+  }
+
+  .rail-scrim,
+  .rail-collapse {
+    display: none;
+  }
+
+  .only-wide {
+    display: grid;
+  }
+
+  .only-narrow {
+    display: none;
+  }
+
+  .upload {
+    padding-top: var(--sp-7);
+  }
+
+  /* See the note on .upload-title em: the accent and its tinted block are both
+     desktop-frame features, so they arrive together. */
+  .upload-title em {
+    color: var(--accent);
+    padding: 0.1em 0.2em;
+    border-radius: var(--r-sm);
+    background: var(--accent-tint);
   }
 }

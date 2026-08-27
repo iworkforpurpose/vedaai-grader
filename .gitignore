@@ -34,6 +34,10 @@ packages/contracts/schema/
 # them, which do not belong in version control at all.
 packages/generated/
 
+# design reference exports — large rasters, and the Figma file is the source
+design/*.png
+apps/web/design/
+
 # tooling scratch
 .playwright-mcp/
 .pytest_cache/

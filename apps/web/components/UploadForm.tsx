@@ -1,162 +1,215 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
+import {
+  ArrowRightIcon,
+  ClockGlyph,
+  CloudGlyph,
+  GearGlyph,
+  GridGlyph,
+  UploadIcon,
+} from "./icons";
 
 /**
- * Upload both documents and go to the review surface.
+ * The upload screen.
  *
- * Files post directly to the pipeline service rather than through a Next route
- * handler. That is not incidental: a serverless function caps its request body
- * at 4.5 MB, and a scanned answer sheet routinely exceeds it. Posting straight
- * to the worker sidesteps the cap entirely.
+ * Both documents post straight to the pipeline service. The action stays disabled
+ * until both are chosen — which is what the frame's empty state shows, and also
+ * what the pipeline requires: a question paper with no answer sheet has nothing to
+ * map, and saying so before the click beats a validation error after it.
+ *
+ * Each drop zone accepts a drop as well as a click. The design draws a dashed
+ * rectangle, the conventional signal for a drop target, so accepting only clicks
+ * would be a promise the interface makes and does not keep.
  */
+
+type Slot = "question_paper" | "answer_sheet";
+
+const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp";
+
 export function UploadForm(): React.JSX.Element {
   const router = useRouter();
+  const [files, setFiles] = useState<Record<Slot, File | null>>({
+    question_paper: null,
+    answer_sheet: null,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const ready = files.question_paper !== null && files.answer_sheet !== null;
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!ready) return;
+
     setError(null);
     setBusy(true);
 
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch(`${API_BASE}/submissions`, {
-        method: "POST",
-        body: form,
-      });
+    const body = new FormData();
+    body.append("question_paper", files.question_paper as File);
+    body.append("answer_sheet", files.answer_sheet as File);
 
+    try {
+      const response = await fetch(`${API_BASE}/submissions`, { method: "POST", body });
       if (!response.ok) {
-        // The API's 422 detail says what was wrong with the file. Surfacing it
-        // verbatim is more useful than a generic failure, because it is
-        // actionable: wrong format, too many pages, empty file.
-        const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-        setError(body?.detail ?? `Upload failed with HTTP ${response.status}`);
+        // The API's 422 detail names what was wrong with the file — wrong format,
+        // too many pages, empty upload — and that is actionable, so it is shown
+        // verbatim rather than replaced with a generic failure.
+        const detail = (await response.json().catch(() => null)) as { detail?: string } | null;
+        setError(detail?.detail ?? `Upload failed with HTTP ${response.status}`);
         return;
       }
-
       const submission = (await response.json()) as { submission_id: string };
       router.push(`/review/${submission.submission_id}`);
     } catch {
-      setError(
-        `Cannot reach the pipeline service at ${API_BASE}. Start it with \`pnpm --filter @vedaai/api dev\`.`,
-      );
+      setError(`Cannot reach the grader service at ${API_BASE}. Check that it is running.`);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form
-      onSubmit={onSubmit}
-      className="upload-form"
-      style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}
-    >
-      <Field
-        name="question_paper"
-        label="Question paper"
-        hint="PDF or images. Typed papers are read directly from the PDF, which is exact and needs no OCR."
-      />
-      <Field
-        name="answer_sheet"
-        label="Answer sheet"
-        hint="One student's handwritten script, as a PDF or photos."
-      />
-
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
-        <button
-          className="process-button"
-          type="submit"
-          disabled={busy}
-          style={{
-            fontFamily: "var(--font-ui)",
-            fontSize: "var(--fs-base)",
-            padding: "var(--sp-2) var(--sp-5)",
-            borderRadius: "var(--radius)",
-            border: "1px solid var(--accent)",
-            background: busy ? "var(--surface-2)" : "var(--accent)",
-            color: busy ? "var(--text-muted)" : "var(--accent-contrast)",
-            cursor: busy ? "progress" : "pointer",
-          }}
-        >
-          {busy ? "Processing…" : "Process"}
-        </button>
-        {busy && (
-          <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-            Rendering and transcribing pages.
-          </span>
-        )}
+    <form className="upload" onSubmit={onSubmit}>
+      <div className="upload-heading">
+        <h1 className="upload-title">
+          Upload <em>Question Paper &amp; Answer Sheets</em>
+        </h1>
+        <p className="upload-subtitle">Upload both files to get started</p>
       </div>
 
-      {error !== null && (
-        <p
-          role="alert"
-          style={{
-            margin: 0,
-            padding: "var(--sp-3) var(--sp-4)",
-            borderRadius: "var(--radius)",
-            border: "1px solid var(--border)",
-            borderLeft: "3px solid var(--status-missing)",
-            background: "var(--surface)",
-            color: "var(--text)",
-          }}
-        >
-          {error}
+      <Hero />
+
+      <div className="dropzones">
+        <DropZone
+          slot="question_paper"
+          label="Question Paper"
+          file={files.question_paper}
+          onPick={(file) => setFiles((current) => ({ ...current, question_paper: file }))}
+        />
+        <DropZone
+          slot="answer_sheet"
+          label="Answer Sheet"
+          file={files.answer_sheet}
+          onPick={(file) => setFiles((current) => ({ ...current, answer_sheet: file }))}
+        />
+      </div>
+
+      <div className="actions">
+        <button type="submit" className="cta" disabled={!ready || busy}>
+          {busy ? "Mapping…" : "Start Mapping"}
+          {!busy && <ArrowRightIcon size={20} />}
+        </button>
+
+        <p className="cta-caption">
+          {busy
+            ? "Rendering pages and reading the handwriting. About 15 seconds a page."
+            : "Once both files are uploaded, you’ll be able to map answers with questions"}
         </p>
-      )}
+
+        {error !== null && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </form>
   );
 }
 
-function Field({
-  name,
+function DropZone({
+  slot,
   label,
-  hint,
+  file,
+  onPick,
 }: {
-  name: string;
+  slot: Slot;
   label: string;
-  hint: string;
+  file: File | null;
+  onPick: (file: File | null) => void;
 }): React.JSX.Element {
-  // Associated by id rather than by nesting, and that is not a style preference.
-  //
-  // A file input inside its own label is activated twice by one click: once
-  // directly, and again when the click reaches the label and the label forwards
-  // activation back to its control. The picker opens, and a second picker opens
-  // on top of it — so choosing a file appears to do nothing, and the dialogs
-  // stack. Sixteen of them were queued on a single visit.
-  //
-  // Nesting is legal and works for a checkbox or a text field, where a second
-  // activation is harmless. It is specifically the file input, whose activation
-  // opens a modal dialog, that cannot survive it.
-  const id = `upload-${name}`;
+  const [dragging, setDragging] = useState(false);
+  const id = `pick-${slot}`;
+
   return (
-    <div className="upload-field" style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
-      <label htmlFor={id} style={{ fontWeight: 600 }}>
-        {label}
-      </label>
-      <span id={`${id}-hint`} style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
-        {hint}
-      </span>
+    <label
+      className="dropzone"
+      htmlFor={id}
+      data-filled={file !== null}
+      data-dragging={dragging}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const dropped = event.dataTransfer.files?.[0];
+        if (dropped) onPick(dropped);
+      }}
+    >
+      {/* Associated by id rather than nested. A file input inside its own label is
+          activated twice by one click — the picker opens, and a second opens on
+          top of it. */}
       <input
-        className="file-input"
         id={id}
         type="file"
-        name={name}
-        required
-        aria-describedby={`${id}-hint`}
-        accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp"
-        style={{
-          marginTop: "var(--sp-1)",
-          padding: "var(--sp-2)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius)",
-          background: "var(--surface)",
-          fontSize: "var(--fs-sm)",
-        }}
+        name={slot}
+        accept={ACCEPT}
+        onChange={(event) => onPick(event.target.files?.[0] ?? null)}
       />
+
+      <span className="dropzone-icon">
+        <UploadIcon size={20} />
+      </span>
+      <span className="dropzone-label">
+        Upload <em>{label}</em>
+      </span>
+      {file === null ? (
+        <span className="dropzone-hint">Max 10MB</span>
+      ) : (
+        <span className="dropzone-file">{file.name}</span>
+      )}
+    </label>
+  );
+}
+
+/**
+ * The illustration: the teacher portrait ringed by four badges.
+ *
+ * The portrait is the real exported asset. Its geometry follows the file — a
+ * 138px outer circle at 10% accent, a 108px inner at 26%, the portrait at 79 of
+ * 138, and four 13px badges at the designed angles — so the ring proportions hold
+ * as the whole thing scales with the viewport.
+ */
+function Hero(): React.JSX.Element {
+  return (
+    <div className="hero" aria-hidden>
+      <span className="hero-portrait">
+        <Image
+          src="/brand/teacher.png"
+          alt=""
+          width={79}
+          height={97}
+          priority
+          sizes="79px"
+        />
+      </span>
+      <span className="hero-badge" data-at="tr">
+        <ClockGlyph />
+      </span>
+      <span className="hero-badge" data-at="tl">
+        <GridGlyph />
+      </span>
+      <span className="hero-badge" data-at="br">
+        <CloudGlyph />
+      </span>
+      <span className="hero-badge" data-at="bl">
+        <GearGlyph />
+      </span>
     </div>
   );
 }

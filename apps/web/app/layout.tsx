@@ -1,8 +1,34 @@
 import type { Metadata } from "next";
+import { Bricolage_Grotesque, Inter } from "next/font/google";
 import "./globals.css";
 
+/**
+ * Both faces come from the Figma file rather than being chosen here: Bricolage
+ * Grotesque carries the screen, and Inter appears on exactly one label — the
+ * toolkit button — which is worth honouring rather than tidying away, because a
+ * substitution there would be a silent design change.
+ *
+ * Loaded through `next/font`, which self-hosts them at build time. That matters
+ * for the deployed container: a Google Fonts link would be a runtime dependency
+ * on a third party for the page to render as designed, and a network hiccup would
+ * show up as the wrong typeface rather than as an error.
+ */
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-display",
+  weight: ["400", "500", "600", "700"],
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans",
+  weight: ["400", "500", "600"],
+});
+
 export const metadata: Metadata = {
-  title: "Answer Sheet Review",
+  title: "Exams · VedaAI",
   description:
     "Upload a question paper and a handwritten answer sheet, then see which question was answered, where the answer is, and which questions were left unanswered.",
 };
@@ -11,7 +37,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
   return (
-    <html lang="en">
+    <html lang="en" className={`${bricolage.variable} ${inter.variable}`}>
       <body>{children}</body>
     </html>
   );
