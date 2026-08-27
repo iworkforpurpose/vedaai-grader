@@ -23,6 +23,7 @@ from vedaai_contracts import (
 )
 
 from . import ink as ink_module
+from . import questions as questions_module
 from . import regions as regions_module
 from . import render
 from .ocr import (
@@ -169,6 +170,34 @@ def ingest_document(
     return pages, index, warnings, ink_regions
 
 
+def extract_questions(submission: Submission) -> list[str]:
+    """Recover the question paper's structure. Returns any warnings.
+
+    Separate from ingest because it depends only on the transcribed paper, so it
+    can be re-run against a changed extractor without re-rendering or
+    re-transcribing anything — which during accuracy work is most of the loop.
+    """
+    if submission.question_paper_lines is None:
+        return ["No transcription for the question paper, so no questions were extracted."]
+
+    paper = questions_module.extract(submission.question_paper_lines)
+    submission.questions = paper
+
+    warnings = list(questions_module.suspicious(paper.questions))
+    for gap in paper.gaps:
+        warnings.append(
+            f"Question {gap.expected_label} appears to be missing between "
+            f"{gap.after_qid} and {gap.before_qid}. Either the paper skips it or "
+            "extraction did."
+        )
+    if submission.question_paper_lines.reading_order_confidence < 0.9:
+        warnings.append(
+            "This paper appears to use multiple columns, so the printed order of "
+            "questions is less certain than usual."
+        )
+    return warnings
+
+
 def ingest(
     *,
     submission_id: str,
@@ -221,10 +250,21 @@ def ingest(
             warnings.extend(warns)
 
         submission.pages = all_pages
+
+        submission_store.emit(
+            submission_id,
+            ProgressEvent(
+                stage=Stage.EXTRACTING_QUESTIONS,
+                message="Reading the question paper",
+            ),
+        )
+        warnings.extend(extract_questions(submission))
+
         submission.warnings = warnings
         submission.status = SubmissionStatus.COMPLETE
         submission_store.put(submission)
 
+        question_count = submission.question_count
         question_lines = (
             len(submission.question_paper_lines.lines) if submission.question_paper_lines else 0
         )
@@ -236,7 +276,7 @@ def ingest(
             ProgressEvent(
                 stage=Stage.DONE,
                 message=(
-                    f"Ingested {len(all_pages)} pages · "
+                    f"Ingested {len(all_pages)} pages · {question_count} questions · "
                     f"{question_lines} question lines · {answer_lines} answer lines"
                 ),
                 pages_done=len(all_pages),

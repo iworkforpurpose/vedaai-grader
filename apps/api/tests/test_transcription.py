@@ -218,10 +218,11 @@ class TestReadingOrderFallback:
         ]
         assert [ln.text for ln in sort_reading_order(lines)] == ["left", "right"]
 
-    def test_interleaves_two_columns_as_documented(self) -> None:
-        # Asserting the known limitation rather than pretending it does not
-        # exist. Two columns at the same vertical position get interleaved,
-        # which is precisely what column detection has to fix later.
+    def test_the_per_page_preorder_is_column_blind(self) -> None:
+        # Documents what this function is and is not. It interleaves columns by
+        # design, because it only orders within a page and knows nothing about
+        # gutters. Correct reading order is established over the whole index by
+        # grader.reading_order, and is tested in test_questions.py.
         lines = [
             TranscribedLine(text="L1", box=BBox(x0=0.05, y0=0.10, x1=0.45, y1=0.13)),
             TranscribedLine(text="R1", box=BBox(x0=0.55, y0=0.10, x1=0.95, y1=0.13)),

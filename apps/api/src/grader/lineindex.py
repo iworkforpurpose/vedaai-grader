@@ -11,6 +11,7 @@ from __future__ import annotations
 from vedaai_contracts import DocumentKind, Line, LineIndex, OcrEngine
 
 from .ocr.base import TranscribedLine
+from .reading_order import order_lines
 
 #: Prefix per document, so an ID carries which document it came from. These IDs
 #: are pasted into prompts alongside both documents' lines, and an unprefixed
@@ -22,17 +23,20 @@ _PREFIX: dict[DocumentKind, str] = {
 
 
 def sort_reading_order(lines: list[TranscribedLine]) -> list[TranscribedLine]:
-    """Order lines within one page geometrically: top to bottom, then left to right.
+    """Order lines within one page: banded top-to-bottom, then left-to-right.
 
-    A deliberately naive baseline. It is correct for single-column pages and
-    wrong for multi-column ones, where it interleaves columns — which is exactly
-    the failure that column detection addresses later. Keeping the naive version
-    behind a named function means the debug overlay shows the interleaving
-    plainly instead of it hiding inside a larger routine.
+    A per-page pre-order only, and column-blind: on a two-column page it
+    interleaves the columns, because the first line of the right column sits
+    level with the first line of the left.
 
-    Lines are bucketed into bands before sorting horizontally, because raw
-    ``y0`` ordering scrambles words on a shared baseline whose boxes differ by a
-    pixel or two.
+    That is not the ordering the system relies on. Full reading order — full-width
+    headings splitting the page into bands, gutters found by projection — lives in
+    ``grader.reading_order`` and runs over the assembled index, which is where
+    line IDs are allocated and therefore where order has to be correct. This
+    function exists to give each page a stable starting order before that pass.
+
+    Lines are bucketed into bands before sorting horizontally, because raw ``y0``
+    ordering scrambles words on a shared baseline whose boxes differ by a pixel.
     """
     if not lines:
         return []
@@ -65,17 +69,18 @@ def build_index(
     more reliably than any geometric heuristic could reconstruct. It is wrong for
     OCR output, which typically arrives in detection order.
     """
-    lines: list[Line] = []
-    counter = 0
+    # Build lines first, order them across the whole document, and only then
+    # allocate IDs. Numbering before ordering would produce IDs that do not run
+    # in reading order, and ``resolve_span`` depends on them doing so — a span is
+    # named by two IDs and means everything between them.
     prefix = _PREFIX[kind]
-
+    staged: list[Line] = []
     for page_index, page_lines in enumerate(per_page):
         ordered = page_lines if trust_engine_order else sort_reading_order(page_lines)
         for transcribed in ordered:
-            counter += 1
-            lines.append(
+            staged.append(
                 Line(
-                    line_id=f"{prefix}:{counter:04d}",
+                    line_id=f"{prefix}:0000",  # placeholder, replaced below
                     kind=kind,
                     page=page_index,
                     box=transcribed.box,
@@ -86,11 +91,23 @@ def build_index(
                 )
             )
 
+    if trust_engine_order:
+        # A PDF's own block numbering already encodes structure, columns
+        # included, more reliably than geometry can reconstruct it.
+        final, confidence = staged, reading_order_confidence
+    else:
+        final, confidence = order_lines(staged)
+
+    lines = [
+        line.model_copy(update={"line_id": f"{prefix}:{i:04d}"})
+        for i, line in enumerate(final, start=1)
+    ]
+
     return LineIndex(
         kind=kind,
         lines=lines,
         engine=engine,
-        reading_order_confidence=reading_order_confidence,
+        reading_order_confidence=confidence,
     )
 
 
