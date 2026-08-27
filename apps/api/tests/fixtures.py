@@ -279,3 +279,34 @@ def pdf_with_hidden_text(visible: str, hidden: str) -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def skewed_photo_image(*, rotation: float = 4.0) -> bytes:
+    """A PNG of a page held at an angle, with uneven lighting.
+
+    Exists because a clean synthetic render triggers no correction, which makes
+    every assertion about corrected geometry vacuous without anyone noticing.
+    """
+    import cv2
+    import numpy as np
+
+    page = np.full((1400, 1000), 250, dtype=np.uint8)
+    for row in range(20):
+        y = 90 + row * 62
+        x = 90
+        while x < 860:
+            run = 20 + (row * 11 + x) % 46
+            cv2.rectangle(page, (x, y), (x + run, y + 20), 45, -1)
+            x += run + 16
+
+    matrix = cv2.getRotationMatrix2D((500.0, 700.0), rotation, 1.0)
+    page = cv2.warpAffine(
+        page, matrix, (1000, 1400), borderMode=cv2.BORDER_CONSTANT, borderValue=250
+    )
+    # A shadow across the page, as a hand or a lamp leaves.
+    gradient = np.linspace(1.0, 0.55, page.shape[1], dtype=np.float32)
+    page = (page * gradient[None, :]).astype(np.uint8)
+
+    ok, buffer = cv2.imencode(".png", page)
+    assert ok
+    return bytes(buffer.tobytes())

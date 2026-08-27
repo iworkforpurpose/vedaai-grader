@@ -68,6 +68,13 @@ class RenderedPage:
     page: Page
     png: bytes
 
+    correction: str | None = None
+    """What straightening was applied, phrased for a teacher, or None.
+
+    Surfaced rather than silent: someone comparing the page on screen with the
+    paper on their desk should not have to wonder why it looks different.
+    """
+
 
 def compute_content_hash(data: bytes) -> str:
     """SHA-256 of the raw upload.
@@ -212,41 +219,125 @@ def render_pages(
     Yields rather than returns so that only one page's pixels are live at any
     moment. Pages already present in the store are skipped and their metadata
     reconstructed, which makes re-processing the same paper nearly free.
+
+    A page with no text layer is a scan or a photograph, and it is straightened
+    here before anything else sees it — see ``grader.preprocess`` for why this and
+    nowhere else. The consequence to keep in mind: **the corrected bitmap is the
+    page**. It is what gets stored, shown and read, its dimensions are what every
+    coordinate is normalized against, and correction changes those dimensions. So
+    the metadata below is taken from the image that is actually kept, never from
+    the pixmap it came from.
     """
     doc = _open_document(data, source.filename)
     native = native_pixel_size(data, source.filename)
+    # A text layer means a typed document, rendered square and evenly lit by
+    # definition. Correcting one would be looking for a distortion that cannot be
+    # there — and `page_size` converts that document's text-layer coordinates
+    # without consulting this function, so a correction here would silently put
+    # the two into different spaces.
+    correcting = not source.has_text_layer
+
     try:
         for index in range(doc.page_count):
             key = page_store.key_for(source.content_hash, index)
             page = doc[index]
 
+            if page_store.exists(key):
+                # Cache hit. Dimensions come from the stored image, which is the
+                # corrected one — reading them from a freshly rendered pixmap
+                # would report the size before correction and shift every
+                # coordinate on the page by the difference.
+                stored = page_store.read(key)
+                width, height = _png_size(stored)
+                yield RenderedPage(
+                    page=Page(
+                        kind=source.kind,
+                        index=index,
+                        width=width,
+                        height=height,
+                        dpi=round(_render_scale(page, dpi, native) * 72),
+                        image_key=key,
+                    ),
+                    png=b"",
+                )
+                continue
+
             scale = _render_scale(page, dpi, native)
             pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
             try:
-                meta = Page(
-                    kind=source.kind,
-                    index=index,
-                    width=pixmap.width,
-                    height=pixmap.height,
-                    # The effective density, not the requested one. When a cap
-                    # applies these differ, and recording the request would
-                    # misreport what the geometry is actually relative to.
-                    dpi=round(scale * 72),
-                    image_key=key,
-                )
-                if page_store.exists(key):
-                    # Cache hit: dimensions still come from the pixmap so the
-                    # geometry contract holds, but no bytes are rewritten.
-                    yield RenderedPage(page=meta, png=b"")
-                else:
-                    yield RenderedPage(page=meta, png=pixmap.tobytes("png"))
+                png = pixmap.tobytes("png")
+                width, height = pixmap.width, pixmap.height
             finally:
                 # Explicit: PyMuPDF pixmaps hold their buffer outside Python's
                 # ordinary refcount rhythm, and relying on GC here is what turns
                 # a 20-page document into an out-of-memory kill.
                 del pixmap
+
+            note: str | None = None
+            if correcting:
+                png, width, height, note = _corrected_png(png, width, height)
+
+            yield RenderedPage(
+                page=Page(
+                    kind=source.kind,
+                    index=index,
+                    width=width,
+                    height=height,
+                    # The effective density, not the requested one. When a cap
+                    # applies these differ, and recording the request would
+                    # misreport what the geometry is actually relative to.
+                    dpi=round(scale * 72),
+                    image_key=key,
+                ),
+                png=png,
+                correction=note,
+            )
     finally:
         doc.close()
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    """Pixel size of an encoded image, without keeping the decoded pixels."""
+    import cv2
+    import numpy as np
+
+    decoded = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None:
+        raise UnsupportedDocument("a stored page image could not be read back")
+    return decoded.shape[1], decoded.shape[0]
+
+
+def _corrected_png(
+    png: bytes, width: int, height: int
+) -> tuple[bytes, int, int, str | None]:
+    """Straighten a scanned or photographed page, or leave it exactly as it was.
+
+    Failure here is never fatal. Correction improves recognition; it is not a
+    prerequisite for it, and a page that cannot be straightened is still a page
+    that can be read.
+    """
+    import cv2
+    import numpy as np
+
+    from .preprocess import correct
+
+    try:
+        decoded = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if decoded is None:
+            return png, width, height, None
+
+        result = correct(decoded, is_photograph=True)
+        if not result.changed:
+            return png, width, height, None
+
+        ok, buffer = cv2.imencode(".png", result.image)
+        if not ok:
+            return png, width, height, None
+
+        corrected_height, corrected_width = result.image.shape[:2]
+        return buffer.tobytes(), corrected_width, corrected_height, result.describe()
+    except Exception:  # noqa: BLE001 - correction is an improvement, not a requirement
+        return png, width, height, None
 
 
 def page_size(data: bytes, filename: str, index: int, *, dpi: int = RENDER_DPI) -> tuple[int, int]:

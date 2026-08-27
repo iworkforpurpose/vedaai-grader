@@ -10,7 +10,12 @@ from grader import render
 from grader.render import UnsupportedDocument
 from grader.storage import PageStore
 
-from .fixtures import image_with_known_size, question_paper, single_page_image
+from .fixtures import (
+    image_with_known_size,
+    question_paper,
+    single_page_image,
+    skewed_photo_image,
+)
 
 
 @pytest.fixture
@@ -191,3 +196,63 @@ class TestPageStore:
 
     def test_exists_is_false_for_a_traversal_key(self, page_store: PageStore) -> None:
         assert not page_store.exists("../../etc/passwd")
+
+
+class TestCorrectionAndTheCoordinateSpace:
+    """Correction changes the page's size, which every coordinate depends on.
+
+    The bug these guard against is the worst kind this codebase can have: geometry
+    that is internally consistent, confidently drawn, and in the wrong place. It
+    appears the moment the size reported for a page stops matching the image
+    actually stored for it.
+    """
+
+    def test_a_typed_page_is_never_corrected(self, tmp_path) -> None:
+        # A text layer means the document is square and evenly lit by definition.
+        # It also means `page_size` converts its coordinates without consulting
+        # `render_pages`, so a correction here would put the two in different
+        # spaces with nothing to reveal it.
+        data, _ = question_paper()
+        store = PageStore(root=tmp_path)
+        source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
+
+        for rendered in render.render_pages(data, source, store):
+            assert rendered.correction is None
+            width, height = render.page_size(data, "paper.pdf", rendered.page.index)
+            assert (rendered.page.width, rendered.page.height) == (width, height)
+
+    def test_reported_size_matches_the_stored_image(self, tmp_path) -> None:
+        # The invariant in one assertion, on a photograph, where correction does
+        # run and does resize.
+        data = skewed_photo_image()
+        store = PageStore(root=tmp_path)
+        source = render.inspect(data, "photo.png", DocumentKind.ANSWER_SHEET)
+
+        corrected_any = False
+        for rendered in render.render_pages(data, source, store):
+            store.put(rendered.page.image_key, rendered.png)
+            corrected_any = corrected_any or rendered.correction is not None
+            stored_width, stored_height = render._png_size(store.read(rendered.page.image_key))
+            assert (rendered.page.width, rendered.page.height) == (stored_width, stored_height)
+
+        assert corrected_any, "fixture must actually trigger a correction, or this proves nothing"
+
+    def test_a_cached_page_reports_the_size_of_what_was_cached(self, tmp_path) -> None:
+        # The trap: on a second pass the pixmap is re-rendered at its *original*
+        # size, and reading dimensions from it would report the page as it was
+        # before straightening. Every coordinate on the page would then be scaled
+        # by the difference — invisibly, because both numbers look plausible.
+        data = skewed_photo_image()
+        store = PageStore(root=tmp_path)
+        source = render.inspect(data, "photo.png", DocumentKind.ANSWER_SHEET)
+
+        first = []
+        for rendered in render.render_pages(data, source, store):
+            store.put(rendered.page.image_key, rendered.png)
+            first.append((rendered.page.width, rendered.page.height))
+
+        second = [
+            (rendered.page.width, rendered.page.height)
+            for rendered in render.render_pages(data, source, store)
+        ]
+        assert second == first

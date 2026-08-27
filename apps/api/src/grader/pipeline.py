@@ -95,6 +95,12 @@ def ingest_document(
             page_store.put(rendered.page.image_key, rendered.png)
         pages.append(rendered.page)
 
+        if rendered.correction:
+            warnings.append(
+                f"{source.filename}: page {rendered.page.index + 1} was straightened before "
+                f"reading — {rendered.correction}."
+            )
+
         # A cached page yields no bytes, but both transcription and ink
         # extraction need pixels. Read them back rather than skipping: silently
         # producing nothing looks exactly like a blank page, which is the one
