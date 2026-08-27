@@ -113,18 +113,32 @@ def ingest_document(
         )
 
         if engine is not None:
-            per_page_lines.append(
-                engine.transcribe(
-                    PageInput(
-                        index=rendered.page.index,
-                        width=rendered.page.width,
-                        height=rendered.page.height,
-                        png=png,
-                        document=data,
-                        filename=source.filename,
+            try:
+                per_page_lines.append(
+                    engine.transcribe(
+                        PageInput(
+                            index=rendered.page.index,
+                            width=rendered.page.width,
+                            height=rendered.page.height,
+                            png=png,
+                            document=data,
+                            filename=source.filename,
+                        )
                     )
                 )
-            )
+            except EngineUnavailable as exc:
+                # A recognizer that cannot run is not a failed submission. The
+                # pages are already rendered and still reviewable, ink geometry
+                # still works, and a diagram never needed text to be highlighted.
+                # So transcription stops here and says why, in terms that name
+                # what to change.
+                #
+                # Stops rather than switching engines mid-document, on purpose. A
+                # line's provenance is what makes engine disagreement usable as a
+                # confidence signal, and a document transcribed half by one
+                # recognizer and half by another has no coherent provenance.
+                warnings.append(f"{source.filename}: {exc}")
+                engine = None
 
         # Ink only matters for the answer sheet. A printed question paper has no
         # student marking, so extracting it there would cost time to describe

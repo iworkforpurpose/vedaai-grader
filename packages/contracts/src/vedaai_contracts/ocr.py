@@ -27,6 +27,12 @@ class OcrEngine(StrEnum):
     disagreement usable as a confidence signal.
     """
 
+    AWS_TEXTRACT = "aws_textract"
+    """Amazon Textract, used for handwriting in the deployed service. Reports
+    bounding boxes as ratios of the page with the origin top-left, which is this
+    project's coordinate contract already — so the conversion at the adapter
+    boundary is an identity, and cannot drift."""
+
     PDF_TEXT_LAYER = "pdf_text"
     """Not OCR at all — geometry and text read straight from a PDF's embedded
     text layer. Exact and free, so it is preferred for printed question papers

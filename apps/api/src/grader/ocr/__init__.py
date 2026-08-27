@@ -9,22 +9,51 @@ document rather than once and for all.
 
 from __future__ import annotations
 
+import os
+
 from vedaai_contracts import DocumentKind, OcrEngine, SourceFile
 
 from .base import EngineUnavailable, PageInput, TranscribedLine, TranscriptionEngine
 from .native_pdf import PdfTextLayerEngine
 from .paddle import PaddleOcrEngine
+from .textract import TextractEngine
 
 __all__ = [
     "EngineUnavailable",
     "PageInput",
+    "TextractEngine",
     "TranscribedLine",
     "TranscriptionEngine",
     "PaddleOcrEngine",
     "PdfTextLayerEngine",
+    "handwriting_engines",
     "select_engine",
     "trusts_own_order",
 ]
+
+#: Which engine reads handwriting, from the environment.
+#:
+#: Named rather than inferred from whichever credentials happen to be present. A
+#: deployment that silently fell back to a different recognizer would report
+#: accuracy figures for an engine nobody chose, and the fallback is exactly the
+#: case where the numbers differ.
+OCR_ENGINE = os.getenv("OCR_ENGINE", "").strip().lower()
+
+
+def handwriting_engines() -> list[TranscriptionEngine]:
+    """Handwriting engines in the order they should be tried.
+
+    Preference follows ``OCR_ENGINE`` when it names one. With nothing set, a
+    hosted recognizer is preferred over the local model — the local one needs
+    600 MB of weights and takes about fourteen seconds a page, which is the right
+    default for a laptop and the wrong one for a service.
+    """
+    textract, paddle = TextractEngine(), PaddleOcrEngine()
+    if OCR_ENGINE == "paddle":
+        return [paddle, textract]
+    if OCR_ENGINE == "textract":
+        return [textract, paddle]
+    return [textract, paddle]
 
 
 def select_engine(source: SourceFile) -> TranscriptionEngine:
@@ -41,15 +70,16 @@ def select_engine(source: SourceFile) -> TranscriptionEngine:
     if source.kind is DocumentKind.QUESTION_PAPER and source.has_text_layer:
         return PdfTextLayerEngine()
 
-    paddle = PaddleOcrEngine()
-    if paddle.available():
-        return paddle
+    for engine in handwriting_engines():
+        if engine.available():
+            return engine
 
     raise EngineUnavailable(
         f"no transcription engine available for {source.filename!r} "
         f"(kind={source.kind.value}, has_text_layer={source.has_text_layer}). "
-        "Handwriting requires the local OCR extra: run `uv sync --extra ocr-local` "
-        "in apps/api."
+        "Handwriting needs either AWS credentials for Textract — the 'aws' extra, "
+        "with AWS_REGION and a role or key pair — or the local model, via "
+        "`uv sync --extra ocr-local` in apps/api."
     )
 
 

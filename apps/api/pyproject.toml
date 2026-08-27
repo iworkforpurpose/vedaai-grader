@@ -10,7 +10,12 @@ dependencies = [
   "pydantic>=2.9",
   "python-multipart>=0.0.12",
   "pymupdf>=1.24",
-  "opencv-python-headless>=4.10",
+  # Upper bound deliberate. An unpinned bound resolved to 5.0.0.93 while adding an
+  # unrelated dependency, and that wheel imports as an empty module — cv2.__file__
+  # is None and every function is missing, which surfaces as "module 'cv2' has no
+  # attribute 'line'" fifty tests deep rather than as an install failure. A major
+  # version of a C-extension library is not something to accept silently.
+  "opencv-python-headless>=4.10,<5",
   "numpy>=2.1",
 ]
 
@@ -24,6 +29,9 @@ ocr-local = ["paddlepaddle>=3.3", "paddleocr>=3.7"]
 # mapping and highlighting — is complete without it, and marking degrades to a
 # rubric the teacher fills in rather than failing.
 grading = ["anthropic>=0.40"]
+# Hosted handwriting recognition and page storage. Small next to the local model,
+# and the only option that needs no weights shipped in the image.
+aws = ["boto3>=1.35"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../../packages/contracts", editable = true }

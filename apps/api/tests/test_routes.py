@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from grader import storage
 from grader import store as store_module
 from grader.main import app
-from grader.ocr import PaddleOcrEngine
+from grader.ocr import PaddleOcrEngine, TextractEngine
 from grader.storage import PageStore
 from grader.store import SubmissionStore
 
@@ -32,7 +32,11 @@ def client(tmp_path, monkeypatch) -> TestClient:
     responsible for. The real transcription path is covered by
     test_paddle_engine.py and by test_real_handwriting_end_to_end below.
     """
+    # Both handwriting engines are switched off. Disabling only the local one used
+    # to be enough; now Textract is preferred, and on a machine with any AWS
+    # credentials at all it would be selected and then fail against the network.
     monkeypatch.setattr(PaddleOcrEngine, "available", lambda self: False)
+    monkeypatch.setattr(TextractEngine, "available", lambda self: False)
     pages = PageStore(root=tmp_path / "pages")
     submissions = SubmissionStore()
     monkeypatch.setattr(storage, "store", pages)
