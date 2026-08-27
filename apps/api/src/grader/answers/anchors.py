@@ -1,0 +1,321 @@
+"""Question numbers the student wrote, and whether to believe them.
+
+A label in the margin is the strongest mapping signal available: the student is
+stating outright which question this answers. It is also the signal most capable
+of silently doing damage, because a wrongly trusted label maps an answer to the
+wrong question *and* reports high confidence while doing it. The teacher sees a
+confident wrong answer, which is worse than a hedged one.
+
+So every anchor starts as a hypothesis and must earn confirmation from evidence
+that does not come from the label itself. Two routes, and either suffices:
+
+**Semantic agreement.** Does the writing beside the label actually discuss what
+that question asked? Strong evidence when present.
+
+**Order consistency.** Does this label's position among the other labels make
+sense? A student answering 1, 2, 3, 4 in order corroborates every one of them.
+
+Both are needed because each fails alone. Semantic agreement is weak on short
+answers and on answers that reuse none of the question's vocabulary — "Define
+refraction" answered by "the bending of light" shares no content word. Order
+consistency cannot condemn anything on its own, because answering out of order is
+explicitly permitted and common.
+
+An anchor that fails both is *disputed*, which does not discard it: it stops
+pinning the alignment and becomes one weighted signal among several. That is the
+defence against a mislabelled answer, and it degrades rather than breaking.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from vedaai_contracts import Anchor, AnchorStatus, AnswerBlock, Line, Question
+
+from ..questions.numbering import parse_label
+from .similarity import Similarity, default_similarity
+
+#: Semantic agreement at or above this confirms an anchor.
+#:
+#: Low by the standards of sentence similarity, and deliberately so. Lexical
+#: overlap between a question and its answer is modest even when they plainly
+#: correspond, so a high bar would refuse to confirm correct labels — and the
+#: cost of that is losing a reliable signal, not gaining safety.
+_SEMANTIC_CONFIRM = 0.18
+
+#: How much better another question must score before the written label is
+#: treated as contradicted.
+#:
+#: Comparative rather than absolute, because an absolute floor cannot support
+#: this judgement. On the out-of-order golden case, "Explain the working of an
+#: electric motor" is answered with "a current-carrying coil in a magnetic
+#: field" — a correct answer sharing no content word with its question, scoring
+#: zero. An absolute threshold disputed that correct label and threw away a good
+#: anchor.
+#:
+#: What does carry meaning is a *rival*: if the writing matches some other
+#: question markedly better than the one the student named, the label is
+#: suspect. If nothing matches well, the measure is simply uninformative and
+#: says nothing either way.
+_RIVAL_MARGIN = 0.12
+
+#: A block shorter than this carries too little text for similarity to mean
+#: anything. "The watt." is a correct answer and an unusable embedding.
+_MIN_TEXT_FOR_SEMANTICS = 24
+
+
+@dataclass
+class _Candidate:
+    block: AnswerBlock
+    line: Line
+    tokens: tuple[str, ...]
+    raw: str
+
+
+def detect(
+    blocks: list[AnswerBlock],
+    lines: list[Line],
+    questions: list[Question],
+    *,
+    similarity: Similarity | None = None,
+) -> list[Anchor]:
+    """Find written question labels and decide how far each can be trusted."""
+    similarity = similarity or default_similarity
+    by_id = {line.line_id: line for line in lines}
+
+    candidates: list[_Candidate] = []
+    for block in blocks:
+        if not block.line_ids:
+            continue
+        first = by_id.get(block.line_ids[0])
+        if first is None:
+            continue
+        parsed = parse_label(first.text)
+        if parsed is None:
+            continue
+        candidates.append(
+            _Candidate(block=block, line=first, tokens=parsed.tokens, raw=parsed.raw)
+        )
+
+    resolved = _resolve(candidates, questions)
+    order_ok = _order_consistent([qid for _c, qid in resolved])
+
+    anchors: list[Anchor] = []
+    for index, (candidate, qid) in enumerate(resolved):
+        question = next((q for q in questions if q.qid == qid), None)
+        agreement = _semantic_agreement(candidate.block, question, similarity)
+        consistent = order_ok[index]
+        outscored = _outscored_by_a_rival(candidate.block, qid, questions, similarity)
+        status = _decide(qid, agreement, consistent, outscored)
+
+        anchors.append(
+            Anchor(
+                anchor_id=f"anc:{index:03d}",
+                claimed_label=candidate.raw,
+                claimed_qid=qid,
+                line_id=candidate.line.line_id,
+                page=candidate.line.page,
+                box=candidate.line.box,
+                status=status,
+                semantic_agreement=agreement,
+                order_consistent=consistent,
+            )
+        )
+
+    return anchors
+
+
+def _resolve(
+    candidates: list[_Candidate],
+    questions: list[Question],
+) -> list[tuple[_Candidate, str | None]]:
+    """Match each written label to a question in the paper.
+
+    Compared as token paths rather than as strings, so ``11 b)`` written by a
+    student matches ``11 (b)`` printed on the paper — the punctuation differs, the
+    structure does not.
+
+    A lone sub-part label such as ``(b)`` is resolved against the most recent
+    resolved parent, which is how the student meant it: having written ``11 (a)``
+    above, they see no need to repeat the 11.
+    """
+    by_path: dict[tuple[str, ...], str] = {
+        tuple(question.path): question.qid for question in questions
+    }
+    # Also indexed by the label the paper printed. A student writing "(b)" with
+    # no preceding parent cannot be resolved by path, but the paper may well have
+    # printed that question as "(b)" too — in which case the label itself is the
+    # match, and refusing it would dispute a perfectly good anchor.
+    by_label: dict[str, str] = {}
+    for question in questions:
+        normalized = " ".join(question.label_raw.split()).lower()
+        by_label.setdefault(normalized, question.qid)
+
+    out: list[tuple[_Candidate, str | None]] = []
+    recent_parent: tuple[str, ...] = ()
+
+    for candidate in candidates:
+        qid = by_path.get(candidate.tokens)
+        if qid is not None:
+            out.append((candidate, qid))
+            # A multi-token label names its own parent; a single-token one *is*
+            # the parent for anything that follows beneath it.
+            recent_parent = (
+                candidate.tokens[:-1] if len(candidate.tokens) > 1 else candidate.tokens
+            )
+            continue
+
+        if len(candidate.tokens) == 1 and recent_parent:
+            for depth in range(len(recent_parent), 0, -1):
+                combined = recent_parent[:depth] + candidate.tokens
+                qid = by_path.get(combined)
+                if qid is not None:
+                    break
+
+        if qid is None:
+            qid = by_label.get(" ".join(candidate.raw.split()).lower())
+
+        out.append((candidate, qid))
+    return out
+
+
+def _semantic_agreement(
+    block: AnswerBlock,
+    question: Question | None,
+    similarity: Similarity,
+) -> float | None:
+    """How well the writing matches what the question asked.
+
+    Returns None when the block is too short to judge, which is a real and
+    frequent case — a one-word answer is correct and unmeasurable. None means "no
+    evidence", never "no agreement", and the caller must not treat the two alike.
+    """
+    if question is None:
+        return None
+    if len(block.text.strip()) < _MIN_TEXT_FOR_SEMANTICS:
+        return None
+    return similarity.score(question.text, block.text)
+
+
+def _outscored_by_a_rival(
+    block: AnswerBlock,
+    qid: str | None,
+    questions: list[Question],
+    similarity: Similarity,
+) -> bool:
+    """Whether some other question matches this writing markedly better.
+
+    This is the evidence that can actually contradict a written label. A low
+    absolute score means the measure is uninformative; a *rival* scoring well
+    above the claimed question means the student probably wrote the wrong number.
+    """
+    if qid is None or len(block.text.strip()) < _MIN_TEXT_FOR_SEMANTICS:
+        return False
+
+    claimed = next((q for q in questions if q.qid == qid), None)
+    if claimed is None:
+        return False
+
+    claimed_score = similarity.score(claimed.text, block.text)
+    for question in questions:
+        if question.qid == qid:
+            continue
+        if similarity.score(question.text, block.text) - claimed_score >= _RIVAL_MARGIN:
+            return True
+    return False
+
+
+def _order_consistent(qids: list[str | None]) -> list[bool]:
+    """Which anchors sit in the longest run that respects the paper's order.
+
+    Anchors are in document order; their claimed questions have a printed order.
+    The longest increasing subsequence is the largest set of labels that could all
+    be right if the student worked through the paper forwards — so membership is
+    corroboration, and exclusion is a reason to look closer.
+
+    Exclusion is emphatically not proof of error. Answering out of order is
+    permitted, so a correctly-labelled answer written early can fall outside the
+    run. That is why this only ever confirms, and never condemns.
+    """
+    positions = [_position(qid) for qid in qids]
+    known = [(i, p) for i, p in enumerate(positions) if p is not None]
+    if len(known) < 2:
+        # Nothing to be consistent with. Treated as uncorroborated rather than
+        # inconsistent, so a single anchor is not condemned for being alone.
+        return [False] * len(qids)
+
+    values = [p for _i, p in known]
+    keep = _longest_increasing(values)
+    consistent = [False] * len(qids)
+    for offset in keep:
+        consistent[known[offset][0]] = True
+    return consistent
+
+
+def _position(qid: str | None) -> int | None:
+    """A sortable position for a qid, from the numeric parts of its path."""
+    if qid is None:
+        return None
+    parts = qid.split("/")
+    scale = 1000
+    total = 0
+    for depth, part in enumerate(parts):
+        if part.isdigit():
+            total += int(part) * (scale ** (3 - min(depth, 3)))
+    return total
+
+
+def _longest_increasing(values: list[int]) -> list[int]:
+    """Indices of a longest non-decreasing subsequence."""
+    if not values:
+        return []
+
+    best_length = [1] * len(values)
+    predecessor = [-1] * len(values)
+
+    for i in range(1, len(values)):
+        for j in range(i):
+            if values[j] <= values[i] and best_length[j] + 1 > best_length[i]:
+                best_length[i] = best_length[j] + 1
+                predecessor[i] = j
+
+    end = max(range(len(values)), key=lambda i: best_length[i])
+    chain: list[int] = []
+    while end != -1:
+        chain.append(end)
+        end = predecessor[end]
+    return list(reversed(chain))
+
+
+def _decide(
+    qid: str | None,
+    agreement: float | None,
+    consistent: bool,
+    outscored_by_a_rival: bool,
+) -> AnchorStatus:
+    """Decide how far one anchor can be trusted."""
+    if qid is None:
+        # The label names a question the paper does not contain. Strong evidence
+        # the student mislabelled, and nothing to pin an alignment to regardless.
+        return AnchorStatus.DISPUTED
+
+    if outscored_by_a_rival and not consistent:
+        # The writing matches a different question better, and the label's
+        # position offers no support. This is the mislabelled case.
+        return AnchorStatus.DISPUTED
+
+    if agreement is not None and agreement >= _SEMANTIC_CONFIRM:
+        return AnchorStatus.CONFIRMED
+
+    if consistent:
+        return AnchorStatus.CONFIRMED
+
+    # No corroboration, but nothing against it either. Not trusted to pin an
+    # alignment, and not condemned — a correct label can land here simply because
+    # its answer reuses none of the question's words.
+    return AnchorStatus.UNVERIFIED
+
+
+def confirmed(anchors: list[Anchor]) -> list[Anchor]:
+    """Anchors trusted enough to constrain the alignment."""
+    return [anchor for anchor in anchors if anchor.may_pin]

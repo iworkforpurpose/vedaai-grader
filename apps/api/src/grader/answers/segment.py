@@ -1,0 +1,295 @@
+"""Dividing an answer sheet into candidate answer blocks.
+
+Blocks are the units the alignment works on, and they come from layout rather
+than from a model — so a segmentation mistake is inspectable and fixable in code
+rather than being an opaque property of a prompt.
+
+The rule that matters most here is negative. **A gap in the transcribed text is
+not a block boundary.** Detection recall on real handwriting is about 90%, so a
+missed line leaves a text-shaped hole in the middle of an answer, and splitting
+there breaks one answer into two — which then presents to the mapper as a
+phantom orphan and to the teacher as a wrong highlight.
+
+The ink mask settles it. Ink is found by thresholding, independently of
+recognition, so ink sitting in a gap means writing is there and the gap is an OCR
+miss rather than a margin. That check is the whole reason the two geometry sources
+exist as peers.
+
+Blocks may also contain no text at all. A hand-drawn diagram produces ink and no
+lines, and it is still an answer that has to be highlightable.
+"""
+
+from __future__ import annotations
+
+from vedaai_contracts import AnswerBlock, BBox, InkRegion, InkRegionKind, Line, PageBox
+
+from ..questions.numbering import parse_label
+
+#: A vertical gap this many times the normal line spacing suggests a new block.
+#: Generous, because over-splitting is the more damaging error: two blocks where
+#: there should be one produces a spurious orphan answer, whereas one block where
+#: there should be two is repairable by the sub-part split that runs later.
+_GAP_MULTIPLE = 2.2
+
+#: Ink covering at least this share of a gap means writing is there and the gap
+#: is a recognition failure, not a boundary.
+_GAP_INK_SHARE = 0.25
+
+#: Phrases a student writes when an answer continues elsewhere.
+_CONTINUATION_MARKERS = (
+    "cont.",
+    "contd",
+    "continued",
+    "cont on",
+    "cont. on",
+    "see next page",
+    "on next page",
+    "overleaf",
+    "p.t.o",
+    "pto",
+)
+
+
+def segment_blocks(
+    lines: list[Line],
+    ink_regions: list[InkRegion],
+) -> list[AnswerBlock]:
+    """Group answer-sheet lines into blocks, using ink to avoid false splits."""
+    usable = [line for line in lines if line.text.strip()]
+    writing_ink = [
+        region
+        for region in ink_regions
+        if region.kind.counts_as_page_ink and region.is_substantive
+    ]
+
+    blocks: list[AnswerBlock] = []
+    current: list[Line] = []
+    spacing = _normal_spacing(usable)
+
+    for index, line in enumerate(usable):
+        starts_new = False
+
+        if not current:
+            starts_new = False
+        elif _has_question_label(line):
+            # An explicit label is the strongest boundary a student ever gives.
+            starts_new = True
+        else:
+            previous = usable[index - 1]
+            if _is_gap(previous, line, spacing) and not _ink_bridges(
+                previous, line, writing_ink
+            ):
+                starts_new = True
+
+        if starts_new:
+            blocks.append(_build(len(blocks), current))
+            current = []
+
+        current.append(line)
+
+    if current:
+        blocks.append(_build(len(blocks), current))
+
+    blocks = _attach_ink(blocks, writing_ink)
+    return blocks
+
+
+#: Percentile of observed gaps taken as normal line spacing.
+#:
+#: The median is the obvious choice and is wrong here. On a sheet where most
+#: answers are a couple of lines long, close to half of all gaps are *between*
+#: answers, so the median sits between intra-answer and inter-answer spacing and
+#: the boundary threshold never fires. On the unlabelled golden case that
+#: collapsed an entire sheet into a single block.
+#:
+#: A low percentile describes within-answer spacing, which is what "normal" has
+#: to mean for a gap to stand out against it.
+_SPACING_PERCENTILE = 0.30
+
+
+def _normal_spacing(lines: list[Line]) -> float:
+    """Typical vertical distance between consecutive lines *within* an answer.
+
+    Measured from the page itself rather than assumed, because handwriting size
+    varies far more between students than any fixed threshold could accommodate.
+    """
+    gaps: list[float] = []
+    for previous, current in zip(lines, lines[1:], strict=False):
+        if previous.page == current.page:
+            gap = current.box.y0 - previous.box.y1
+            if gap >= 0:
+                gaps.append(gap)
+    if not gaps:
+        return 0.02
+
+    gaps.sort()
+    index = min(len(gaps) - 1, int(len(gaps) * _SPACING_PERCENTILE))
+    value = gaps[index]
+    # Guard against a degenerate value on tightly-packed writing, which would
+    # make every gap look enormous.
+    #
+    # Note the inherent limit: with only one or two gaps on the page, whichever
+    # gap exists *is* the baseline, so no gap can stand out against it and the
+    # sheet stays a single block. That is not a fixable threshold — an outlier
+    # cannot be identified from one sample — and it is the right failure
+    # direction anyway, since merging is repairable downstream and splitting is
+    # not.
+    return max(value, 0.004)
+
+
+def _is_gap(previous: Line, current: Line, spacing: float) -> bool:
+    if previous.page != current.page:
+        # A page break is not itself a boundary. Answers routinely continue over
+        # one, which is an explicit requirement, so the decision is left to the
+        # continuation marker and to the aligner.
+        return False
+    return (current.box.y0 - previous.box.y1) > spacing * _GAP_MULTIPLE
+
+
+def _ink_bridges(previous: Line, current: Line, ink: list[InkRegion]) -> bool:
+    """Whether substantive ink sits in the gap between two lines.
+
+    This is what stops an OCR miss from being read as a block boundary. The
+    horizontal extent is deliberately ignored: a missed line may sit anywhere
+    across the writing area, and requiring it to align with its neighbours would
+    defeat the check on indented or centred text.
+    """
+    top = previous.box.y1
+    bottom = current.box.y0
+    height = bottom - top
+    if height <= 0:
+        return False
+
+    covered = 0.0
+    for region in ink:
+        if region.page != previous.page:
+            continue
+        overlap = min(bottom, region.box.y1) - max(top, region.box.y0)
+        if overlap > 0:
+            covered += overlap
+
+    return (covered / height) >= _GAP_INK_SHARE
+
+
+def _has_question_label(line: Line) -> bool:
+    return parse_label(line.text) is not None
+
+
+def _build(index: int, lines: list[Line]) -> AnswerBlock:
+    text = " ".join(line.text.strip() for line in lines if line.text.strip())
+    pages = sorted({line.page for line in lines})
+    return AnswerBlock(
+        block_id=f"blk:{index:03d}",
+        line_ids=[line.line_id for line in lines],
+        text=text,
+        geometry=_union_per_page([PageBox(page=ln.page, box=ln.box) for ln in lines]),
+        pages_spanned=pages,
+        has_continuation_marker=_mentions_continuation(text),
+    )
+
+
+def _mentions_continuation(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in _CONTINUATION_MARKERS)
+
+
+def _union_per_page(boxes: list[PageBox]) -> list[PageBox]:
+    per_page: dict[int, list[BBox]] = {}
+    for pb in boxes:
+        per_page.setdefault(pb.page, []).append(pb.box)
+    return [
+        PageBox(page=page, box=BBox.union_all(bs)) for page, bs in sorted(per_page.items())
+    ]
+
+
+def _attach_ink(blocks: list[AnswerBlock], ink: list[InkRegion]) -> list[AnswerBlock]:
+    """Assign ink regions to blocks, and promote unclaimed ink to blocks of its own.
+
+    Ink that overlaps a block belongs to it. Ink that overlaps nothing is content
+    the recognizer never reported — a diagram, or a line it missed — and becomes a
+    text-free block so that it remains highlightable. Discarding it would mean a
+    question answered by a drawing has no answer at all.
+    """
+    claimed: dict[str, list[str]] = {block.block_id: [] for block in blocks}
+    unclaimed: list[InkRegion] = []
+
+    for region in ink:
+        owner = _best_block(region, blocks)
+        if owner is None:
+            unclaimed.append(region)
+        else:
+            claimed[owner].append(region.region_id)
+
+    out = [
+        block.model_copy(update={"ink_region_ids": claimed[block.block_id]})
+        for block in blocks
+    ]
+
+    for offset, group in enumerate(_group_adjacent(unclaimed)):
+        out.append(
+            AnswerBlock(
+                block_id=f"blk:ink{offset:03d}",
+                line_ids=[],
+                ink_region_ids=[region.region_id for region in group],
+                text="",
+                geometry=_union_per_page(
+                    [PageBox(page=region.page, box=region.box) for region in group]
+                ),
+                pages_spanned=sorted({region.page for region in group}),
+            )
+        )
+
+    return out
+
+
+def _best_block(region: InkRegion, blocks: list[AnswerBlock]) -> str | None:
+    """The block a region sits in, by area of overlap."""
+    best_id: str | None = None
+    best_overlap = 0.0
+    for block in blocks:
+        for pb in block.geometry:
+            if pb.page != region.page:
+                continue
+            overlap = pb.box.intersection_area(region.box)
+            if overlap > best_overlap:
+                best_overlap, best_id = overlap, block.block_id
+    if best_id is None or region.box.area <= 0:
+        return None
+    # Require a real share of the region to be inside, so a block does not claim
+    # a diagram that merely brushes its edge.
+    return best_id if (best_overlap / region.box.area) >= 0.30 else None
+
+
+def _group_adjacent(regions: list[InkRegion]) -> list[list[InkRegion]]:
+    """Cluster unclaimed ink into blocks by vertical adjacency.
+
+    A diagram decomposes into many components — axes, labels, a curve — and each
+    on its own is not an answer. Grouping what sits together makes one
+    highlightable region out of one drawing.
+    """
+    if not regions:
+        return []
+
+    ordered = sorted(regions, key=lambda r: (r.page, r.box.y0))
+    heights = sorted(r.box.y1 - r.box.y0 for r in ordered)
+    tolerance = max(heights[len(heights) // 2] * 2.0, 0.02)
+
+    groups: list[list[InkRegion]] = [[ordered[0]]]
+    for region in ordered[1:]:
+        last = groups[-1][-1]
+        same_page = region.page == last.page
+        close = (region.box.y0 - last.box.y1) <= tolerance
+        if same_page and close:
+            groups[-1].append(region)
+        else:
+            groups.append([region])
+    return groups
+
+
+def substantive_writing_ink(regions: list[InkRegion]) -> list[InkRegion]:
+    """Ink that represents the student's own writing on this page."""
+    return [
+        region
+        for region in regions
+        if region.kind is InkRegionKind.WRITING and region.is_substantive
+    ]

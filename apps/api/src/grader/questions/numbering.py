@@ -130,9 +130,10 @@ def parse_label(text: str) -> ParsedLabel | None:
 
     Three rules earn their place by rejecting things that merely resemble labels:
 
-    * A bare number only begins a label when a bracket follows it, as in
-      ``11 (a)``, or when a ``Q`` introduced it. Otherwise a sentence opening
-      "In 1947 India..." becomes question 1947.
+    * A bare number only begins a label when something corroborates it: a
+      bracket as in ``11 (a)``, a punctuated token as in ``2 a)``, or a leading
+      ``Q``. Otherwise a sentence opening "In 1947 India..." becomes question
+      1947.
     * The label must end at whitespace or end of line, which is what stops
       ``1.5 kg of copper`` parsing as question 1 answered by "5 kg of copper".
     * Tokens are never interpreted.
@@ -184,10 +185,14 @@ def parse_label(text: str) -> ParsedLabel | None:
                 lookahead = after
                 while lookahead < len(text) and text[lookahead] == " ":
                     lookahead += 1
-                # A bare number needs corroboration: a bracket following it, or a
-                # Q introducing it. Without that, any sentence opening with a
-                # year becomes a question label.
-                if had_q or (lookahead < len(text) and text[lookahead] == "("):
+                # A bare number needs corroboration, or any sentence opening
+                # with a year becomes a question label. Three things corroborate:
+                # a bracket following it as in "11 (a)", a punctuated token as in
+                # "2 a)" — which is what a student writing a margin label
+                # actually produces — or a Q introducing it.
+                follows_bracket = lookahead < len(text) and text[lookahead] == "("
+                follows_token = _scan_punctuated(text, lookahead) is not None
+                if had_q or follows_bracket or follows_token:
                     tokens.append(bare.group(0))
                     style = LabelStyle.NUMERIC
                     position = after

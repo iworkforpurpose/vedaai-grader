@@ -22,6 +22,7 @@ from vedaai_contracts import (
     SubmissionStatus,
 )
 
+from . import answers as answers_module
 from . import ink as ink_module
 from . import questions as questions_module
 from . import regions as regions_module
@@ -260,6 +261,15 @@ def ingest(
         )
         warnings.extend(extract_questions(submission))
 
+        submission_store.emit(
+            submission_id,
+            ProgressEvent(
+                stage=Stage.SEGMENTING_ANSWERS,
+                message="Finding the answers",
+            ),
+        )
+        warnings.extend(segment_answers(submission))
+
         submission.warnings = warnings
         submission.status = SubmissionStatus.COMPLETE
         submission_store.put(submission)
@@ -315,6 +325,47 @@ def _extract_ink(png: bytes, page_index: int) -> list[InkRegion]:
     if image is None:
         raise ValueError("could not decode page image")
     return ink_module.find_regions(image, page_index)
+
+
+def segment_answers(submission: Submission) -> list[str]:
+    """Divide the answer sheet into blocks and detect written question labels.
+
+    Separate from ingest for the same reason extraction is: it depends only on
+    already-computed lines and ink, so the segmentation and anchor logic can be
+    re-run against changed thresholds without re-rendering or re-transcribing —
+    which during accuracy work is most of the loop.
+    """
+    if submission.answer_sheet_lines is None:
+        return [
+            "No transcription for the answer sheet, so answers could not be located."
+        ]
+
+    lines = submission.answer_sheet_lines.lines
+    blocks = answers_module.segment_blocks(lines, submission.ink_regions)
+    submission.blocks = blocks
+
+    questions = submission.questions.questions if submission.questions else []
+    anchors = answers_module.detect(blocks, lines, questions)
+    submission.anchors = anchors
+
+    warnings: list[str] = []
+    disputed = [a for a in anchors if a.status.value == "disputed"]
+    if disputed:
+        warnings.append(
+            f"{len(disputed)} written question number(s) do not match the writing "
+            "beside them: "
+            + ", ".join(a.claimed_label for a in disputed[:5])
+            + ". They will not be trusted to place an answer on their own."
+        )
+
+    text_free = [b for b in blocks if b.is_text_free]
+    if text_free:
+        warnings.append(
+            f"{len(text_free)} region(s) contain writing that could not be read — "
+            "a diagram, or handwriting the recognizer missed. They are still "
+            "highlightable but carry no text."
+        )
+    return warnings
 
 
 def kind_pages(submission: Submission, kind: DocumentKind) -> list[Page]:
