@@ -10,7 +10,7 @@ from grader import render
 from grader.render import UnsupportedDocument
 from grader.storage import PageStore
 
-from .fixtures import question_paper, single_page_image
+from .fixtures import image_with_known_size, question_paper, single_page_image
 
 
 @pytest.fixture
@@ -111,6 +111,69 @@ class TestRenderPages:
         keys = [r.page.image_key for r in render.render_pages(data, source, page_store)]
         assert len(set(keys)) == len(keys)
         assert all(k.startswith(source.content_hash[:16]) for k in keys)
+
+
+class TestRenderScaleCaps:
+    def test_a4_pdf_renders_at_the_requested_density(self, page_store: PageStore) -> None:
+        # A4 at 200 DPI is ~2339px on its long side, comfortably under the cap,
+        # so neither ceiling should engage and the density is honoured exactly.
+        data, _ = question_paper()
+        source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
+        first = next(iter(render.render_pages(data, source, page_store)))
+        assert first.page.dpi == RENDER_DPI
+
+    def test_a_photo_is_never_upscaled_past_its_own_resolution(
+        self, page_store: PageStore
+    ) -> None:
+        # Rendering a photo larger than it was taken invents pixels by
+        # interpolation, and the recognizer resamples them away again. The round
+        # trip softens pen strokes, which is the detail recognition needs.
+        data = single_page_image()
+        native = render.native_pixel_size(data, "photo.png")
+        assert native is not None
+
+        source = render.inspect(data, "photo.png", DocumentKind.ANSWER_SHEET)
+        first = next(iter(render.render_pages(data, source, page_store)))
+
+        assert max(first.page.width, first.page.height) <= max(native) + 1
+
+    def test_nothing_renders_beyond_the_recognizer_cap(self, page_store: PageStore) -> None:
+        data, _ = question_paper()
+        source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
+        for item in render.render_pages(data, source, page_store):
+            assert max(item.page.width, item.page.height) <= render.MAX_RENDER_SIDE
+
+    def test_page_size_agrees_with_what_was_rendered(self, page_store: PageStore) -> None:
+        # These two must apply identical caps. If they diverge, every coordinate
+        # normalized against page_size is scaled by the difference — a uniform
+        # drift that looks like a mapping fault, not a rendering one.
+        data = single_page_image()
+        source = render.inspect(data, "photo.png", DocumentKind.ANSWER_SHEET)
+        first = next(iter(render.render_pages(data, source, page_store)))
+        assert render.page_size(data, "photo.png", 0) == (first.page.width, first.page.height)
+
+    def test_native_size_is_the_true_decoded_resolution(self) -> None:
+        # Regression guard. An earlier version measured the wrapped PDF page at
+        # 72 DPI instead of decoding the image, which under-reports the
+        # resolution of any modern photo — so the no-upscale rule became a
+        # downscale, discarding real detail in the name of preserving it.
+        data = image_with_known_size(1448, 2047)
+        assert render.native_pixel_size(data, "photo.png") == (1448, 2047)
+
+    def test_a_photo_renders_at_its_native_resolution(self, page_store: PageStore) -> None:
+        data = image_with_known_size(1448, 2047)
+        source = render.inspect(data, "photo.png", DocumentKind.ANSWER_SHEET)
+        first = next(iter(render.render_pages(data, source, page_store)))
+        assert (first.page.width, first.page.height) == (1448, 2047)
+
+    def test_native_size_is_none_for_a_pdf(self) -> None:
+        data, _ = question_paper()
+        assert render.native_pixel_size(data, "paper.pdf") is None
+
+    def test_identifies_image_uploads_by_suffix(self) -> None:
+        assert render.is_image_upload("scan.JPEG")
+        assert render.is_image_upload("photo.heic") is False  # not yet supported
+        assert render.is_image_upload("paper.pdf") is False
 
 
 class TestPageStore:

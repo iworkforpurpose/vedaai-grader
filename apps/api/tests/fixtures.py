@@ -241,6 +241,17 @@ def answer_sheet_with_text() -> tuple[bytes, list[DrawnLine]]:
     return data, drawn
 
 
+def image_with_known_size(width: int, height: int) -> bytes:
+    """A PNG of exactly the requested pixel dimensions.
+
+    Exists so that native-resolution detection can be tested against a known
+    ground truth rather than against another call to the same library.
+    """
+    pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, width, height))
+    pixmap.set_rect(pixmap.irect, (255, 255, 255))
+    return pixmap.tobytes("png")
+
+
 def single_page_image() -> bytes:
     """A PNG, to check that photographed uploads are accepted."""
     doc = fitz.open()

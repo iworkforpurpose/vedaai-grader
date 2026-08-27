@@ -13,12 +13,14 @@ from vedaai_contracts import DocumentKind, OcrEngine, SourceFile
 
 from .base import EngineUnavailable, PageInput, TranscribedLine, TranscriptionEngine
 from .native_pdf import PdfTextLayerEngine
+from .paddle import PaddleOcrEngine
 
 __all__ = [
     "EngineUnavailable",
     "PageInput",
     "TranscribedLine",
     "TranscriptionEngine",
+    "PaddleOcrEngine",
     "PdfTextLayerEngine",
     "select_engine",
     "trusts_own_order",
@@ -33,18 +35,21 @@ def select_engine(source: SourceFile) -> TranscriptionEngine:
     than estimated, and it consumes no quota. Recognizing text that the document
     already states would trade accuracy for nothing.
 
-    Anything else — every answer sheet, and any scanned paper — needs OCR.
+    Anything else — every answer sheet, and any scanned paper — goes to the local
+    handwriting recognizer.
     """
     if source.kind is DocumentKind.QUESTION_PAPER and source.has_text_layer:
         return PdfTextLayerEngine()
 
-    # OCR engines land in Phase 1's remaining work; until one is configured this
-    # raises with a message naming the fix rather than failing obscurely inside
-    # a pipeline stage.
+    paddle = PaddleOcrEngine()
+    if paddle.available():
+        return paddle
+
     raise EngineUnavailable(
         f"no transcription engine available for {source.filename!r} "
         f"(kind={source.kind.value}, has_text_layer={source.has_text_layer}). "
-        "A handwriting OCR engine is required for answer sheets and scanned papers."
+        "Handwriting requires the local OCR extra: run `uv sync --extra ocr-local` "
+        "in apps/api."
     )
 
 

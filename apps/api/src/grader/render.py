@@ -40,6 +40,18 @@ MAX_BYTES = 40 * 1024 * 1024
 #: uploaded a PDF or a phone photo.
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
+#: Longest side of a rendered page, in pixels.
+#:
+#: Chosen to match the internal cap of the handwriting recognizer: it downsizes
+#: anything longer than this before detection, so rendering larger produces
+#: pixels that are resampled away again. Worse than merely wasteful — the
+#: round trip softens pen strokes, which is exactly the detail recognition
+#: depends on.
+#:
+#: This costs nothing in correctness because geometry is normalized. Only the
+#: aspect ratio has to survive, and that is preserved.
+MAX_RENDER_SIDE = 4000
+
 
 class UnsupportedDocument(ValueError):
     """Raised for input the pipeline will not attempt to process."""
@@ -67,14 +79,38 @@ def compute_content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _open_document(data: bytes, filename: str) -> fitz.Document:
+def is_image_upload(filename: str) -> bool:
     suffix = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return suffix in IMAGE_SUFFIXES
 
-    if suffix in IMAGE_SUFFIXES:
+
+def native_pixel_size(data: bytes, filename: str) -> tuple[int, int] | None:
+    """True pixel dimensions of an image upload, or None for a PDF.
+
+    Decoded directly from the image bytes. Measuring the wrapped PDF page
+    instead would report its size in points at 72 DPI — which is a *smaller*
+    number than the real resolution for any modern photo, and would cause the
+    caller to downscale a page it was only trying to avoid upscaling.
+    """
+    if not is_image_upload(filename):
+        return None
+    try:
+        pixmap = fitz.Pixmap(data)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return pixmap.width, pixmap.height
+    finally:
+        del pixmap
+
+
+def _open_document(data: bytes, filename: str) -> fitz.Document:
+    if is_image_upload(filename):
+        suffix = filename.rsplit(".", 1)[-1].lower()
         # Teachers photograph answer sheets. Wrapping the image in a one-page
         # PDF means downstream code has exactly one input shape to handle.
         try:
-            image_doc = fitz.open(stream=data, filetype=suffix.lstrip("."))
+            image_doc = fitz.open(stream=data, filetype=suffix)
             pdf_bytes = image_doc.convert_to_pdf()
             image_doc.close()
             return fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -87,6 +123,41 @@ def _open_document(data: bytes, filename: str) -> fitz.Document:
         raise UnsupportedDocument(
             f"{filename!r} is neither a readable PDF nor a supported image"
         ) from exc
+
+
+def _render_scale(
+    page: fitz.Page,
+    dpi: int,
+    native: tuple[int, int] | None,
+) -> float:
+    """Scale factor for rasterizing one page, capped in two ways.
+
+    PyMuPDF measures pages in points, so the requested DPI becomes a scale of
+    ``dpi / 72``. Two ceilings apply on top of that:
+
+    * never exceed ``MAX_RENDER_SIDE``, because the recognizer resamples
+      anything larger back down before it looks at the page
+    * never upscale a photograph beyond the resolution it was captured at,
+      since the extra pixels are interpolation rather than detail
+
+    Both are safe precisely because geometry is normalized: the aspect ratio is
+    what has to survive, and scaling preserves it.
+    """
+    scale = dpi / 72.0
+
+    if native is not None:
+        native_longest = max(native)
+        page_longest_pt = max(page.rect.width, page.rect.height)
+        if page_longest_pt > 0:
+            scale = min(scale, native_longest / page_longest_pt)
+
+    projected = max(page.rect.width, page.rect.height) * scale
+    if projected > MAX_RENDER_SIDE:
+        scale *= MAX_RENDER_SIDE / projected
+
+    # Never scale below 1:1 with the page's own point size, or fine strokes
+    # vanish entirely.
+    return max(scale, 1.0)
 
 
 def inspect(data: bytes, filename: str, kind: DocumentKind) -> SourceFile:
@@ -143,19 +214,24 @@ def render_pages(
     reconstructed, which makes re-processing the same paper nearly free.
     """
     doc = _open_document(data, source.filename)
+    native = native_pixel_size(data, source.filename)
     try:
         for index in range(doc.page_count):
             key = page_store.key_for(source.content_hash, index)
             page = doc[index]
 
-            pixmap = page.get_pixmap(dpi=dpi, alpha=False)
+            scale = _render_scale(page, dpi, native)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
             try:
                 meta = Page(
                     kind=source.kind,
                     index=index,
                     width=pixmap.width,
                     height=pixmap.height,
-                    dpi=dpi,
+                    # The effective density, not the requested one. When a cap
+                    # applies these differ, and recording the request would
+                    # misreport what the geometry is actually relative to.
+                    dpi=round(scale * 72),
                     image_key=key,
                 )
                 if page_store.exists(key):
@@ -180,8 +256,14 @@ def page_size(data: bytes, filename: str, index: int, *, dpi: int = RENDER_DPI) 
     points, into the normalized space the geometry contract requires.
     """
     doc = _open_document(data, filename)
+    native = native_pixel_size(data, filename)
     try:
-        pixmap = doc[index].get_pixmap(dpi=dpi, alpha=False)
+        page = doc[index]
+        # Must apply the same caps as render_pages, or the two disagree about
+        # the page size and every normalized coordinate derived from this is
+        # scaled by the difference.
+        scale = _render_scale(page, dpi, native)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         try:
             return pixmap.width, pixmap.height
         finally:

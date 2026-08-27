@@ -33,8 +33,10 @@ class PageStore:
     class is rendered once rather than once per student.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
-        self.root = root or DEFAULT_ROOT
+    def __init__(self, root: Path | str | None = None) -> None:
+        # Coerced rather than required as a Path: the root also arrives from an
+        # environment variable, where it is a string by definition.
+        self.root = Path(root) if root is not None else DEFAULT_ROOT
         self.root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod

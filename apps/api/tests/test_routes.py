@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 from grader import storage
 from grader import store as store_module
 from grader.main import app
+from grader.ocr import PaddleOcrEngine
 from grader.storage import PageStore
 from grader.store import SubmissionStore
 
@@ -18,11 +21,18 @@ from .fixtures import answer_sheet_with_text, question_paper, single_page_image
 
 @pytest.fixture
 def client(tmp_path, monkeypatch) -> TestClient:
-    """A client with isolated page and submission stores.
+    """A client with isolated stores and the OCR model disabled.
 
-    Both are process-wide singletons in production. Swapping them per test keeps
-    cases from seeing each other's submissions or cached page images.
+    The stores are process-wide singletons in production; swapping them per test
+    keeps cases from seeing each other's submissions or cached page images.
+
+    Handwriting recognition is switched off here deliberately. These tests cover
+    the HTTP surface and the graceful-degradation path, and loading the OCR model
+    would add about a minute per case while testing nothing this file is
+    responsible for. The real transcription path is covered by
+    test_paddle_engine.py and by test_real_handwriting_end_to_end below.
     """
+    monkeypatch.setattr(PaddleOcrEngine, "available", lambda self: False)
     pages = PageStore(root=tmp_path / "pages")
     submissions = SubmissionStore()
     monkeypatch.setattr(storage, "store", pages)
@@ -68,16 +78,19 @@ class TestUpload:
         assert len(lines["lines"]) > 20
         assert any("refraction" in ln["text"].lower() for ln in lines["lines"])
 
-    def test_reports_the_missing_handwriting_engine_as_a_warning(self, client: TestClient) -> None:
-        # Honest partial state: the answer sheet cannot be transcribed until an
-        # OCR engine is configured, and that is surfaced rather than silently
-        # producing an empty result that looks like a blank script.
+    def test_degrades_honestly_when_no_handwriting_engine_is_available(
+        self, client: TestClient
+    ) -> None:
+        # The failure mode this guards against is the dangerous one: silently
+        # producing an empty transcription, which is indistinguishable from a
+        # genuinely blank script and would be reported as "unanswered".
         body = upload(client).json()
         assert body["answer_sheet_lines"] is None
-        assert any("answer sheet" in w for w in body["warnings"])
-        # Crucially, the run still succeeds and still produces page images, so
-        # the reviewer is usable.
+        assert any("ocr-local" in w for w in body["warnings"]), body["warnings"]
+        # The run still succeeds and still produces page images, so the reviewer
+        # remains usable rather than the whole submission failing.
         assert body["status"] == "complete"
+        assert len(body["pages"]) == 4
 
     def test_accepts_a_photographed_answer_sheet(self, client: TestClient) -> None:
         response = upload(client, ans=single_page_image())
@@ -123,7 +136,9 @@ class TestRetrieval:
         submission_id = upload(client).json()["submission_id"]
         response = client.get(f"/submissions/{submission_id}/lines/answer_sheet")
         assert response.status_code == 404
-        assert "OCR engine" in response.json()["detail"]
+        # The message names the actual remedy rather than just reporting absence,
+        # because "no transcription available" is not actionable on its own.
+        assert "ocr-local" in response.json()["detail"]
 
 
 class TestPageImages:
@@ -193,3 +208,64 @@ class TestContentCache:
         second_keys = [p["image_key"] for p in second["pages"] if p["kind"] == "question_paper"]
         assert first_keys == second_keys
         assert first["submission_id"] != second["submission_id"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not os.getenv("GRADER_SAMPLE_DIR"),
+    reason="set GRADER_SAMPLE_DIR to a directory of real handwritten pages",
+)
+def test_real_handwriting_end_to_end(tmp_path, monkeypatch) -> None:
+    """Upload a real handwritten script and confirm the whole path yields geometry.
+
+    Skipped unless real pages are supplied, because student work does not belong
+    in this repository. This is the case that proves the pipeline works on the
+    input it exists to handle, rather than on a typed stand-in.
+    """
+    if not PaddleOcrEngine().available():
+        pytest.skip("local OCR extra not installed")
+
+    sample_dir = Path(os.environ["GRADER_SAMPLE_DIR"])
+    images = sorted(
+        p for p in sample_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
+    if not images:
+        pytest.skip(f"no images in {sample_dir}")
+
+    pages = PageStore(root=tmp_path / "pages")
+    submissions = SubmissionStore()
+    monkeypatch.setattr(storage, "store", pages)
+    monkeypatch.setattr(store_module, "store", submissions)
+    app.dependency_overrides[storage.get_page_store] = lambda: pages
+    app.dependency_overrides[store_module.get_store] = lambda: submissions
+    try:
+        client = TestClient(app)
+        qp, _ = question_paper()
+        response = client.post(
+            "/submissions",
+            files={
+                "question_paper": ("paper.pdf", qp, "application/pdf"),
+                "answer_sheet": (images[0].name, images[0].read_bytes(), "image/jpeg"),
+            },
+        )
+        assert response.status_code == 200, response.text
+        index = response.json()["answer_sheet_lines"]
+
+        assert index is not None, "real handwriting should have been transcribed"
+        assert index["engine"] == "paddle"
+        assert len(index["lines"]) > 5
+
+        # Geometry is the deliverable here. Transcription quality on handwriting
+        # is poor and that is tolerable, because highlights come from boxes.
+        for line in index["lines"]:
+            box = line["box"]
+            assert 0.0 <= box["x0"] < box["x1"] <= 1.0
+            assert 0.0 <= box["y0"] < box["y1"] <= 1.0
+
+        low = sum(1 for line in index["lines"] if line["confidence"] < 0.7)
+        print(
+            f"{images[0].name}: {len(index['lines'])} regions, "
+            f"{low} below 0.7 confidence (struck-through work lands here)"
+        )
+    finally:
+        app.dependency_overrides.clear()

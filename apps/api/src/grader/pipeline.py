@@ -73,11 +73,20 @@ def ingest_document(
         pages.append(rendered.page)
 
         if engine is not None:
+            # A cached page yields no bytes, but an image-based engine needs
+            # pixels. Read them back rather than skipping: silently transcribing
+            # nothing would look exactly like a blank page, which is the one
+            # wrong answer this product must not give.
+            png = rendered.png or (
+                page_store.read(rendered.page.image_key)
+                if page_store.exists(rendered.page.image_key)
+                else None
+            )
             page_input = PageInput(
                 index=rendered.page.index,
                 width=rendered.page.width,
                 height=rendered.page.height,
-                png=rendered.png or None,
+                png=png,
                 document=data,
                 filename=source.filename,
             )

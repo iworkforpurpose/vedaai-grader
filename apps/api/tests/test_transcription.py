@@ -48,13 +48,20 @@ class TestEngineSelection:
         source = render.inspect(data, "paper.pdf", DocumentKind.QUESTION_PAPER)
         assert isinstance(select_engine(source), PdfTextLayerEngine)
 
-    def test_refuses_to_read_an_answer_sheet_from_a_text_layer(self) -> None:
-        # Handwriting has no text layer. A scanned sheet's layer is absent or
-        # spurious, so falling back to it would invent answers.
+    def test_never_reads_an_answer_sheet_from_a_text_layer(self) -> None:
+        # The invariant that matters: an answer sheet is never read from its text
+        # layer, even when one exists. Handwriting has no text layer, so a layer
+        # on a scanned sheet is spurious and trusting it would invent answers.
         data, _ = answer_sheet_with_text()
         source = render.inspect(data, "student.pdf", DocumentKind.ANSWER_SHEET)
-        with pytest.raises(EngineUnavailable, match="answer sheets"):
-            select_engine(source)
+        assert source.has_text_layer, "fixture should carry a text layer to make this meaningful"
+
+        try:
+            engine = select_engine(source)
+        except EngineUnavailable:
+            # Acceptable: no handwriting engine installed. Refusing is correct.
+            return
+        assert not isinstance(engine, PdfTextLayerEngine)
 
     def test_only_the_text_layer_engine_is_trusted_for_ordering(self) -> None:
         assert trusts_own_order(OcrEngine.PDF_TEXT_LAYER)
