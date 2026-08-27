@@ -193,3 +193,42 @@ class TestReporting:
     def test_an_empty_image_is_returned_untouched(self) -> None:
         empty = np.zeros((0, 0), dtype=np.uint8)
         assert preprocess.correct(empty).changed is False
+
+
+class TestDarkBorders:
+    """Photographs of paper include things that are not paper.
+
+    The desk past the edge, a shadowed border, a finger holding the page down. All
+    are nearly black, and dividing by a nearly-black background estimate amplifies
+    sensor noise into dense speckle — which looks wrong on screen and, worse,
+    produces ink regions that resemble writing.
+    """
+
+    @staticmethod
+    def _page_on_a_dark_desk() -> np.ndarray:
+        frame = np.full((900, 900), 12, dtype=np.uint8)
+        frame[:, 260:] = page_with_text(width=640, height=900)
+        # A little sensor noise, which is what gets amplified.
+        rng = np.random.default_rng(0)
+        noise = rng.integers(-6, 7, size=frame.shape, dtype=np.int16)
+        return np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+
+    def test_a_dark_border_stays_dark_instead_of_becoming_speckle(self) -> None:
+        flattened = preprocess._flatten_illumination(self._page_on_a_dark_desk())
+        border = flattened[:, :240]
+
+        # Speckle shows up as a large share of near-white pixels inside a region
+        # that is uniformly dark in the original.
+        bright_share = float((border > 200).mean())
+        assert bright_share < 0.05, f"{bright_share:.2%} of the dark border turned bright"
+
+    def test_the_paper_is_still_flattened(self) -> None:
+        # The floor must not cost the correction it was added alongside.
+        page = page_with_text()
+        gradient = np.linspace(1.0, 0.45, page.shape[1], dtype=np.float32)
+        shadowed = (page * gradient[None, :]).astype(np.uint8)
+
+        flattened = preprocess._flatten_illumination(shadowed)
+        left = float(flattened[:, :100].max())
+        right = float(flattened[:, -100:].max())
+        assert abs(left - right) < 40

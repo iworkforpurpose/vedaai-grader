@@ -64,6 +64,10 @@ _BACKGROUND_KERNEL = 61
 _STRETCH_LOW_PERCENTILE = 1.0
 _STRETCH_HIGH_PERCENTILE = 99.5
 
+#: Darkest background estimate the flattening will divide by. Below this the
+#: division is amplifying noise rather than removing a shadow.
+_MIN_BACKGROUND = 40
+
 
 @dataclass(frozen=True)
 class Corrected:
@@ -323,6 +327,14 @@ def _flatten_illumination(image: np.ndarray) -> np.ndarray:
     """
     gray = _grayscale(image)
     background = cv2.medianBlur(gray, _BACKGROUND_KERNEL)
+
+    # Floor the background before dividing by it. Where the estimate is nearly
+    # black — the desk showing past the paper, a shadowed border, a finger in
+    # frame — the division amplifies sensor noise into dense speckle, which is
+    # both ugly on screen and a source of ink regions that look like writing and
+    # are not. Flooring leaves those areas dark instead of turning them to
+    # confetti, and has no effect anywhere the paper is actually visible.
+    background = np.maximum(background, _MIN_BACKGROUND)
     flattened = cv2.divide(gray, background, scale=255)
 
     # Restore the contrast the division costs, which leaves the page near-white
