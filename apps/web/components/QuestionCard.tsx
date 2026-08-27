@@ -82,8 +82,31 @@ export function QuestionCard({
 
       {expanded && (feedback || row.presentation.hint) && (
         <div className="feedback">
-          <h3>{feedback ? "AI Feedback" : "Why this is flagged"}</h3>
-          <p>{feedback ?? row.presentation.hint}</p>
+          {/*
+            * One panel, headed "AI Feedback", as the frame draws it.
+            *
+            * The heading used to switch to "Why this is flagged" whenever marking
+            * had not run, which made the panel look like two different features
+            * depending on state — and since nothing marked the script until
+            * someone found the button, the flag wording was what a teacher
+            * actually saw. Marking now happens at ingest, so the feedback is the
+            * body; the flag reason stays underneath it, where it explains the
+            * status pill rather than competing with the marker's comment.
+            */}
+          <h3>AI Feedback</h3>
+          {feedback ? (
+            <p>{feedback}</p>
+          ) : (
+            <p className="feedback-pending">
+              No marker comment for this one yet.
+            </p>
+          )}
+
+          {/* Only where it explains something the pill does not. With a mark on
+              screen, "an answer was found and located" restates the score. */}
+          {row.presentation.hint && tone === "none" && (
+            <p className="feedback-flag">{row.presentation.hint}</p>
+          )}
 
           {/* The citation is what makes a mark checkable in two seconds rather
               than something to re-mark from scratch. */}

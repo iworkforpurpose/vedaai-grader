@@ -156,6 +156,16 @@ button {
 
 img {
   max-width: 100%;
+  /*
+   * `height: auto` is the half that matters.
+   *
+   * With only `max-width`, a constrained image keeps the height from its width and
+   * height attributes while the width shrinks — so it stretches. The school crest
+   * is natural 64x65 and was rendering 46x60, a 27% vertical stretch. The logo
+   * escaped it only by being square, which is why it looked like one image was
+   * broken rather than the rule.
+   */
+  height: auto;
   display: block;
 }
 
@@ -220,18 +230,26 @@ body::before {
   padding: var(--page-pad);
 }
 
-/* From the rail breakpoint the shell is exactly the viewport and the content
-   column scrolls inside it, so the rail cannot be scrolled away from a long
-   screen and the page has no outer scrollbar of its own. */
-@media (min-width: 1024px) {
-  .shell {
-    height: 100dvh;
-    overflow: hidden;
-  }
+/*
+ * The shell is exactly the viewport, at every width, and the content column
+ * scrolls inside it.
+ *
+ * This was scoped to the rail breakpoint, which left the phone shell sized by
+ * `min-height` alone — and a flex column with only a min-height never shrinks its
+ * items, it just grows past the viewport. So a 24px checkbox at the foot of the
+ * review screen became 24px of body scroll that no internal scroller could
+ * absorb, and the "not fitting the screen" fault reappeared one element at a time.
+ *
+ * Applying it everywhere also removes the outer scrollbar on the phone, so the
+ * rail and top bar cannot be scrolled away from a long screen.
+ */
+.shell {
+  height: 100dvh;
+  overflow: hidden;
+}
 
-  .shell-main {
-    overflow-y: auto;
-  }
+.shell-main {
+  overflow-y: auto;
 }
 
 .shell-main {
@@ -429,10 +447,21 @@ body::before {
 }
 
 .school-crest {
-  width: 46px;
+  width: 59px;
+  height: 60px;
   flex: none;
+  display: grid;
+  place-items: center;
   border-radius: var(--r-sm);
   overflow: hidden;
+}
+
+.school-crest img {
+  width: 100%;
+  height: 100%;
+  /* contain, not cover: a school crest cropped to fill a square loses the parts
+     that identify it. */
+  object-fit: contain;
 }
 
 .school-name {
@@ -915,9 +944,18 @@ body::before {
     transition: none;
   }
 
-  .rail-scrim,
-  .rail-collapse {
+  .rail-scrim {
     display: none;
+  }
+
+  /*
+   * The collapse control stays. It was hidden here alongside the scrim — correct
+   * for the scrim, which only exists behind the phone drawer, and wrong for this,
+   * which is the only way back from the collapsed rail. Expanding worked and
+   * collapsing did not, so the state was a one-way door.
+   */
+  .rail-collapse {
+    display: grid;
   }
 
   .only-wide {
@@ -962,25 +1000,39 @@ body::before {
 }
 
 @media (min-width: 1024px) {
+  /*
+   * Measured off the collapsed frame rather than scaled down from the expanded
+   * one: 64 wide, items 36 square, the crest tile 46x47.
+   *
+   * Worth naming because the frame's own export is misleading here. Its collapsed
+   * children still carry the expanded widths (a 251px nav row inside a 64px
+   * frame) — Figma narrowed the parent and clipped rather than re-laying out. The
+   * values that were genuinely redrawn for this state are the ones that fit: the
+   * 36x36 active item, the 46x47 crest tile, the 36 expand button. Reading the
+   * clipped numbers instead would have produced a rail three times too wide.
+   */
   .rail[data-collapsed="true"] {
-    width: 72px;
-    padding: var(--sp-3) var(--sp-2);
+    width: 64px;
+    padding: 12px 9px;
+    gap: 56px;
     align-items: center;
   }
 
   .rail[data-collapsed="true"] .nav-row,
-  .rail[data-collapsed="true"] .toolkit,
-  .rail[data-collapsed="true"] .school {
+  .rail[data-collapsed="true"] .toolkit {
     justify-content: center;
-    width: 40px;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
     padding: 0;
-    min-height: 40px;
   }
 
-  /* The toolkit button keeps its accent ring when there is no label to carry it. */
+  /* Filled, as the frame draws it — a ring was my substitution for a label that
+     is not there in this state. */
   .rail[data-collapsed="true"] .toolkit {
-    border: 2px solid var(--accent);
-    border-radius: 50%;
+    border: 0;
+    border-radius: var(--r-circle);
   }
 
   .rail[data-collapsed="true"] .rail-head {
@@ -991,16 +1043,29 @@ body::before {
     display: none;
   }
 
+  /* The crest keeps its card, shrunk: 46x47, 2px inset, 11.52 radius. */
+  .rail[data-collapsed="true"] .school {
+    width: 46px;
+    height: 47px;
+    padding: 2px;
+    border-radius: 11.52px;
+  }
+
+  .rail[data-collapsed="true"] .school-crest {
+    width: 42px;
+    height: 43px;
+  }
+
   .rail-expand {
     display: grid;
     place-items: center;
     width: 36px;
     height: 36px;
-    margin: var(--sp-2) auto 0;
+    padding: 0;
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
-    color: var(--body-solid);
+    color: var(--title);
     cursor: pointer;
   }
 
@@ -1091,6 +1156,16 @@ body::before {
   min-height: 0;
   display: grid;
   grid-template-columns: 1fr;
+  /*
+   * A definite row, not the default `auto`.
+   *
+   * With an auto row the panes are content-sized, so the grid's own `min-height:
+   * 0` never binds and every pixel added inside the scroller pushed the whole page
+   * taller — 24px of space reserved for a highlight label became 24px of body
+   * scroll. `minmax(0, 1fr)` makes the row take the grid's height instead, which
+   * is what puts the overflow back inside the scroller where it belongs.
+   */
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--sp-3);
 }
 
@@ -1115,13 +1190,22 @@ body::before {
 }
 
 .q-head h2 {
+  /* The heading takes the slack, so the actions group at the right rather than
+     each one claiming `margin-left: auto` and pushing the others apart. */
+  margin-right: auto;
   font-size: var(--fs-base);
   font-weight: 700;
   color: var(--ink);
 }
 
+.q-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
 .q-head-action {
-  margin-left: auto;
   min-height: 44px;
   padding: var(--sp-3) 20px var(--sp-3) var(--sp-4);
   border: 0;
@@ -1136,6 +1220,21 @@ body::before {
 
 .q-head-action:hover {
   background: var(--chip);
+}
+
+/* Marking is the primary action on this screen, so it wears the accent. */
+.q-head-action[data-primary="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.q-head-action[data-primary="true"]:hover {
+  background: #e64a19;
+}
+
+.q-head-action:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 .q-list {
@@ -1279,6 +1378,20 @@ body::before {
   color: var(--ink);
 }
 
+/* No comment yet — stated rather than left blank, so the panel does not read as
+   an empty box the teacher should have been shown something in. */
+.feedback-pending {
+  color: var(--body);
+  font-style: italic;
+}
+
+/* The status reason, under the comment: it explains the pill, not the mark. */
+.feedback-flag {
+  padding-top: 10px;
+  border-top: 1px solid rgb(0 0 0 / 0.07);
+  color: var(--body);
+}
+
 .feedback-cite {
   align-self: flex-start;
   border: 0;
@@ -1308,6 +1421,16 @@ body::before {
   flex: none;
   display: flex;
   align-items: center;
+  /*
+   * Wraps at every width, not only on the phone.
+   *
+   * Scoped to the phone it left exactly one broken width: at 1024 the sheet gets
+   * its narrowest column, the three control groups need more than that, and with
+   * no wrap the paging arrows sat 25px outside the pane — unreachable, since
+   * nothing here scrolls sideways. Wrapping costs nothing at widths where the row
+   * already fits.
+   */
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 64px;
   padding: var(--sp-3) var(--sp-5);
@@ -1326,6 +1449,7 @@ body::before {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-2);
 }
 
@@ -1371,6 +1495,16 @@ body::before {
   min-height: 0;
   overflow: auto;
   background: var(--chip);
+  /*
+   * Room above the first page for a highlight's label to sit in.
+   *
+   * The label belongs above its box, as the frame draws it, and an answer at the
+   * very top of a page has nothing above it — so the label either went off the
+   * page or had to move inside the box, where it covered the first words of the
+   * answer it was labelling. 24px of scrollable space is enough for a 22px tab,
+   * and it costs nothing anywhere else.
+   */
+  padding-top: 24px;
 }
 
 .sheet-page {
@@ -1395,6 +1529,14 @@ body::before {
   pointer-events: none;
 }
 
+/*
+ * The label sits on the box's top-left corner, above the border.
+ *
+ * Above rather than inside because inside it covers the first words of the very
+ * answer it labels. It stays visible because the scroller reserves 24px above the
+ * first page and the scroll target leaves the same inset — the two changes are one
+ * fix, and either alone puts the label under the toolbar or over the text.
+ */
 .hl-tab {
   position: absolute;
   top: -22px;
@@ -1509,9 +1651,67 @@ body::before {
   }
 }
 
-/* Flipped inside, for a highlight with no room above it. */
-.hl-tab[data-inside="true"] {
-  top: 2px;
-  left: 2px;
-  border-radius: var(--r-sm);
+/* Squared at the bottom so it reads as a tab joined to the box, not a chip
+   floating above it. */
+.hl-tab {
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+}
+
+/* A pressable toggle in the dark toolbar, styled off the same chip as the zoom
+   and paging groups so the three read as one control strip. */
+.tool-toggle {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-circle);
+  background: rgb(255 255 255 / 0.12);
+  color: rgb(255 255 255 / 0.7);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tool-toggle:hover {
+  background: rgb(255 255 255 / 0.2);
+  color: #fff;
+}
+
+.tool-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+@media (max-width: 1023px) {
+  .sheet-bar {
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+  }
+
+  /*
+   * The heading goes. At 373px the title, the zoom control and the page counter do
+   * not fit on one line: the counter was clipped past the right edge and its
+   * arrows could not be tapped at all. The tab directly above already says
+   * "Answer Sheet", so the title was the one element costing width and telling the
+   * reader nothing new.
+   */
+  .sheet-bar h2 {
+    display: none;
+  }
+
+  .sheet-tools {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+    row-gap: var(--sp-2);
+  }
+
+  /* Touch targets. 26px is under the 44px minimum, and these are the controls a
+     teacher uses most on a phone. */
+  .tool-button {
+    width: 36px;
+    height: 36px;
+  }
 }

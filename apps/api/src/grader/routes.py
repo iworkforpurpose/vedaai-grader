@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from typing import Annotated
 
@@ -79,8 +80,35 @@ async def create_submission(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
 
+    # Marks up front, so the review screen opens with feedback rather than a
+    # button. Guarded because marking is the one step that talks to a paid API:
+    # a failure here must cost the located answers nothing, and the submission is
+    # already stored and returnable without it.
+    if _auto_mark_enabled() and (
+        submission.mapping is not None
+        and submission.questions is not None
+        and submission.answer_sheet_lines is not None
+    ):
+        try:
+            await _apply_marks(submission)
+        except Exception as exc:  # noqa: BLE001
+            warning = f"Answers were not marked automatically: {exc}"
+            if warning not in submission.warnings:
+                submission.warnings.append(warning)
+        store.put(submission)
+
     store.remember_content(qp_source.content_hash, submission_id)
     return submission
+
+
+def _auto_mark_enabled() -> bool:
+    """Whether ingest marks without being asked. On unless switched off.
+
+    Env-gated because marking is per-question paid API traffic: a deployment that
+    wants locating without that bill sets ``AUTO_MARK=0`` and the endpoint above
+    still works on request.
+    """
+    return os.environ.get("AUTO_MARK", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 @router.get("/submissions/{submission_id}", response_model=Submission, tags=["submissions"])
@@ -190,12 +218,17 @@ def reassign_answer(
 async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
     """Propose marks for a submission, citing the lines behind each one.
 
-    Explicitly requested rather than part of ingestion, for two reasons. Locating
-    answers is useful on its own and must not wait behind marking, and marking is
-    the one step whose output a teacher may not want at all — a proposed score is
-    hard to unsee once shown.
+    Ingest now marks on its own (see ``AUTO_MARK``), so this endpoint is the
+    re-run: it is what a teacher uses after correcting a mapping, and the entry
+    point when auto-marking is switched off for a deployment.
 
-    Without ``ANTHROPIC_API_KEY`` this still succeeds. It returns the rubric and
+    It was deliberately *not* part of ingest, on the reasoning that a proposed
+    score is hard to unsee and locating answers is useful without it. Overruled on
+    request — a teacher opening a marked script and choosing to ignore the numbers
+    is a smaller cost than one who never finds the button. The numbers are still
+    labelled as proposals and every one carries the line it rests on.
+
+    Without a grading key this still succeeds. It returns the rubric and
     the located answer with every point unjudged, which is a marking aid rather
     than a grade. Inventing a score from keyword overlap would be worse than
     offering none: a plausible wrong mark is the error a teacher is least likely
@@ -214,6 +247,24 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
             status_code=409,
             detail="The answer sheet was never transcribed, so there is no text to mark.",
         )
+
+    await _apply_marks(submission)
+    store.put(submission)
+    return submission
+
+
+async def _apply_marks(submission: Submission) -> None:
+    """Mark a submission in place, degrading to the rubric when no grader is set.
+
+    Shared by the explicit endpoint and by ingest, so the two cannot diverge in
+    what they exclude or how they report a failure.
+
+    Caller checks the preconditions; this assumes a mapping, questions and a
+    transcribed answer sheet are present.
+    """
+    assert submission.questions is not None
+    assert submission.mapping is not None
+    assert submission.answer_sheet_lines is not None
 
     try:
         grader: grading.Grader = grading.select_grader()
@@ -239,8 +290,6 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
     for failure in marking_failures:
         if failure not in submission.warnings:
             submission.warnings.append(failure)
-    store.put(submission)
-    return submission
 
 
 @router.get("/pages/{key:path}", tags=["pages"])

@@ -32,6 +32,7 @@ export function SheetView({
   highlightLabel,
   untranscribedInk,
   showUntranscribed,
+  onToggleUntranscribed,
   onPointerPick,
   scrollTarget,
 }: {
@@ -40,6 +41,7 @@ export function SheetView({
   highlightLabel: string | null;
   untranscribedInk: Map<number, InkRegion[]>;
   showUntranscribed: boolean;
+  onToggleUntranscribed: () => void;
   onPointerPick: (page: number, x: number, y: number) => void;
   scrollTarget: { page: number; y: number; nonce: number } | null;
 }): React.JSX.Element {
@@ -51,15 +53,10 @@ export function SheetView({
   // chosen twice — hence the nonce.
   useEffect(() => {
     if (scrollTarget === null || scroller.current === null) return;
-    const target = scroller.current.querySelector<HTMLElement>(
-      `[data-page="${scrollTarget.page}"]`,
-    );
+    const node = scroller.current;
+    const target = node.querySelector<HTMLElement>(`[data-page="${scrollTarget.page}"]`);
     if (target === null) return;
-    const top = target.offsetTop + target.offsetHeight * scrollTarget.y;
-    scroller.current.scrollTo({
-      top: Math.max(0, top - scroller.current.clientHeight * 0.2),
-      behavior: "smooth",
-    });
+    node.scrollTo({ top: offsetWithin(node, target, scrollTarget.y), behavior: "smooth" });
   }, [scrollTarget]);
 
   // Which page is in view, for the counter. Read from scroll position rather than
@@ -68,11 +65,12 @@ export function SheetView({
     const node = scroller.current;
     if (node === null) return;
     const onScroll = () => {
-      const mid = node.scrollTop + node.clientHeight / 2;
+      const middle = node.getBoundingClientRect().top + node.clientHeight / 2;
       const pageNodes = Array.from(node.querySelectorAll<HTMLElement>("[data-page]"));
-      const index = pageNodes.findIndex(
-        (el) => mid >= el.offsetTop && mid < el.offsetTop + el.offsetHeight,
-      );
+      const index = pageNodes.findIndex((el) => {
+        const rect = el.getBoundingClientRect();
+        return middle >= rect.top && middle < rect.bottom;
+      });
       if (index >= 0) setCurrent(index);
     };
     node.addEventListener("scroll", onScroll, { passive: true });
@@ -83,7 +81,7 @@ export function SheetView({
     const node = scroller.current;
     const target = node?.querySelector<HTMLElement>(`[data-page="${index}"]`);
     if (!node || !target) return;
-    node.scrollTo({ top: target.offsetTop, behavior: "smooth" });
+    node.scrollTo({ top: offsetWithin(node, target, 0), behavior: "smooth" });
   }
 
   const count = pages.length;
@@ -115,6 +113,24 @@ export function SheetView({
               <PlusIcon size={16} />
             </button>
           </div>
+
+          {/*
+            * The unread-ink toggle lives here, with zoom and paging, because it is
+            * a control over this view rather than over the submission. It was a
+            * checkbox below both panes, where it was both misplaced and the last
+            * 24px that pushed the review screen past the viewport.
+            */}
+          {untranscribedInk.size > 0 && (
+            <button
+              type="button"
+              className="tool-toggle"
+              aria-pressed={showUntranscribed}
+              onClick={onToggleUntranscribed}
+              title="Outline writing the recognizer did not read. If a question reads 'not found', look here."
+            >
+              Unread ink
+            </button>
+          )}
 
           {count > 1 && (
             <div className="tool-group">
@@ -187,9 +203,7 @@ export function SheetView({
                  * answer tends to be.
                  */}
                 {i === 0 && highlightLabel && (
-                  <span className="hl-tab" data-inside={pageBox.box.y0 < 0.04}>
-                    {highlightLabel}
-                  </span>
+                  <span className="hl-tab">{highlightLabel}</span>
                 )}
               </span>
             ))}
@@ -198,4 +212,29 @@ export function SheetView({
       </div>
     </>
   );
+}
+
+
+/**
+ * Where to scroll the sheet so that a fraction `y` down `target` lands just inside
+ * the top of `scroller`, with room to see the highlight's label.
+ *
+ * Measured from bounding rects rather than `offsetTop`, which was the bug this
+ * replaces. `offsetTop` is relative to the nearest *positioned* ancestor, and the
+ * scroller is not positioned — so the value carried the toolbar and the pane's own
+ * offset with it. The scroll overshot by exactly that much, which put the top edge
+ * of the highlight above the visible area and hid its label behind the toolbar:
+ * the one part of a highlight that has to be visible was the one part reliably
+ * scrolled out of view.
+ *
+ * The inset is a fixed 24px rather than a fraction of the viewport. A fraction
+ * reads as "a bit of context above" on a laptop and as three pixels on a phone,
+ * and this is the case where being able to see the label is the whole point.
+ */
+function offsetWithin(scroller: HTMLElement, target: HTMLElement, y: number): number {
+  const INSET = 24;
+  const host = scroller.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
+  const top = scroller.scrollTop + (rect.top - host.top) + rect.height * y;
+  return Math.max(0, top - INSET);
 }

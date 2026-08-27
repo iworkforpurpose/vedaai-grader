@@ -163,15 +163,41 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
         >
           <div className="q-head">
             <h2>Extracted Questions (from question paper)</h2>
-            <button
-              type="button"
-              className="q-head-action"
-              onClick={() =>
-                setExpanded(allExpanded ? new Set() : new Set(rows.map((r) => r.question.qid)))
-              }
-            >
-              {allExpanded ? "Collapse All" : "Expand All"}
-            </button>
+
+            {/*
+              * Marking is a button here, not a link buried in the summary line.
+              *
+              * It was the latter, and it read as prose: the one control that puts
+              * scores and feedback on the screen was the hardest thing on the
+              * screen to find. Marking now also runs at ingest, so this is the
+              * re-run — which is what a teacher needs after moving an answer
+              * between questions, since the old mark was made against the old
+              * mapping.
+              */}
+            {/* Grouped so the pair wraps together and stays right-aligned. Left
+                loose, the heading's own wrap dropped one button onto its own row
+                against the left edge. */}
+            <div className="q-head-actions">
+              <button
+                type="button"
+                className="q-head-action"
+                data-primary="true"
+                disabled={marking}
+                onClick={() => void proposeMarks()}
+              >
+                {marking ? "Marking…" : marks.marked ? "Re-mark" : "Mark answers"}
+              </button>
+
+              <button
+                type="button"
+                className="q-head-action"
+                onClick={() =>
+                  setExpanded(allExpanded ? new Set() : new Set(rows.map((r) => r.question.qid)))
+                }
+              >
+                {allExpanded ? "Collapse All" : "Expand All"}
+              </button>
+            </div>
           </div>
 
           <p className="q-hint" style={{ whiteSpace: "normal" }}>
@@ -191,19 +217,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
                 · <strong>{marks.awarded}</strong>/{marks.available} proposed
               </>
             )}
-            {!marks.marked && (
-              <>
-                {" · "}
-                <button
-                  type="button"
-                  className="feedback-cite"
-                  disabled={marking}
-                  onClick={() => void proposeMarks()}
-                >
-                  {marking ? "Marking…" : "Propose marks"}
-                </button>
-              </>
-            )}
+            {marks.rubricOnly && <> · marks not proposed, rubric only</>}
           </p>
 
           {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
@@ -252,6 +266,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
               highlightLabel={selected ? selected.question.label_raw.replace(/[.)]\s*$/, "") : null}
               untranscribedInk={ink}
               showUntranscribed={showInk}
+              onToggleUntranscribed={() => setShowInk((on) => !on)}
               onPointerPick={pickAtPoint}
               scrollTarget={scrollTarget}
             />
@@ -259,18 +274,6 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
         </section>
       </div>
 
-      {/* Kept because it is how a teacher answers "the question says not found —
-          where is the writing then?", which the pipeline can only point at. */}
-      {ink.size > 0 && (
-        <label className="q-hint" style={{ whiteSpace: "normal", cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={showInk}
-            onChange={(event) => setShowInk(event.target.checked)}
-          />{" "}
-          Show writing the recognizer could not read
-        </label>
-      )}
     </div>
   );
 }
