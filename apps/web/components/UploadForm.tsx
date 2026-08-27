@@ -118,14 +118,32 @@ function Field({
   label: string;
   hint: string;
 }): React.JSX.Element {
+  // Associated by id rather than by nesting, and that is not a style preference.
+  //
+  // A file input inside its own label is activated twice by one click: once
+  // directly, and again when the click reaches the label and the label forwards
+  // activation back to its control. The picker opens, and a second picker opens
+  // on top of it — so choosing a file appears to do nothing, and the dialogs
+  // stack. Sixteen of them were queued on a single visit.
+  //
+  // Nesting is legal and works for a checkbox or a text field, where a second
+  // activation is harmless. It is specifically the file input, whose activation
+  // opens a modal dialog, that cannot survive it.
+  const id = `upload-${name}`;
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
-      <span style={{ fontWeight: 600 }}>{label}</span>
-      <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>{hint}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
+      <label htmlFor={id} style={{ fontWeight: 600 }}>
+        {label}
+      </label>
+      <span id={`${id}-hint`} style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
+        {hint}
+      </span>
       <input
+        id={id}
         type="file"
         name={name}
         required
+        aria-describedby={`${id}-hint`}
         accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp"
         style={{
           marginTop: "var(--sp-1)",
@@ -136,6 +154,6 @@ function Field({
           fontSize: "var(--fs-sm)",
         }}
       />
-    </label>
+    </div>
   );
 }
