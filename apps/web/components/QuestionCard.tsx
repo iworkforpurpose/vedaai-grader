@@ -1,5 +1,7 @@
 "use client";
 
+import type { AnswerBlock } from "@/lib/contracts";
+import { blockPreview } from "@/lib/review";
 import type { QuestionRow } from "@/lib/review";
 import { feedbackFor, scoreLabel, scoreTone } from "@/lib/review";
 import type { QuestionGrade, RubricPoint } from "@/lib/contracts";
@@ -26,6 +28,11 @@ export function QuestionCard({
   onSelect,
   onToggle,
   onCite,
+  placingActive,
+  teacherPlaced,
+  movable,
+  onPlaceHere,
+  onMoveBlock,
 }: {
   row: QuestionRow;
   /** Position in the list, for the entrance stagger. */
@@ -36,6 +43,14 @@ export function QuestionCard({
   onSelect: () => void;
   onToggle: () => void;
   onCite: (point: RubricPoint) => void;
+  /** True while some writing is looking for a home, which makes this a target. */
+  placingActive: boolean;
+  /** Whether this question's mapping was set by hand rather than by the aligner. */
+  teacherPlaced: boolean;
+  /** The blocks currently mapped here, each individually movable. */
+  movable: readonly AnswerBlock[];
+  onPlaceHere: () => void;
+  onMoveBlock: (blockId: string) => void;
 }): React.JSX.Element {
   const tone = scoreTone(grade);
   const label = scoreLabel(grade);
@@ -49,8 +64,17 @@ export function QuestionCard({
     <div
       className="q-card"
       data-selected={selected}
+      /*
+       * A target while something is being placed.
+       *
+       * The whole card, not a small button in a corner. The teacher has already said
+       * what they are moving; the only remaining question is which question, and the
+       * answer is a card they are already reading. A stem is excluded because it asks
+       * nothing — placing an answer on it would be placing it nowhere.
+       */
+      data-target={placingActive && !row.question.is_stem}
       style={{ "--stagger": `${index * 28}ms` } as React.CSSProperties}
-      onClick={onSelect}
+      onClick={placingActive && !row.question.is_stem ? onPlaceHere : onSelect}
     >
       <div className="q-row">
         <span className="q-num">{badge}</span>
@@ -61,7 +85,19 @@ export function QuestionCard({
         </span>
 
         <span className="q-right">
-          {label && tone !== "none" ? (
+          {/* Whose decision this was. A teacher returning to a script should not have
+              to remember what they moved, and re-marking will not undo it. */}
+          {teacherPlaced && !placingActive && (
+            <span className="placed-badge" title="You placed this answer here">
+              Placed by you
+            </span>
+          )}
+
+          {placingActive && !row.question.is_stem ? (
+            <span className="score" data-tone="target">
+              Place here
+            </span>
+          ) : label && tone !== "none" ? (
             <span className="score" data-tone={tone}>
               {label}
             </span>
@@ -71,7 +107,7 @@ export function QuestionCard({
             </span>
           )}
 
-          {(feedback || row.presentation.hint) && (
+          {!placingActive && (feedback || row.presentation.hint) && (
             <button
               type="button"
               className="q-chevron"
@@ -117,6 +153,36 @@ export function QuestionCard({
                 screen, "an answer was found and located" restates the score. */}
             {row.presentation.hint && tone === "none" && (
               <p className="feedback-flag">{row.presentation.hint}</p>
+            )}
+
+            {/*
+              * Moving an answer away, one block at a time.
+              *
+              * Per block rather than per question, because a wrong mapping is often
+              * one block of several — a page-spanning answer whose second half went
+              * to the next question. Moving the whole answer to fix half of it trades
+              * one error for another.
+              */}
+            {/* Not while something is being placed: offering "move this away" on a
+                card that is simultaneously offering "place it here" asks the reader
+                to hold two contradictory intentions at once. */}
+            {!placingActive && movable.length > 0 && (
+              <div className="move-out">
+                <h4>Wrong answer here?</h4>
+                {movable.map((block) => (
+                  <button
+                    key={block.block_id}
+                    type="button"
+                    className="move-out-block"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onMoveBlock(block.block_id);
+                    }}
+                  >
+                    Move &ldquo;{blockPreview(block)}&rdquo;
+                  </button>
+                ))}
+              </div>
             )}
 
             {/* The citation is what makes a mark checkable in two seconds rather

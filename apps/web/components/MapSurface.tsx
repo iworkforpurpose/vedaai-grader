@@ -7,6 +7,9 @@ import { firstPage } from "@/lib/geometry";
 import {
   applyReassignment,
   buildRows,
+  isTeacherPlaced,
+  movableBlocks,
+  orphanHighlightByPage,
   citationHighlight,
   gradeFor,
   highlightByPage,
@@ -18,6 +21,7 @@ import {
 import { useNarrow } from "@/lib/breakpoints";
 import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
+import { OrphanCard } from "./OrphanCard";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
 
@@ -52,6 +56,19 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const [marking, setMarking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const narrow = useNarrow();
+
+  /*
+   * The block a teacher is currently finding a home for, if any.
+   *
+   * One piece of state drives the whole correction flow, because there is only ever
+   * one thing being placed. Holding it here rather than in the card means the
+   * question list can become a target list without every card needing to know about
+   * every other one.
+   */
+  const [placing, setPlacing] = useState<{ blockId: string; from: string | null } | null>(
+    null,
+  );
+  const [moving, setMoving] = useState(false);
 
   /*
    * Follow a submission that is still being worked on.
@@ -100,6 +117,8 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const marks = useMemo(() => summarizeMarks(submission), [submission]);
   const selected = rows.find((r) => r.question.qid === selectedQid) ?? null;
   const ink = useMemo(() => untranscribedInkByPage(submission), [submission]);
+  const orphanInk = useMemo(() => orphanHighlightByPage(submission.mapping ?? undefined), [submission]);
+  const orphans = submission.mapping?.orphans ?? [];
   const [showInk, setShowInk] = useState(false);
 
   // A cited rubric point narrows the highlight to the lines behind that one mark.
@@ -176,6 +195,54 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       return;
     }
     setNotice("No answer is mapped to that spot.");
+  }
+
+  /*
+   * Move a block of writing to a question, and keep the screen honest if it fails.
+   *
+   * Applied locally first, because the correction is the teacher's decision and
+   * should land the moment they make it — a round trip of a second on a list they
+   * are actively working through reads as the interface ignoring them. The local
+   * apply mirrors the server's rules exactly, which is why it lives in
+   * `lib/review.ts` and is tested there rather than being written twice.
+   *
+   * On failure the server's response replaces it. That matters more than it looks:
+   * this is a correction to a mark a student receives, so a change that silently
+   * did not persist is worse than one that visibly refused.
+   */
+  async function place(toQid: string): Promise<void> {
+    const target = placing;
+    if (target === null) return;
+
+    const optimistic = applyReassignment(submission, target.blockId, toQid);
+    setSubmission(optimistic);
+    setPlacing(null);
+    setMoving(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/submissions/${submission.submission_id}/mapping/${toQid}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ block_id: target.blockId }),
+        },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+        setSubmission(submission);
+        setNotice(body?.detail ?? "That move could not be saved, so it has been undone.");
+        return;
+      }
+      setSubmission((await response.json()) as Submission);
+      setSelectedQid(toQid);
+    } catch {
+      setSubmission(submission);
+      setNotice("That move could not be saved — the service could not be reached.");
+    } finally {
+      setMoving(false);
+    }
   }
 
   async function proposeMarks(): Promise<void> {
@@ -287,6 +354,23 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
             </div>
           </div>
 
+          {/*
+            * While placing, the list means something different, so the header says
+            * so and offers the way out. Without it a teacher has a list of cards
+            * that suddenly respond differently and nothing explaining why.
+            */}
+          {placing !== null && (
+            <div className="placing-banner" role="status">
+              <span>
+                Choose the question this writing belongs to
+                {placing.from && <> · currently on <strong>{placing.from}</strong></>}
+              </span>
+              <button type="button" className="placing-cancel" onClick={() => setPlacing(null)}>
+                Cancel
+              </button>
+            </div>
+          )}
+
           <p className="q-hint" style={{ whiteSpace: "normal" }}>
             <strong>{summary.answered}</strong> of {summary.total} answered
             {summary.absenceSuppressed ? (
@@ -310,6 +394,50 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
           {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
 
           <div className="q-list">
+            {/*
+              * Unplaced writing sits at the top, above the questions.
+              *
+              * It is the only thing in this list that needs a decision rather than a
+              * reading, and burying it under twenty questions is how it gets missed —
+              * which for an orphan means either a student's answer going unmarked or
+              * our own missed question going unnoticed.
+              */}
+            {orphans.length > 0 && (
+              <>
+                <p className="q-section">
+                  {orphans.length === 1
+                    ? "1 piece of writing matched no question"
+                    : `${orphans.length} pieces of writing matched no question`}
+                </p>
+                {orphans.map((orphan) => (
+                  <OrphanCard
+                    key={orphan.block_id}
+                    orphan={orphan}
+                    suggestion={
+                      orphan.best_guess_qid && orphan.best_guess_score !== null
+                        ? {
+                            qid: orphan.best_guess_qid,
+                            label:
+                              rows.find((r) => r.question.qid === orphan.best_guess_qid)
+                                ?.question.label_raw ?? orphan.best_guess_qid,
+                            score: orphan.best_guess_score,
+                          }
+                        : null
+                    }
+                    selected={false}
+                    placing={placing?.blockId === orphan.block_id}
+                    onShow={() =>
+                      revealOnSheet(orphan.highlight?.boxes ?? [])
+                    }
+                    onStartPlacing={() =>
+                      setPlacing({ blockId: orphan.block_id, from: null })
+                    }
+                  />
+                ))}
+                <p className="q-section">Questions</p>
+              </>
+            )}
+
             {rows.map((row, index) => (
               <QuestionCard
                 key={row.question.qid}
@@ -331,6 +459,13 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
                   })
                 }
                 onCite={cite}
+                placingActive={placing !== null}
+                teacherPlaced={isTeacherPlaced(submission, row.question.qid)}
+                movable={movableBlocks(submission, row.question.qid)}
+                onPlaceHere={() => void place(row.question.qid)}
+                onMoveBlock={(blockId) =>
+                  setPlacing({ blockId, from: row.question.label_raw })
+                }
               />
             ))}
           </div>
@@ -353,6 +488,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
               highlights={highlights}
               highlightLabel={selected ? selected.question.label_raw.replace(/[.)]\s*$/, "") : null}
               untranscribedInk={ink}
+              orphanRegions={orphanInk}
               showUntranscribed={showInk}
               onToggleUntranscribed={() => setShowInk((on) => !on)}
               onPointerPick={pickAtPoint}

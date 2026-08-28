@@ -161,6 +161,57 @@ export function highlightByPage(mapping: Mapping | undefined): Map<number, PageB
 }
 
 /**
+ * Where the unplaced writing is, per page.
+ *
+ * Orphans are the case the brief asks about directly — writing that matches no
+ * question — and they matter more than they look. An orphan usually means one of
+ * two things, and the second is the important one: either the student answered
+ * something the paper does not contain, or our own extraction missed a question.
+ * Either way it is writing a teacher must be able to see and place by hand.
+ */
+export function orphanHighlightByPage(
+  // The whole result, not one question's mapping: orphans belong to nothing, which
+  // is what makes them orphans.
+  mapping: MappingResult | undefined,
+): Map<number, PageBox[]> {
+  const out = new Map<number, PageBox[]>();
+  for (const orphan of mapping?.orphans ?? []) {
+    for (const box of orphan.highlight?.boxes ?? []) {
+      const bucket = out.get(box.page);
+      if (bucket) bucket.push(box);
+      else out.set(box.page, [box]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The blocks a teacher could move away from a question, newest arrangement first.
+ *
+ * Separate from `blocksOf` because the question being *corrected* needs its blocks
+ * individually addressable — a wrong mapping is often one block of several, and
+ * moving the whole answer would trade one error for another.
+ */
+export function movableBlocks(
+  submission: Submission,
+  qid: string,
+): AnswerBlock[] {
+  const mapping = submission.mapping?.mappings.find((m) => m.qid === qid);
+  return blocksOf(submission, mapping);
+}
+
+/**
+ * Whether a question's mapping was set by hand rather than by the aligner.
+ *
+ * Shown, because a teacher returning to a script needs to know which decisions
+ * were theirs. Re-running the marking will not undo an override, and it would be
+ * unreasonable to expect anyone to remember what they moved.
+ */
+export function isTeacherPlaced(submission: Submission, qid: string): boolean {
+  return submission.mapping?.mappings.find((m) => m.qid === qid)?.teacher_override ?? false;
+}
+
+/**
  * Which question a point on the sheet belongs to.
  *
  * Reverse lookup: click a region and jump to its question. The smallest

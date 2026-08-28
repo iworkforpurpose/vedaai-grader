@@ -14,6 +14,9 @@ import {
   citationHighlight,
   gradeFor,
   highlightByPage,
+  isTeacherPlaced,
+  movableBlocks,
+  orphanHighlightByPage,
   questionAtPoint,
   scoreTone,
   STATUS,
@@ -732,5 +735,74 @@ describe("scoreTone and a decided zero", () => {
 
   it("treats a question worth no marks as unscored even when judged", () => {
     expect(scoreTone(grade({ judged: true, marks_available: 0 }))).toBe("none");
+  });
+});
+
+
+describe("reassignment helpers", () => {
+  const block = (id: string, text: string, page: number) => ({
+    block_id: id,
+    text,
+    line_ids: [`as:${id}`],
+    geometry: [{ page, box: { x0: 0.1, y0: 0.1, x1: 0.9, y1: 0.2 } }],
+    pages_spanned: [page],
+    start_line_id: `as:${id}`,
+    end_line_id: `as:${id}`,
+  });
+
+  const withOrphans = () =>
+    submission({
+      blocks: [block("blk:000", "Pandas are specialists.", 0), block("blk:001", "Stray note.", 1)],
+      mapping: {
+        mappings: [
+          {
+            qid: "A/1",
+            status: "answered",
+            block_ids: ["blk:000"],
+            highlight: null,
+            teacher_override: true,
+            confidence: 0.9,
+            evidence: [],
+          },
+        ],
+        orphans: [
+          {
+            block_id: "blk:001",
+            text_preview: "Stray note.",
+            best_guess_qid: null,
+            best_guess_score: null,
+            highlight: {
+              boxes: [{ page: 1, box: { x0: 0.1, y0: 0.3, x1: 0.9, y1: 0.4 } }],
+              derived_from: "ocr_lines",
+              pages: [1],
+              spans_pages: false,
+            },
+          },
+        ],
+        unassigned_ink_ratio: 0,
+        absence_claims_suppressed: false,
+      },
+    } as unknown as Partial<Submission>);
+
+  it("groups unplaced writing by the page it is on", () => {
+    const byPage = orphanHighlightByPage(withOrphans().mapping ?? undefined);
+    expect([...byPage.keys()]).toEqual([1]);
+    expect(byPage.get(1)).toHaveLength(1);
+  });
+
+  it("has nothing to show when every block found a question", () => {
+    expect(orphanHighlightByPage(undefined).size).toBe(0);
+  });
+
+  it("lists a question's blocks individually, so one of several can be moved", () => {
+    // A wrong mapping is often one block out of several. Moving the whole answer
+    // would trade one error for another.
+    const blocks = movableBlocks(withOrphans(), "A/1");
+    expect(blocks.map((b) => b.block_id)).toEqual(["blk:000"]);
+  });
+
+  it("reports a mapping the teacher set by hand", () => {
+    expect(isTeacherPlaced(withOrphans(), "A/1")).toBe(true);
+    expect(isTeacherPlaced(withOrphans(), "A/2")).toBe(false);
   });
 });

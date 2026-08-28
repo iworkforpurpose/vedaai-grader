@@ -2331,3 +2331,213 @@ body::before {
 :root:active-view-transition .map {
   animation: none;
 }
+
+
+/* ══ correcting a mapping ══════════════════════════════════════════════════
+ *
+ * No frame for any of this, so it is built from the pieces the frames already
+ * establish: the question card's shape, the score pill's geometry, the accent for
+ * the primary action. One colour is added — amber — for the one state the design
+ * has no vocabulary for: writing that belongs somewhere, but nowhere yet.
+ *
+ * Amber rather than the accent, because orange already means "this is the thing to
+ * press" throughout, and rather than red, because an orphan is not an error. It is
+ * usually either a student answering something the paper does not ask, or our own
+ * extraction having missed a question. Neither is the teacher's mistake.
+ */
+:root {
+  --unplaced: #b45309;
+  --unplaced-tint: rgb(245 158 11 / 0.12);
+  --unplaced-edge: #f59e0b;
+}
+
+/* ── unplaced writing ──────────────────────────────────────────────────── */
+
+.q-section {
+  padding: var(--sp-2) 2px 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--body);
+}
+
+.orphan-card {
+  /* The one structural difference from a question card: an amber edge where the
+     number badge would be. It reads as part of the same list without pretending to
+     be a question, which is exactly its situation. */
+  border-left: 3px solid var(--unplaced-edge);
+}
+
+.orphan-mark {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--unplaced-edge);
+}
+
+.orphan-where {
+  color: var(--muted);
+}
+
+.score[data-tone="orphan"] {
+  background: var(--unplaced-tint);
+  color: var(--unplaced);
+}
+
+.orphan-guess {
+  padding: 0 2px;
+  font-size: var(--fs-sm);
+  color: var(--body);
+}
+
+.orphan-score {
+  color: var(--muted);
+}
+
+.orphan-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  padding-top: var(--sp-2);
+}
+
+.orphan-place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 36px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--unplaced);
+  color: #fff;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.orphan-place:hover {
+  background: #92400e;
+}
+
+.orphan-card[data-placing="true"] .orphan-place {
+  background: var(--chip);
+  color: var(--body-solid);
+  cursor: default;
+}
+
+/* ── choosing a destination ────────────────────────────────────────────── */
+
+.placing-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-lg);
+  background: var(--unplaced-tint);
+  color: var(--unplaced);
+  font-size: var(--fs-sm);
+}
+
+.placing-cancel {
+  margin-left: auto;
+  min-height: 32px;
+  padding: 0 var(--sp-3);
+  border: 1px solid rgb(180 83 9 / 0.35);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--unplaced);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.placing-cancel:hover {
+  background: rgb(180 83 9 / 0.08);
+}
+
+/*
+ * Every eligible question becomes pressable.
+ *
+ * The affordance is the whole card rather than a button on it, because at this
+ * point the teacher has one decision left — which question — and the cards are
+ * what they are already reading. A dashed edge says "drop target" without needing
+ * a label on each of twenty rows.
+ */
+.q-card[data-target="true"] {
+  border-color: var(--unplaced-edge);
+  border-style: dashed;
+  cursor: pointer;
+}
+
+.q-card[data-target="true"]:hover {
+  background: var(--unplaced-tint);
+  border-style: solid;
+}
+
+.score[data-tone="target"] {
+  background: var(--unplaced);
+  color: #fff;
+}
+
+/* ── moving an answer out again ────────────────────────────────────────── */
+
+.move-out {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  padding-top: 10px;
+  border-top: 1px solid rgb(0 0 0 / 0.07);
+}
+
+.move-out h4 {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.move-out-block {
+  max-width: 100%;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid rgb(180 83 9 / 0.3);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--unplaced);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.move-out-block:hover {
+  background: var(--unplaced-tint);
+}
+
+/* ── the badge that says whose decision this was ───────────────────────── */
+
+.placed-badge {
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--unplaced-tint);
+  color: var(--unplaced);
+  font-size: var(--fs-xs, 0.75rem);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── unplaced writing on the sheet ─────────────────────────────────────── */
+
+.hl[data-kind="orphan"] {
+  border-color: var(--unplaced-edge);
+  border-style: dashed;
+  background: var(--unplaced-tint);
+}
+
+.hl-tab[data-kind="orphan"] {
+  background: var(--unplaced);
+}
