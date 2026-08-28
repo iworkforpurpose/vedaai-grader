@@ -59,12 +59,15 @@ jobs:
       - name: Typecheck
         run: pnpm turbo typecheck
 
-      - name: Web tests
-        run: pnpm --filter @vedaai/web test
-
-      - name: API tests
-        working-directory: apps/api
-        run: uv run --extra dev python -m pytest -q
+      # `turbo test`, not a copy of each command.
+      #
+      # This job originally spelled the API command out itself, and it was wrong in
+      # a way that only a clean machine could reveal: `--extra dev` does not install
+      # boto3, and two test modules import botocore. It passed locally because that
+      # venv happened to have the aws extra from an earlier sync. Running the
+      # packages' own scripts means CI and a laptop cannot drift apart.
+      - name: Tests
+        run: pnpm turbo test
 
   deploy:
     name: deploy
