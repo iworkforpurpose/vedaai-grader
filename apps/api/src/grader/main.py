@@ -15,8 +15,8 @@ from vedaai_contracts import EXPORTED_MODELS
 from vedaai_contracts.geometry import HGBENCH_SCALE, RENDER_DPI
 
 from .render import MAX_BYTES
-from .store import get_store
 from .routes import router
+from .store import get_store
 
 app = FastAPI(
     title="Vedaai Grader API",
