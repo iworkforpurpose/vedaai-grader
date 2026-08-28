@@ -28,6 +28,7 @@ REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
 # in three separate places, so a command run on its own could act on the wrong
 # bucket depending on which one had run first.
 [ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
+TABLE="${SUBMISSIONS_TABLE:-${APP}-submissions}"
 
 # The image tag, and with it the answer to "what is actually running?".
 #
@@ -269,9 +270,37 @@ bootstrap() {
     aws iam create-role --role-name "${APP}-task" \
       --assume-role-policy-document "${trust}" >/dev/null
 
-  sed "s/REPLACE_BUCKET/${BUCKET}/g" deploy/task-role-policy.json > /tmp/${APP}-policy.json
+  sed -e "s/REPLACE_BUCKET/${BUCKET}/g" -e "s/REPLACE_TABLE/${TABLE}/g" \
+      -e "s/REPLACE_REGION/${REGION}/g" -e "s/REPLACE_ACCOUNT/${ACCOUNT}/g" \
+      deploy/task-role-policy.json > /tmp/${APP}-policy.json
+  case "$(cat /tmp/${APP}-policy.json)" in
+    *REPLACE_*) echo "REFUSING: a placeholder survived substitution" >&2; return 1 ;;
+  esac
   aws iam put-role-policy --role-name "${APP}-task" \
     --policy-name "${APP}-app" --policy-document "file:///tmp/${APP}-policy.json"
+
+  say "submissions table ${TABLE}"
+  # On-demand billing, not provisioned. This is a test deployment whose traffic is
+  # a few teachers a day; provisioned capacity would mean paying for a baseline
+  # nobody uses and still throttling on a burst.
+  if aws dynamodb describe-table --table-name "${TABLE}" --region "${REGION}" \
+       >/dev/null 2>&1; then
+    echo "  exists"
+  else
+    aws dynamodb create-table --table-name "${TABLE}" --region "${REGION}" \
+      --attribute-definitions AttributeName=pk,AttributeType=S \
+      --key-schema AttributeName=pk,KeyType=HASH \
+      --billing-mode PAY_PER_REQUEST >/dev/null
+    aws dynamodb wait table-exists --table-name "${TABLE}" --region "${REGION}"
+    echo "  created"
+  fi
+
+  # Expiry is the table's job, not the application's. Nothing in the service
+  # deletes a submission, so without this the records accumulate for ever — and a
+  # sweep written in the app would be one more thing to run and to get wrong.
+  aws dynamodb update-time-to-live --table-name "${TABLE}" --region "${REGION}" \
+    --time-to-live-specification "Enabled=true,AttributeName=expires_at" \
+    >/dev/null 2>&1 || echo "  TTL already set"
 
   say "log group"
   aws logs create-log-group --log-group-name "/ecs/${APP}" --region "${REGION}" 2>/dev/null || true
@@ -338,6 +367,7 @@ register_task() {
         { "name": "OCR_ENGINE", "value": "textract" },
         { "name": "S3_PAGE_BUCKET", "value": "${BUCKET}" },
         { "name": "S3_PAGE_PREFIX", "value": "pages/" },
+        { "name": "SUBMISSIONS_TABLE", "value": "${TABLE}" },
         { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
         { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
         { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" }

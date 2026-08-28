@@ -156,10 +156,22 @@ See [`deploy/README.md`](deploy/README.md) for what the two IAM roles may do, an
 for the scoped `iam:PassRole` the operator needs — the obvious way to fix the error
 you get without it is privilege escalation to every role in the account.
 
-Submissions are held in memory. The brief permitted it and it is still the right
-call at this scale, but it is why this is a single task rather than a service with
-several: a second task would answer questions about submissions it has never heard
-of.
+Submissions live in a DynamoDB table, compressed, spilling to object storage past
+the 400 KB item limit — a measured two-page submission is 140 KiB and the page cap
+is sixty. They were held in memory until real testers were invited, on the
+reasoning that the brief permitted it; what the brief permits and what a tester
+will forgive are different questions, and every push was discarding work in
+progress.
+
+The table also carries the expiry, set to seven days to match the lifecycle rule on
+the rendered pages. A record outliving its page images would open to a review with
+every page blank, which reads as the pipeline losing the work rather than as a link
+expiring.
+
+Writes are conditional on the version that was read, so a lost update is a 409 and
+a reload rather than a silently discarded correction. Unreachable with one task, and
+that is the point — it is a property of the deployment, not of the code, and it is
+the assumption a second task would quietly invalidate.
 
 ## Deliberate non-goals
 
@@ -179,10 +191,10 @@ Named rather than half-built:
 - **Marking varies by about one mark between runs.** Temperature 0 and a fixed seed
   narrowed it; hosted models are not bit-reproducible. Settling it needs
   self-consistency over several samples.
-- **Submissions do not survive a deploy.** They are held in memory, so every
-  rollout and every task restart discards work in progress. This is the one
-  limitation that will bite a real tester rather than a reviewer, and the fix is a
-  DynamoDB table — a couple of hours, not a redesign.
+- **Progress events do not survive a restart.** The live stream a browser watches
+  during a run is per process; the result survives, the running commentary does
+  not. A page open across a restart falls back to polling, which is the path it
+  already uses.
 - **Orphaned writing has never been seen in the wild.** The unplaced-answer card is
   built and tested, but no sample produces one — not even a programming answer
   sheet paired with a prose paper, which maps everything wrongly rather than

@@ -26,6 +26,7 @@ from vedaai_contracts import (
 )
 
 from . import align, grading, pipeline, regions, render, uploads
+from .persistence import ConcurrentUpdate
 from .render import UnsupportedDocument
 from .storage import AnyPageStore, get_page_store
 from .store import SubmissionStore, get_store
@@ -327,6 +328,28 @@ def get_ink_regions(submission_id: str, store: StoreDep) -> list[InkRegion]:
     return submission.ink_regions
 
 
+def _store_or_conflict(store: SubmissionStore, submission: Submission) -> None:
+    """Save, turning a lost update into 409 rather than a 500.
+
+    The distinction matters to the page: 409 means "your copy is stale, reload",
+    which the reassignment UI already handles because it reverts an optimistic
+    move when the request fails. A 500 would tell a teacher the service is broken
+    when in fact their correction simply lost a race.
+
+    Unreachable with one task and one worker. It is here because that is a
+    property of today's deployment, not of this code, and the failure it prevents
+    is a silently discarded correction — the kind nobody reports because it looks
+    like they mis-clicked.
+    """
+    try:
+        store.put(submission)
+    except ConcurrentUpdate as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="This submission was changed by someone else. Reload and try again.",
+        ) from exc
+
+
 @router.patch(
     "/submissions/{submission_id}/mapping/{qid:path}",
     response_model=Submission,
@@ -366,7 +389,7 @@ def reassign_answer(
         block_id=block_id,
         to_qid=qid,
     )
-    store.put(submission)
+    _store_or_conflict(store, submission)
     return submission
 
 
@@ -409,7 +432,7 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
         )
 
     await _apply_marks(submission)
-    store.put(submission)
+    _store_or_conflict(store, submission)
     return submission
 
 

@@ -24,10 +24,15 @@ class SubmissionStatus(StrEnum):
 class Submission(BaseModel):
     """One question paper plus one student's answer sheet, and everything derived.
 
-    Held in memory: the brief permits it and at this scale a database would add
-    operational surface without buying anything. The consequence is that state
-    is lost on restart, which is acceptable for a testing deployment and is
-    stated plainly rather than papered over.
+    Persisted whole rather than as rows. Every field below is derived from the two
+    uploaded documents in one pipeline run, so there is no query that wants them
+    apart — and splitting them across tables would mean a half-written submission
+    becoming representable, which is a state no reader here knows how to handle.
+
+    The consequence worth knowing is that this object is what gets written on every
+    mutation, and it is large: a measured two-page submission serializes to 140 KiB,
+    nearly all of it line boxes and ink regions. `grader.persistence` compresses it
+    and spills past the item limit for that reason.
     """
 
     submission_id: str

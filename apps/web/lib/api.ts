@@ -34,6 +34,8 @@ export interface Health {
   contract_model_count: number;
   /** The largest document the service will accept, in bytes. */
   max_upload_bytes: number;
+  /** Whether a submission survives a restart of the service. */
+  submissions_durable: boolean;
 }
 
 /** The DPI the frontend expects. Cross-checked against the API at runtime.

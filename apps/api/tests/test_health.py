@@ -36,6 +36,14 @@ def test_health_states_the_upload_limit_the_service_enforces() -> None:
     assert body["max_upload_bytes"] == MAX_BYTES
 
 
+def test_health_says_whether_submissions_survive_a_restart() -> None:
+    # False here, because the test process has no table. The point is that the
+    # answer is reported rather than assumed — it was silently no for the whole
+    # first week this was deployed.
+    body = TestClient(app).get("/health").json()
+    assert body["submissions_durable"] is False
+
+
 def test_contracts_are_importable_across_the_package_boundary() -> None:
     # Guards the uv path dependency. If this breaks, everything downstream
     # breaks with a confusing ImportError deep in a pipeline stage.

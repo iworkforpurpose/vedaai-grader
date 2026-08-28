@@ -15,6 +15,7 @@ from vedaai_contracts import EXPORTED_MODELS
 from vedaai_contracts.geometry import HGBENCH_SCALE, RENDER_DPI
 
 from .render import MAX_BYTES
+from .store import get_store
 from .routes import router
 
 app = FastAPI(
@@ -72,6 +73,12 @@ class Health(BaseModel):
     #: uploads no longer pass through — while the service accepts four times
     #: that, so a teacher with a phone-photo PDF would not have tried.
     max_upload_bytes: int
+    #: Whether a submission would survive a restart of this service.
+    #:
+    #: Reported because the answer used to be no, and the consequence — every
+    #: deploy discarding whatever a tester was half way through — is invisible
+    #: until it happens to someone. Now it is checkable from outside.
+    submissions_durable: bool
 
 
 @app.get("/health", response_model=Health, tags=["meta"])
@@ -83,6 +90,7 @@ def health() -> Health:
         hgbench_scale=HGBENCH_SCALE,
         contract_model_count=len(EXPORTED_MODELS),
         max_upload_bytes=MAX_BYTES,
+        submissions_durable=get_store().durable,
     )
 
 

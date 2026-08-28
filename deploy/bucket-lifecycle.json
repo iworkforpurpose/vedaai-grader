@@ -25,6 +25,19 @@
       "AbortIncompleteMultipartUpload": {
         "DaysAfterInitiation": 1
       }
+    },
+    {
+      "ID": "expire-submission-payloads",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "submissions/"
+      },
+      "Expiration": {
+        "Days": 7
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
     }
   ]
 }

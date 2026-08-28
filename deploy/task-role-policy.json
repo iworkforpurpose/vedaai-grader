@@ -37,6 +37,24 @@
           "s3:prefix": "pages/*"
         }
       }
+    },
+    {
+      "Sid": "KeepSubmissionsAcrossRestarts",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:REPLACE_REGION:REPLACE_ACCOUNT:table/REPLACE_TABLE"
+    },
+    {
+      "Sid": "HoldASubmissionTooLargeForAnItem",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::REPLACE_BUCKET/submissions/*"
     }
   ]
 }
