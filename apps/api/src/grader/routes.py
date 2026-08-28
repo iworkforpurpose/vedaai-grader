@@ -147,17 +147,34 @@ async def _run_ingest(
     # button. Guarded because marking is the one step that talks to a paid API:
     # a failure here must cost the located answers nothing, and the submission is
     # already stored and returnable without it.
-    if _auto_mark_enabled() and (
+    marking = _auto_mark_enabled() and (
         submission.mapping is not None
         and submission.questions is not None
         and submission.answer_sheet_lines is not None
-    ):
+    )
+
+    if marking:
+        # Held at `processing` across marking, because `pipeline.ingest` sets
+        # `complete` itself the moment locating is done.
+        #
+        # That is a seam a client cannot see past: the submission says complete
+        # while eight marking calls are still in flight, so anything watching the
+        # status opens the review screen with no marks on it and no reason to look
+        # again. It read as auto-marking silently not running — the marks arrived
+        # perfectly well, roughly half a minute after the only signal saying to
+        # stop waiting.
+        submission.status = SubmissionStatus.PROCESSING
+        store.put(submission)
         try:
             await _apply_marks(submission)
-        except Exception as exc:  # noqa: BLE001
+        except BaseException as exc:  # noqa: BLE001
+            # BaseException, not Exception: a cancelled task raises CancelledError,
+            # which is not an Exception, and losing it here would leave a
+            # submission stuck at `processing` with nothing said about why.
             warning = f"Answers were not marked automatically: {exc}"
             if warning not in submission.warnings:
                 submission.warnings.append(warning)
+        submission.status = SubmissionStatus.COMPLETE
 
     store.put(submission)
 

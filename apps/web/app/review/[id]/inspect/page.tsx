@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { DebugReview } from "@/components/DebugReview";
-import { INTERNAL_API_BASE } from "@/lib/api";
+import { INTERNAL_API_BASE } from "@/lib/api.server";
 import type { InkRegion, LineIndex, Submission } from "@/lib/contracts";
 
 /**

@@ -16,24 +16,14 @@
  *     own proxy on the way.
  */
 
-/** Browser-facing base. Relative, so it follows whatever origin served the page. */
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
-
 /**
- * Base for fetches made on the server.
+ * Browser-facing base. Relative, so it follows whatever origin served the page.
  *
- * Loopback rather than the public hostname on purpose: a server component
- * reaching its own load balancer to talk to a process in the same container
- * would depend on DNS, TLS and the balancer's health — three things that can
- * fail while the worker beside it is perfectly fine.
+ * Deliberately the only base in this module. Its server-side counterpart lives in
+ * `api.server.ts`, because anything here reaches the browser's bundle — including
+ * a default nothing on the client ever reads.
  */
-export const INTERNAL_API_BASE =
-  process.env.INTERNAL_API_BASE ?? "http://127.0.0.1:8000";
-
-/** The base to use from wherever this is running. */
-export function apiBase(): string {
-  return typeof window === "undefined" ? INTERNAL_API_BASE : API_BASE;
-}
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/api";
 
 export interface Health {
   status: string;
@@ -51,26 +41,3 @@ export interface Health {
  * values turns that into something visible.
  */
 export const EXPECTED_RENDER_DPI = 200;
-
-export class ApiUnavailableError extends Error {
-  constructor(cause: unknown) {
-    super(
-      `Cannot reach the grader API at ${apiBase()}. Start it with \`pnpm --filter @vedaai/api dev\`.`,
-    );
-    this.name = "ApiUnavailableError";
-    this.cause = cause;
-  }
-}
-
-export async function fetchHealth(): Promise<Health> {
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase()}/health`, { cache: "no-store" });
-  } catch (cause) {
-    throw new ApiUnavailableError(cause);
-  }
-  if (!response.ok) {
-    throw new Error(`Health check failed with HTTP ${response.status}`);
-  }
-  return (await response.json()) as Health;
-}

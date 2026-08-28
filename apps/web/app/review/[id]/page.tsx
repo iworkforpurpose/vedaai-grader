@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { MapSurface } from "@/components/MapSurface";
 import type { Submission } from "@/lib/contracts";
-import { INTERNAL_API_BASE } from "@/lib/api";
+import { INTERNAL_API_BASE } from "@/lib/api.server";
 
 /**
  * The mapping screen for one submission.

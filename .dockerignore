@@ -21,6 +21,20 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Nested ones too. The patterns above are root-relative and do not recurse, so
+# `apps/web/.env.local` was copied into the build context — where Next reads it at
+# build time and inlined its `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000` into the
+# client bundle. The deployed page then asked the browser to talk to its own
+# loopback, and every upload failed with "cannot reach the grader service".
+#
+# The value is also the reason this was invisible locally: it is correct for local
+# development, and it is gitignored, so it never appeared in a diff.
+#
+# Worth stating that the risk is not only wrong configuration. A nested `.env`
+# holding a real key would have been copied in on the same path this one took.
+**/.env
+**/.env.*
+!**/.env.example
 
 .git/
 .playwright-mcp/

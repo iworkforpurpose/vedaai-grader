@@ -50,6 +50,20 @@ COPY --from=deps /repo/packages/contracts/dist/ packages/contracts/dist/
 
 RUN pnpm --filter @vedaai/web build
 
+# Fail the build if a loopback address reached the client bundle.
+#
+# `NEXT_PUBLIC_*` values are inlined at build time, so a stray env file in the
+# context becomes a hardcoded URL in the browser's JavaScript — which is exactly
+# what happened: apps/web/.env.local pointed the browser at 127.0.0.1:8000 and
+# every upload on the deployed site failed. Nothing broke at build or health-check
+# time, so the only way to catch it early is to look.
+RUN if grep -rqE "127\\.0\\.0\\.1:[0-9]+|localhost:[0-9]+" apps/web/.next/static; then \
+      echo "ERROR: a loopback URL is baked into the client bundle:" >&2; \
+      grep -rlE "127\\.0\\.0\\.1:[0-9]+|localhost:[0-9]+" apps/web/.next/static >&2; \
+      echo "A NEXT_PUBLIC_* value was inlined from the build context. Check .dockerignore." >&2; \
+      exit 1; \
+    fi
+
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
