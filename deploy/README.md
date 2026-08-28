@@ -44,6 +44,60 @@ deploy/deploy.sh bootstrap
 Creates the ECR repository, the S3 bucket (private, encrypted, 7-day expiry), both
 IAM roles, the log group and the cluster. Idempotent — re-run it freely.
 
+### What the two roles may do
+
+| Role | Assumed by | Grants |
+|---|---|---|
+| `vedaai-grader-task` | the application | `textract:DetectDocumentText`, and read/write on one S3 prefix. Nothing else. This is the credential the container runs with, which is why no key pair is ever built into the image. |
+| `vedaai-grader-execution` | the ECS agent, before the container starts | Image pull, log stream, and reading the marking credential by ARN. |
+
+`textract:DetectDocumentText` is granted on `"*"` because it has to be: the action
+takes no resource types and no condition keys, so there is nothing to scope it to.
+`s3:ListBucket` is scoped by an `s3:prefix` condition rather than by resource,
+because the bucket is the resource for a list and the prefix is the only thing that
+can narrow it.
+
+### What the operator running this needs
+
+Not documented for completeness — documented because the obvious way to fix the
+error you get without it is dangerous.
+
+`deploy.sh register` calls `ecs register-task-definition` with both role ARNs, and
+naming a role in a task definition requires `iam:PassRole` on it. When that fails,
+the tempting fix is `iam:PassRole` on `"*"`. **Don't.** `iam:PassRole` on `"*"`
+combined with the ability to register a task definition is privilege escalation to
+every role in the account, including any administrator role — you write a task
+definition naming that role and run it. Scope it:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "iam:PassRole",
+  "Resource": [
+    "arn:aws:iam::ACCOUNT:role/vedaai-grader-task",
+    "arn:aws:iam::ACCOUNT:role/vedaai-grader-execution"
+  ],
+  "Condition": { "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" } }
+}
+```
+
+`bootstrap` additionally needs `iam:CreateRole`, `iam:AttachRolePolicy` and
+`iam:PutRolePolicy`. The last two can attach any policy to any role, so an identity
+holding them can grant itself administrator. Treat `bootstrap` as a one-off run by
+a human with elevated access, and give CI only the `register`/`deploy` subset with
+the scoped `PassRole` above.
+
+### One hardening deliberately not applied
+
+A trust policy for a service principal is normally narrowed with `aws:SourceAccount`
+or `aws:SourceArn` to prevent a confused deputy. Both roles here trust
+`ecs-tasks.amazonaws.com` with no such condition, matching AWS's own published
+example for ECS task roles. I did not add one: I could not confirm from the
+documentation that ECS populates those keys when it assumes a task role, and a
+trust-policy condition on a key the service does not set denies every assumption —
+which surfaces as tasks that will not start, with no indication why. Worth
+revisiting against the service authorization reference rather than by guesswork.
+
 Networking is deliberately not automated. A VPC, subnets, a security group and a
 load balancer depend on what the account already has, and a script that guesses
 either duplicates them or wires the service into the wrong one. Four commands, or

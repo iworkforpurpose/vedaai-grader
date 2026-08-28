@@ -72,13 +72,52 @@ bootstrap() {
   say "IAM roles"
   local trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 
-  # Execution role: pulls the image and writes logs. Nothing to do with the app.
-  aws iam get-role --role-name "${APP}-execution" >/dev/null 2>&1 || {
+  # Execution role: pulls the image, writes logs, and resolves the marking
+  # credential the task definition references by ARN.
+  aws iam get-role --role-name "${APP}-execution" >/dev/null 2>&1 || \
     aws iam create-role --role-name "${APP}-execution" \
       --assume-role-policy-document "${trust}" >/dev/null
-    aws iam attach-role-policy --role-name "${APP}-execution" \
-      --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-  }
+
+  # Outside the create guard, not inside it.
+  #
+  # Attaching only on first creation means a role that already exists never picks
+  # up a policy change — so adding a credential and re-running would appear to
+  # succeed and then fail at task start. Attach is idempotent, so there is no
+  # reason for it to be conditional.
+  aws iam attach-role-policy --role-name "${APP}-execution" \
+    --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # The managed policy is not enough on its own.
+  #
+  # AmazonECSTaskExecutionRolePolicy covers the image pull and the log stream and
+  # nothing else. Reading a secret referenced from `secrets` in the task definition
+  # is a permission AWS requires you to add by hand, and the agent — not the
+  # application — is what reads it, so it belongs on the execution role rather than
+  # the task role. Without it the task does not start with a permissions error on
+  # the API call; it fails during initialisation, before the container runs, which
+  # is a much less obvious thing to debug.
+  #
+  # Scoped to the exact ARNs configured. A wildcard here would let anything that
+  # can start this task read every secret in the account.
+  local secret_arns=()
+  [ -n "${OPENAI_SECRET_ARN:-}" ] && secret_arns+=("\"${OPENAI_SECRET_ARN}\"")
+  [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && secret_arns+=("\"${ANTHROPIC_SECRET_ARN}\"")
+
+  if [ ${#secret_arns[@]} -gt 0 ]; then
+    local arn_list
+    arn_list=$(IFS=,; echo "${secret_arns[*]}")
+    sed "s|REPLACE_SECRET_ARNS|${arn_list}|" \
+      deploy/execution-role-secrets-policy.json > /tmp/${APP}-exec-policy.json
+    aws iam put-role-policy --role-name "${APP}-execution" \
+      --policy-name "${APP}-marking-credential" \
+      --policy-document "file:///tmp/${APP}-exec-policy.json"
+    rm -f /tmp/${APP}-exec-policy.json
+  else
+    # No credential configured: drop any grant a previous run left behind, so
+    # turning marking off actually removes the permission.
+    aws iam delete-role-policy --role-name "${APP}-execution" \
+      --policy-name "${APP}-marking-credential" 2>/dev/null || true
+  fi
 
   # Task role: what the application itself may do. Textract and one S3 prefix,
   # and nothing else — this is the credential the container actually runs with,
