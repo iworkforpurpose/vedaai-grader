@@ -17,7 +17,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from vedaai_contracts import DocumentKind, InkRegion, LineIndex, Submission
+from vedaai_contracts import (
+    DocumentKind,
+    InkRegion,
+    LineIndex,
+    Submission,
+    SubmissionStatus,
+)
 
 from . import align, grading, pipeline, regions, render
 from .render import UnsupportedDocument
@@ -37,13 +43,29 @@ async def create_submission(
     question_paper: Annotated[UploadFile, File(description="Printed question paper.")],
     answer_sheet: Annotated[UploadFile, File(description="One student's handwritten sheet.")],
 ) -> Submission:
-    """Upload both documents and run ingest.
+    """Accept both documents and start ingest. Returns immediately.
 
-    Ingest is awaited rather than backgrounded. At this scale a request that
-    takes a few seconds is simpler and more debuggable than a job handle, and
-    the SSE stream still carries per-page progress for the client. When
-    transcription grows to a minute-plus this moves to a background task and the
-    response becomes the submission ID alone.
+    Ingest used to be awaited here, on the reasoning that a request taking a few
+    seconds is simpler than a job handle. That reasoning had a stated expiry —
+    "when transcription grows to a minute-plus this moves to a background task" —
+    and it expired in a way worth recording, because it did not look like a
+    timeout.
+
+    Deployed behind the Next proxy, every upload failed with a 500 at almost
+    exactly thirty seconds. Not an exception: no traceback, no completed request in
+    the log, the worker still healthy and never restarted. A one-page sheet failed
+    at 30.7s and a two-page at 32.0s, which is what said it was a wall rather than
+    a resource limit — the same wall regardless of the work behind it.
+
+    Raising whichever timeout it was would only move the wall. A pipeline that
+    takes fifteen seconds a page cannot live inside one HTTP request whatever the
+    proxy allows, and every layer between browser and worker gets to impose its own
+    limit. So the response is now the submission, immediately, in `processing`; the
+    work continues behind it; and the client follows the status it already knows
+    how to render.
+
+    The upload is still validated synchronously, so a file that cannot be read is
+    still a 422 on this request rather than a job that fails later.
     """
     qp_bytes = await question_paper.read()
     as_bytes = await answer_sheet.read()
@@ -61,24 +83,65 @@ async def create_submission(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     submission_id = uuid.uuid4().hex[:12]
-    store.put(Submission(submission_id=submission_id))
+    accepted = Submission(submission_id=submission_id, status=SubmissionStatus.PROCESSING)
+    store.put(accepted)
+    store.remember_content(qp_source.content_hash, submission_id)
 
+    task = asyncio.create_task(
+        _run_ingest(
+            submission_id=submission_id,
+            question_paper=(qp_bytes, qp_source),
+            answer_sheet=(as_bytes, as_source),
+            page_store=page_store,
+            store=store,
+        )
+    )
+    # Held, because asyncio keeps only a weak reference to a running task and will
+    # happily collect one mid-flight — which would abandon the ingest silently.
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+
+    return accepted
+
+
+#: Strong references to in-flight ingests. See the note where they are added.
+_BACKGROUND: set[asyncio.Task] = set()
+
+
+async def _run_ingest(
+    *,
+    submission_id: str,
+    question_paper: tuple[bytes, object],
+    answer_sheet: tuple[bytes, object],
+    page_store: AnyPageStore,
+    store: SubmissionStore,
+) -> None:
+    """Render, transcribe, map and mark, off the request.
+
+    Every failure ends as a stored `failed` submission carrying the reason, never
+    as an exception nobody sees. There is no request left to return a 500 to, so a
+    swallowed error here would present as a page that waits forever.
+    """
     loop = asyncio.get_running_loop()
     try:
         submission = await loop.run_in_executor(
             None,
             lambda: pipeline.ingest(
                 submission_id=submission_id,
-                question_paper=(qp_bytes, qp_source),
-                answer_sheet=(as_bytes, as_source),
+                question_paper=question_paper,
+                answer_sheet=answer_sheet,
                 page_store=page_store,
                 submission_store=store,
             ),
         )
-    except UnsupportedDocument as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
+        failed = store.get(submission_id) or Submission(submission_id=submission_id)
+        failed.status = SubmissionStatus.FAILED
+        reason = f"Ingest failed: {exc}"
+        if reason not in failed.warnings:
+            failed.warnings.append(reason)
+        store.put(failed)
+        return
 
     # Marks up front, so the review screen opens with feedback rather than a
     # button. Guarded because marking is the one step that talks to a paid API:
@@ -95,10 +158,8 @@ async def create_submission(
             warning = f"Answers were not marked automatically: {exc}"
             if warning not in submission.warnings:
                 submission.warnings.append(warning)
-        store.put(submission)
 
-    store.remember_content(qp_source.content_hash, submission_id)
-    return submission
+    store.put(submission)
 
 
 def _auto_mark_enabled() -> bool:

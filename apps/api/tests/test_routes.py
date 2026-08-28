@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -43,11 +44,19 @@ def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(store_module, "store", submissions)
     app.dependency_overrides[storage.get_page_store] = lambda: pages
     app.dependency_overrides[store_module.get_store] = lambda: submissions
-    yield TestClient(app)
+    # As a context manager, so the event loop lives across requests.
+    #
+    # A bare TestClient gives each request its own portal and tears the loop down
+    # when the response returns — which orphans the ingest, now that upload
+    # schedules it as a background task instead of awaiting it. Every upload test
+    # would see a permanently `processing` submission.
+    with TestClient(app) as test_client:
+        yield test_client
     app.dependency_overrides.clear()
 
 
-def upload(client: TestClient, *, qp: bytes | None = None, ans: bytes | None = None):
+def start_upload(client: TestClient, *, qp: bytes | None = None, ans: bytes | None = None):
+    """Post both documents and return the immediate response, unwaited."""
     if qp is None:
         qp, _ = question_paper()
     if ans is None:
@@ -61,7 +70,58 @@ def upload(client: TestClient, *, qp: bytes | None = None, ans: bytes | None = N
     )
 
 
+def upload(client: TestClient, *, qp: bytes | None = None, ans: bytes | None = None):
+    """Post both documents and wait for the pipeline to settle.
+
+    Ingest is a background task now, so the upload response is a `processing`
+    stub. Everything downstream of this helper is asserting on the *result*, so it
+    waits here rather than in thirty tests — and it returns the final GET, which
+    carries the same shape the POST used to.
+
+    Waits on the status rather than on a fixed sleep. A sleep long enough to be
+    reliable makes the suite slow, and one short enough to be quick makes it flaky.
+    """
+    started = start_upload(client, qp=qp, ans=ans)
+    if started.status_code != 200:
+        return started
+    return wait_for_ingest(client, started.json()["submission_id"])
+
+
+def wait_for_ingest(client: TestClient, submission_id: str):
+    """Block until a submission stops being `processing`, and return its final GET.
+
+    Waits on the status rather than on a fixed sleep. A sleep long enough to be
+    reliable makes the suite slow, and one short enough to be quick makes it flaky.
+    """
+    for _ in range(600):  # 30s ceiling; the fixtures settle in well under one
+        current = client.get(f"/submissions/{submission_id}")
+        if current.status_code != 200 or current.json()["status"] != "processing":
+            return current
+        time.sleep(0.05)
+    raise AssertionError(f"submission {submission_id} never left processing")
+
+
 class TestUpload:
+    def test_returns_immediately_so_no_proxy_can_time_the_upload_out(
+        self, client: TestClient
+    ) -> None:
+        """The upload answers before the work is done.
+
+        This is the contract that replaced awaiting ingest in the request. Deployed,
+        every upload died at almost exactly thirty seconds — no traceback, worker
+        still healthy, a one-page sheet failing at 30.7s and a two-page at 32.0s,
+        which is a wall rather than a resource limit. A pipeline measured in tens of
+        seconds per page cannot sit inside one HTTP request, because every layer in
+        between gets to impose its own timeout.
+        """
+        response = start_upload(client)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "processing"
+        assert body["submission_id"]
+        # Nothing derived yet — that is the point.
+        assert body["questions"] is None
+
     def test_ingests_both_documents(self, client: TestClient) -> None:
         response = upload(client)
         assert response.status_code == 200, response.text
@@ -299,6 +359,8 @@ class TestGradingEndpoint:
                 "answer_sheet": ("student.pdf", sheet, "application/pdf"),
             },
         ).json()["submission_id"]
+        # Ingest runs behind the response now, and this asserts on what it left.
+        wait_for_ingest(client, submission_id)
 
         refused = client.post(f"/submissions/{submission_id}/grades")
         assert refused.status_code == 409
@@ -365,6 +427,7 @@ def _submission_ready_to_mark(client: TestClient) -> str:
             "answer_sheet": ("student.pdf", sheet, "application/pdf"),
         },
     ).json()["submission_id"]
+    wait_for_ingest(client, submission_id)
 
     submission = store_module.store.get(submission_id)
     assert submission is not None and submission.questions is not None

@@ -82,6 +82,14 @@ COPY apps/api/pyproject.toml /repo/apps/api/
 # the JS workspace has to come along.
 COPY --from=web /repo/apps/web/.next/standalone /repo/web
 COPY --from=web /repo/apps/web/.next/static /repo/web/apps/web/.next/static
+# `public/` as well, which the standalone output deliberately leaves out — Next's
+# file tracing only follows imports, and nothing imports a static asset.
+#
+# Missing it does not fail the build or the health check. The site serves, and
+# every image on it 404s: the logo, the teacher illustration, the school crest and
+# the avatar were all blank on the first deploy, with only "The requested resource
+# isn't a valid image ... received null" in the log to say so.
+COPY --from=web /repo/apps/web/public /repo/web/apps/web/public
 
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/grader.conf
 

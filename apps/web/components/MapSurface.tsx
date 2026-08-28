@@ -52,6 +52,46 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const [notice, setNotice] = useState<string | null>(null);
   const narrow = useNarrow();
 
+  /*
+   * Follow a submission that is still being worked on.
+   *
+   * The upload used to return the finished submission, so the first render was
+   * always the final one. It now returns immediately in `processing`, because a
+   * pipeline measured in tens of seconds per page cannot live inside one HTTP
+   * request — every layer between the browser and the worker gets to impose its own
+   * timeout, and one of them was cutting the connection at thirty seconds.
+   *
+   * Polling rather than the SSE progress stream: this screen needs the whole
+   * submission to render, which is one request either way, and a two-second poll
+   * against a job measured in tens of seconds costs nothing. The event stream stays
+   * the right source if this ever shows per-page progress.
+   */
+  useEffect(() => {
+    if (submission.status !== "processing") return;
+
+    let live = true;
+    const timer = window.setInterval(() => {
+      void (async () => {
+        try {
+          const response = await fetch(
+            `${API_BASE}/submissions/${submission.submission_id}`,
+            { cache: "no-store" },
+          );
+          if (!response.ok || !live) return;
+          const next = (await response.json()) as Submission;
+          if (live && next.status !== "processing") setSubmission(next);
+        } catch {
+          // A dropped poll is not a failure — the next one is two seconds away.
+        }
+      })();
+    }, 2000);
+
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [submission.status, submission.submission_id]);
+
   const rows = useMemo(() => buildRows(submission), [submission]);
   const summary = useMemo(() => summarize(submission, rows), [submission, rows]);
   const marks = useMemo(() => summarizeMarks(submission), [submission]);
@@ -157,6 +197,16 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   }
 
   const allExpanded = expanded.size >= rows.length && rows.length > 0;
+
+  if (submission.status === "failed") {
+    return (
+      <LoadingStage
+        title="This one could not be read"
+        note="Nothing was kept — try uploading again."
+        detail={submission.warnings[0]}
+      />
+    );
+  }
 
   if (submission.status === "processing") {
     return <LoadingStage detail="Rendering pages and reading the handwriting." />;
