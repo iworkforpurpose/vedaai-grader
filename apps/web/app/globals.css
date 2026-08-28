@@ -1860,12 +1860,19 @@ body::before {
   width: 100%;
   height: auto;
   display: block;
-  opacity: 0;
   transition: opacity var(--slow) var(--ease-out);
 }
 
-.sheet-page img[data-loaded="true"] {
-  opacity: 1;
+/*
+ * Only a bitmap known to be still loading is hidden.
+ *
+ * The default is visible, deliberately. This was the other way round — hidden
+ * until a handler said otherwise — and an `onLoad` that never fired left the whole
+ * answer sheet at zero opacity with nothing to recover it. A fade is worth having;
+ * it is not worth a state where the content can be lost.
+ */
+.sheet-page img[data-pending="true"] {
+  opacity: 0;
 }
 
 /* The mapped answer. Green in the frame, with a tab carrying the question label —

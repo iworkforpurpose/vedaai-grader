@@ -107,3 +107,31 @@ export function animateScrollTo(
   frame = requestAnimationFrame(step);
   return stop;
 }
+
+
+/**
+ * Whether an image still has a load event coming.
+ *
+ * Exists as a named, tested predicate because this one line was wrong twice, in
+ * opposite directions, and both times it hid the answer sheet — the one thing on
+ * the screen that must never be hidden.
+ *
+ * `complete` is the whole test. It is true once loading has finished, whether that
+ * finish was a decoded bitmap or a failure, and false only while a fetch is still
+ * outstanding — which is exactly "is a fade still to come".
+ *
+ * The two ways to get it wrong:
+ *
+ *   Assume `onLoad` will fire. It does not for an image that completed before
+ *   React attached the handler, which is every cached image and usually the first
+ *   load as well, since the `src` ships in the server-rendered HTML and the
+ *   browser starts fetching during parse.
+ *
+ *   Add `naturalWidth > 0`, which looks stricter. A failed image reports
+ *   `complete` with a zero natural width, so it is treated as still loading, its
+ *   `onError` has already been and gone, and it stays hidden — taking the alt text
+ *   with it.
+ */
+export function isStillLoading(image: { complete: boolean }): boolean {
+  return !image.complete;
+}

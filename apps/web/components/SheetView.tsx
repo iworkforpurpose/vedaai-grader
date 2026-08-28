@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { animateScrollTo } from "@/lib/motion";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { animateScrollTo, isStillLoading } from "@/lib/motion";
 import type { InkRegion, Page, PageBox } from "@/lib/contracts";
 import { boxToStyle, pointerToNormalized } from "@/lib/geometry";
 import { API_BASE } from "@/lib/api";
@@ -49,7 +49,20 @@ export function SheetView({
   const scroller = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [current, setCurrent] = useState(0);
-  const [loaded, setLoaded] = useState<Set<string>>(new Set());
+  /*
+   * Which page bitmaps have *not* arrived yet — the inverse of what this tracked.
+   *
+   * Tracking "loaded" made an invisible sheet the default and relied on `onLoad`
+   * to undo it. `onLoad` does not fire for an image that finished before React
+   * attached the handler, which is every cached image and, because the `src` is in
+   * the server-rendered HTML, usually the first load too: the browser starts
+   * fetching during parse and is done before hydration. The result was a fully
+   * decoded answer sheet at `opacity: 0`, permanently.
+   *
+   * Inverted, the failure mode is safe. No entry means no fade, so anything this
+   * does not know about — including the case where none of this runs — is visible.
+   */
+  const [pending, setPending] = useState<Set<string>>(new Set());
 
   // Scroll to a page when a question is chosen, and again if the same question is
   // chosen twice — hence the nonce.
@@ -103,6 +116,18 @@ export function SheetView({
     if (!node || !target) return;
     animateScrollTo(node, offsetWithin(node, target, 0));
   }
+
+  // Returns the same Set when nothing changes, so a ref callback firing on every
+  // commit cannot loop.
+  const mark = useCallback((key: string, isPending: boolean): void => {
+    setPending((current) => {
+      if (current.has(key) === isPending) return current;
+      const next = new Set(current);
+      if (isPending) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
 
   const count = pages.length;
 
@@ -205,10 +230,16 @@ export function SheetView({
               width={page.width}
               height={page.height}
               decoding="async"
-              data-loaded={loaded.has(page.image_key)}
-              onLoad={() =>
-                setLoaded((current) => new Set(current).add(page.image_key))
-              }
+              data-pending={pending.has(page.image_key)}
+              ref={(node) => {
+                // Read at attach, because an image that finished before this ran
+                // will never fire onLoad. See isStillLoading for why that test is
+                // `complete` and nothing else.
+                if (node && isStillLoading(node)) mark(page.image_key, true);
+              }}
+              onLoad={() => mark(page.image_key, false)}
+              // A broken image must not stay hidden, or the alt text goes with it.
+              onError={() => mark(page.image_key, false)}
             />
 
             {showUntranscribed &&

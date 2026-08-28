@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { easeInOutQuart, scrollDuration } from "./motion";
+import { easeInOutQuart, isStillLoading, scrollDuration } from "./motion";
 
 describe("easeInOutQuart", () => {
   it("is pinned at both ends", () => {
@@ -46,5 +46,26 @@ describe("scrollDuration", () => {
 
   it("ignores direction", () => {
     expect(scrollDuration(-1000)).toBe(scrollDuration(1000));
+  });
+});
+
+
+describe("isStillLoading", () => {
+  it("is false for an image that finished before the handler attached", () => {
+    // The cached case, and usually the first load too: this returning true is what
+    // left a fully decoded answer sheet at zero opacity.
+    expect(isStillLoading({ complete: true })).toBe(false);
+  });
+
+  it("is true only while a fetch is outstanding", () => {
+    expect(isStillLoading({ complete: false })).toBe(true);
+  });
+
+  it("is false for a failed image, so the alt text is not hidden with it", () => {
+    // A failed load reports complete with a zero natural width. Testing the width
+    // as well treated this as still loading and hid it permanently.
+    expect(isStillLoading({ complete: true, naturalWidth: 0 } as HTMLImageElement)).toBe(
+      false,
+    );
   });
 });
