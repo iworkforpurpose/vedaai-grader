@@ -701,8 +701,19 @@ body::before {
  * a short window scrolls instead of hiding the title.
  */
 .upload {
-  flex: 1;
-  min-height: 0;
+  /*
+   * Grows to fill a tall viewport, never shrinks below its own content.
+   *
+   * `flex: 1` with `min-height: 0` let this shrink to 480px on a 568-tall screen
+   * while its content ran on to 823 — the content was visible and scrollable, so
+   * nothing looked wrong, but the box was reporting a height it did not have.
+   * Anything measuring the layout from the outside reads that as 265px of empty
+   * space, and so would any future rule that trusted the box.
+   *
+   * `flex: 1 0 auto` keeps the growth the auto-margin centring depends on and
+   * removes the shrink.
+   */
+  flex: 1 0 auto;
   width: 100%;
   max-width: var(--content-max);
   margin: 0 auto;
@@ -1724,11 +1735,25 @@ body::before {
   color: var(--body);
 }
 
+.feedback-cite:hover {
+  background: rgb(255 86 35 / 0.08);
+}
+
 .feedback-cite {
   align-self: flex-start;
   border: 0;
   background: none;
-  padding: 0;
+  /*
+   * 21px tall as a bare link, under any reasonable touch minimum — and it is the
+   * most important control in this panel, the one that takes a teacher to the
+   * evidence. The negative side margins keep the label optically aligned with the
+   * paragraph above it despite the new padding.
+   */
+  min-height: 32px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  margin-right: -8px;
+  border-radius: var(--r-sm);
   font: inherit;
   font-size: var(--fs-sm);
   color: var(--accent);
@@ -1837,6 +1862,14 @@ body::before {
    * and it costs nothing anywhere else.
    */
   padding-top: 24px;
+  /*
+   * No matching padding at the bottom, deliberately.
+   *
+   * A 24px bottom inset was added here for symmetry and taken back out: it is 24px
+   * of scrolling past the last page into nothing, which is the exact complaint
+   * this pass exists to fix, only smaller. The top inset stays because it is
+   * load-bearing — it is the room the highlight's label sits in.
+   */
 }
 
 .sheet-page {
@@ -2033,7 +2066,16 @@ body::before {
     /* Not `visibility: hidden` — that is not interpolable either, and it would cut
        the outgoing pane rather than fade it. */
     pointer-events: none;
-    transform: translateY(6px);
+    /*
+     * A scale, not `translateY(6px)`.
+     *
+     * The translate pushed the inactive pane 6px below its box, and a transform
+     * still contributes to scrollable overflow — so the content column could be
+     * dragged 6px on every phone screen. Barely visible and precisely the kind of
+     * wobble that reads as a broken page. Scaling inward moves the pane without
+     * ever extending past where it started.
+     */
+    transform: scale(0.994);
   }
 
   .map-pane[data-active="true"] {
@@ -2063,11 +2105,24 @@ body::before {
     margin-left: auto;
   }
 
-  /* The list scrolls with the page rather than inside itself, as the phone frame's
-     2227px height implies — two nested scrollers on a touch screen fight each
-     other. */
+  /*
+   * The list scrolls inside itself here too.
+   *
+   * This was `overflow: visible`, on the reasoning that the page would scroll
+   * instead and two nested scrollers fight each other on a touch screen. That was
+   * true when the page scrolled. It stopped being true when the shell became
+   * exactly the viewport — and the rule was not revisited, so the list's overflow
+   * escaped upward until it found the first ancestor that would take it, which is
+   * `.shell-main`. The result was that dragging anywhere moved the whole content
+   * column: 810px of it on a phone, 2218px with every card expanded, and all of it
+   * empty background below the content.
+   *
+   * The original concern does not apply anyway. Below this breakpoint the two panes
+   * are tabs, so the question list and the answer sheet are never both on screen —
+   * there is only ever one scroller under the finger.
+   */
   .q-list {
-    overflow: visible;
+    overflow-y: auto;
   }
 }
 
