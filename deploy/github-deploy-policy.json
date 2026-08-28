@@ -24,17 +24,33 @@
       "Resource": "*"
     },
     {
-      "Sid": "RollOutTheService",
+      "Sid": "RegisterTaskDefinitionsWhichCannotBeScoped",
       "Effect": "Allow",
-      "Action": [
-        "ecs:RegisterTaskDefinition",
-        "ecs:DescribeTaskDefinition",
-        "ecs:UpdateService",
-        "ecs:DescribeServices",
-        "ecs:ListTasks",
-        "ecs:DescribeTasks"
-      ],
+      "Action": ["ecs:RegisterTaskDefinition", "ecs:DescribeTaskDefinition"],
       "Resource": "*"
+    },
+    {
+      "Sid": "RollOutOnlyThisService",
+      "Effect": "Allow",
+      "Action": ["ecs:UpdateService", "ecs:DescribeServices"],
+      "Resource": "arn:aws:ecs:REPLACE_REGION:REPLACE_ACCOUNT:service/vedaai-grader/vedaai-grader"
+    },
+    {
+      "Sid": "ReadOnlyThisClustersTasks",
+      "Effect": "Allow",
+      "Action": "ecs:DescribeTasks",
+      "Resource": "arn:aws:ecs:REPLACE_REGION:REPLACE_ACCOUNT:task/vedaai-grader/*"
+    },
+    {
+      "Sid": "ListTasksInThisClusterOnly",
+      "Effect": "Allow",
+      "Action": "ecs:ListTasks",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:REPLACE_REGION:REPLACE_ACCOUNT:cluster/vedaai-grader"
+        }
+      }
     },
     {
       "Sid": "NameTheTaskRolesInATaskDefinition",
