@@ -33,7 +33,13 @@ from .storage import AnyPageStore
 MAX_PAGES = 60
 
 #: Refuse uploads beyond this size before any parsing happens.
-MAX_BYTES = 40 * 1024 * 1024
+#:
+#: Decimal megabytes, not mebibytes. Every place this number reaches a person
+#: divides by 1e6 — the upload screen's hint, this module's own rejection message,
+#: and the file size the teacher's operating system showed them. 40 MiB rendered
+#: that way is 41.94, which the hint floored to 41 and the message rounded to 42:
+#: three numbers for one limit, none of them the one anybody would say out loud.
+MAX_BYTES = 40 * 1_000_000
 
 #: Formats PyMuPDF opens directly. Images are wrapped into a single-page
 #: document so the rest of the pipeline never learns whether the teacher

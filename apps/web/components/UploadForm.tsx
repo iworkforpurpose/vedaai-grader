@@ -271,10 +271,9 @@ async function put(url: string, file: File): Promise<void> {
 /**
  * What the dropzone says about size, and what counts as too large.
  *
- * Megabytes rather than mebibytes because the limit is stated in the service's own
- * message the same way, and a file a teacher's operating system calls 41 MB being
- * refused for exceeding "40MB" is the kind of small inconsistency that reads as a
- * bug.
+ * Decimal megabytes, matching how the service states the limit in its own rejection
+ * message and how a teacher's operating system reports the file's size. The service
+ * keeps the limit a round decimal number for that reason.
  */
 function sizeHint(maxBytes: number | undefined): string {
   if (!maxBytes || maxBytes <= 0) return "PDF or image";
