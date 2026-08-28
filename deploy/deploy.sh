@@ -35,12 +35,40 @@ REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
 # The tag is the short commit, suffixed `-dirty` when the tree does not match it.
 # A dirty tag is deliberately ugly: seeing it in a task definition is the point.
 if [ -z "${IMAGE_TAG:-}" ]; then
-  IMAGE_TAG="$(git rev-parse --short HEAD 2>/dev/null || echo notgit)"
+  # The full commit, matching what CI passes.
+  #
+  # This was the short form, and CI passes `github.sha` in full — so a task
+  # definition registered from a laptop named a tag only a local build would have
+  # pushed, and the task failed with CannotPullContainerError. Two conventions for
+  # the same identifier is one too many.
+  IMAGE_TAG="$(git rev-parse HEAD 2>/dev/null || echo notgit)"
   if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     IMAGE_TAG="${IMAGE_TAG}-dirty"
     echo "WARNING: working tree has uncommitted changes; tagging ${IMAGE_TAG}" >&2
   fi
 fi
+
+# Refuse to register a task definition for an image that was never pushed.
+#
+# A `-dirty` tag is by construction not in the registry: it names a tree that only
+# exists on one laptop. Registering it produces a revision the service cannot pull,
+# and the failure arrives minutes later as a placement error rather than here. The
+# warning above was not enough — I ignored it and did exactly this.
+require_pushed_image() {
+  case "${IMAGE_TAG}" in
+    *-dirty)
+      echo "REFUSING: ${IMAGE_TAG} names an uncommitted tree, so no such image exists." >&2
+      echo "  Commit and let CI build it, or run 'deploy/deploy.sh release' to build now." >&2
+      return 1
+      ;;
+  esac
+  aws ecr describe-images --repository-name "${APP}" --image-ids "imageTag=${IMAGE_TAG}" \
+    --region "${REGION}" >/dev/null 2>&1 || {
+      echo "REFUSING: ${APP}:${IMAGE_TAG} is not in the registry." >&2
+      echo "  Run 'deploy/deploy.sh release' to build and push it first." >&2
+      return 1
+    }
+}
 
 # Progress goes to stderr, not stdout.
 #
@@ -156,9 +184,6 @@ PYCORS
   local secret_arns=()
   [ -n "${OPENAI_SECRET_ARN:-}" ] && secret_arns+=("\"${OPENAI_SECRET_ARN}\"")
   [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && secret_arns+=("\"${ANTHROPIC_SECRET_ARN}\"")
-  # The tailnet key is read by the agent before the sidecar starts, exactly like
-  # the marking credential, so it belongs on the same role for the same reason.
-  [ -n "${TAILSCALE_SECRET_ARN:-}" ] && secret_arns+=("\"${TAILSCALE_SECRET_ARN}\"")
 
   if [ ${#secret_arns[@]} -gt 0 ]; then
     local arn_list
@@ -213,6 +238,7 @@ PYCORS
 # ── task definition ──────────────────────────────────────────────────────────
 register_task() {
   [ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
+  require_pushed_image || return 1
   say "registering task definition"
 
   # Referenced by ARN rather than by value, so the key is visible neither in the
@@ -224,61 +250,6 @@ register_task() {
   [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")")
   if [ ${#entries[@]} -gt 0 ]; then
     secrets=$(IFS=,; echo "${entries[*]}")
-  fi
-
-  # The tunnel sidecar, when a tailnet key is configured.
-  #
-  # Appended to the container list, so a deployment without a key is byte-for-byte
-  # the task it was before. The tunnel is additive, not a different way of serving.
-  local tunnel=""
-  if [ -n "${TAILSCALE_SECRET_ARN:-}" ]; then
-    # The serve config travels as base64, and that is not fussiness.
-    #
-    # It has to reach the container with `${TS_CERT_DOMAIN}` intact — the sidecar
-    # substitutes it once the node learns its own name, which is the first moment
-    # the hostname exists. Embedding the JSON in this script put that placeholder
-    # inside a shell expansion, and `set -u` correctly killed the run over an
-    # unbound variable. Base64 contains no `$` and no quotes, so nothing between
-    # here and the container can interpret it.
-    local serve_b64
-    serve_b64="$(base64 < deploy/tailscale-serve.json | tr -d '\n')"
-
-    tunnel=$(cat <<TUNNEL
-    ,{
-      "name": "tunnel",
-      "image": "tailscale/tailscale:stable",
-      "essential": true,
-      "entryPoint": ["/bin/sh", "-c"],
-      "command": ["echo \$SERVE_B64 | base64 -d > /tmp/serve.json && exec /usr/local/bin/containerboot"],
-      "environment": [
-        { "name": "TS_HOSTNAME", "value": "${APP}" },
-        { "name": "TS_SERVE_CONFIG", "value": "/tmp/serve.json" },
-        { "name": "TS_STATE_DIR", "value": "/tmp/tsstate" },
-        { "name": "TS_USERSPACE", "value": "true" },
-        { "name": "TS_ENABLE_HEALTH_CHECK", "value": "true" },
-        { "name": "SERVE_B64", "value": "${serve_b64}" }
-      ],
-      "secrets": [
-        { "name": "TS_AUTHKEY", "valueFrom": "${TAILSCALE_SECRET_ARN}" }
-      ],
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group": "/ecs/${APP}",
-          "awslogs-region": "${REGION}",
-          "awslogs-stream-prefix": "tunnel"
-        }
-      },
-      "healthCheck": {
-        "command": ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9002/healthz || exit 1"],
-        "interval": 30,
-        "timeout": 5,
-        "retries": 3,
-        "startPeriod": 90
-      }
-    }
-TUNNEL
-)
   fi
 
   cat > /tmp/${APP}-task.json <<JSON
@@ -322,7 +293,7 @@ TUNNEL
         "retries": 3,
         "startPeriod": 30
       }
-    }${tunnel}
+    }
   ]
 }
 JSON
