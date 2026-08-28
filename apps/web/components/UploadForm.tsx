@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
+import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
 import {
   ArrowRightIcon,
@@ -52,8 +53,15 @@ export function UploadForm({
     if (!ready) return;
 
     setError(null);
-    setBusy(true);
-    onWorkingChange?.(true);
+    // The swap this exists for: the form is replaced by the waiting screen in one
+    // frame, and without a cross-fade that is the most abrupt moment in the app.
+    crossFade(() => {
+      setBusy(true);
+      onWorkingChange?.(true);
+    });
+
+    // Whether this call ends by navigating away rather than returning to the form.
+    let leaving = false;
 
     const body = new FormData();
     body.append("question_paper", files.question_paper as File);
@@ -70,12 +78,25 @@ export function UploadForm({
         return;
       }
       const submission = (await response.json()) as { submission_id: string };
+      // Stay on the waiting screen. We are leaving for the review route, and
+      // clearing `busy` here would put the form back for the moment the
+      // navigation takes.
+      //
+      // That moment used to be invisible because the upload response only arrived
+      // once the whole pipeline had finished, by which point nobody was looking at
+      // this component. Now that it returns in about a second, dropping back to
+      // the form is a visible flash of the screen the reader just left.
+      leaving = true;
       router.push(`/review/${submission.submission_id}`);
     } catch {
       setError(`Cannot reach the grader service at ${API_BASE}. Check that it is running.`);
     } finally {
-      setBusy(false);
-      onWorkingChange?.(false);
+      if (!leaving) {
+        crossFade(() => {
+          setBusy(false);
+          onWorkingChange?.(false);
+        });
+      }
     }
   }
 

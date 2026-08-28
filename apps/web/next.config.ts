@@ -23,6 +23,22 @@ const config: NextConfig = {
   output: "standalone",
   typescript: { ignoreBuildErrors: false },
   eslint: { ignoreDuringBuilds: true },
+  /*
+   * Enabled, and measured as not sufficient on its own.
+   *
+   * The flag turns on Next's support for React's `ViewTransition` component, which
+   * ships in React's experimental channel; this project is on stable React, so a
+   * router push still swaps the tree in one frame. Counted it: a real upload
+   * produces two view transitions, both from `lib/transitions.ts`, and none from
+   * the navigation.
+   *
+   * Left on because it costs nothing and becomes correct the moment the component
+   * is available on a stable release. The one route change it would cover is the
+   * waiting screen giving way to the review route, and both sides of that render
+   * the same waiting screen — so the cut it leaves is between two identical
+   * frames. The swaps a reader actually sees are handled explicitly.
+   */
+  experimental: { viewTransition: true },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${INTERNAL_API_BASE}/:path*` }];
   },

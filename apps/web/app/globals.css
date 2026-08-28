@@ -2237,3 +2237,97 @@ body::before {
     transform: none;
   }
 }
+
+
+/* ══ cross-fading a whole screen ═══════════════════════════════════════════
+ *
+ * The View Transitions API, for the swaps CSS cannot reach. A screen leaving is
+ * unmounted markup — there is no element left to fade out — so the browser
+ * photographs the page before and after and dissolves between the two instead.
+ *
+ * The furniture is named, and that is the part that makes this read as an app
+ * rather than a slideshow. An element with a `view-transition-name` is tracked
+ * across the change and animated as itself; everything unnamed belongs to `root`
+ * and dissolves. So the rail and the top bar hold still while the content under
+ * them changes, which is what actually happens — they never went anywhere.
+ */
+.rail {
+  view-transition-name: rail;
+}
+
+.topbar {
+  view-transition-name: topbar;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  /* Longer than a hover, shorter than an entrance. A screen change is worth
+     noticing and not worth waiting for. */
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease);
+}
+
+/*
+ * Both halves fade, and the incoming one also rises slightly.
+ *
+ * A plain cross-fade of two full screens goes muddy in the middle, because for a
+ * moment you are looking at both. Letting the outgoing half leave a touch early
+ * and the incoming half arrive with a small movement gives the eye a direction to
+ * follow through the overlap.
+ */
+::view-transition-old(root) {
+  animation-name: screen-out;
+}
+
+::view-transition-new(root) {
+  animation-name: screen-swap-in;
+}
+
+@keyframes screen-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes screen-swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/*
+ * The rail and top bar cross-fade in place rather than sliding.
+ *
+ * They are the same element either side of the change, so the browser would
+ * happily animate their geometry — but their geometry does not change, and an
+ * unnecessary morph on persistent furniture is the flicker this naming exists to
+ * prevent. A short dissolve absorbs any sub-pixel difference.
+ */
+::view-transition-group(rail),
+::view-transition-group(topbar) {
+  animation-duration: 160ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/*
+ * The entrance animation stands down when a view transition is driving the change.
+ *
+ * Otherwise a screen swap plays both: the browser dissolves into the new screen
+ * and the new screen then runs its own 420ms rise inside the finished dissolve, so
+ * it arrives twice. The entrance still applies on a first load, where there is no
+ * previous screen to transition from and it is the only thing there is.
+ */
+:root:active-view-transition .upload,
+:root:active-view-transition .stage,
+:root:active-view-transition .map {
+  animation: none;
+}

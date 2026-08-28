@@ -16,6 +16,7 @@ import {
   untranscribedInkByPage,
 } from "@/lib/review";
 import { useNarrow } from "@/lib/breakpoints";
+import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
@@ -79,7 +80,9 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
           );
           if (!response.ok || !live) return;
           const next = (await response.json()) as Submission;
-          if (live && next.status !== "processing") setSubmission(next);
+          // The waiting screen giving way to the mapping screen, which is the
+          // other whole-screen swap in the app.
+          if (live && next.status !== "processing") crossFade(() => setSubmission(next));
         } catch {
           // A dropped poll is not a failure — the next one is two seconds away.
         }
@@ -169,7 +172,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       setSelectedQid(hit.question.qid);
       setCitedPoint(null);
       setNotice(null);
-      if (window.matchMedia("(max-width: 1023px)").matches) setTab("questions");
+      if (narrow) setTab("questions");
       return;
     }
     setNotice("No answer is mapped to that spot.");
