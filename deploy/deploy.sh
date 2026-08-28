@@ -24,7 +24,14 @@ MEMORY="${TASK_MEMORY:-1024}"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
 
-say() { printf '\n== %s\n' "$*"; }
+# Progress goes to stderr, not stdout.
+#
+# It was stdout, and one function's stdout is captured as a value —
+# `arn="$(register_task)"`. So the ARN arrived with the progress banner glued to
+# the front of it, `update-service` was handed a malformed task definition, and it
+# failed with "Invalid revision number" while the surrounding log read as a normal
+# successful release. Progress is not data.
+say() { printf '\n== %s\n' "$*" >&2; }
 
 # ── build and push ───────────────────────────────────────────────────────────
 release_image() {
@@ -231,6 +238,21 @@ release() {
     aws ecs update-service --cluster "${APP}" --service "${APP}" \
       --task-definition "${arn}" --force-new-deployment --region "${REGION}" \
       --query 'service.deployments[0].id' --output text
+
+    # Read back what the service is actually pinned to.
+    #
+    # Because the failure this guards against was silent from the outside. The
+    # image pushed, the revision registered, the log said "rolling out" — and the
+    # service kept serving the previous revision, so two fixes looked like they
+    # had failed on the live task when they had never been deployed at all.
+    local live
+    live="$(aws ecs describe-services --cluster "${APP}" --services "${APP}" \
+              --region "${REGION}" --query 'services[0].taskDefinition' --output text)"
+    if [ "${live}" != "${arn}" ]; then
+      echo "ROLLOUT DID NOT TAKE: service is on ${live}, expected ${arn}" >&2
+      return 1
+    fi
+    echo "service now on ${live}"
     echo "watch it with: aws ecs wait services-stable --cluster ${APP} --services ${APP} --region ${REGION}"
   else
     echo
