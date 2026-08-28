@@ -24,6 +24,11 @@ MEMORY="${TASK_MEMORY:-1024}"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
 
+# Resolved here rather than inside each command that needs it. The name was derived
+# in three separate places, so a command run on its own could act on the wrong
+# bucket depending on which one had run first.
+[ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
+
 # The image tag, and with it the answer to "what is actually running?".
 #
 # Everything used to be `:latest`, which meant a running task named a tag that had
@@ -101,6 +106,83 @@ release_image() {
 }
 
 # ── bootstrap ────────────────────────────────────────────────────────────────
+# CORS, so the browser may PUT its own upload.
+#
+# Without this the presigned PUT fails a preflight and the browser reports it as a
+# network error with no detail — which reads as broken upload code rather than a
+# missing bucket rule.
+#
+# Its own command as well as part of bootstrap, because the allowed origin is not
+# known until the gateway exists: the bucket is created first, and re-running the
+# whole of bootstrap to change one rule would touch roles and lifecycle policies
+# that are already correct. A wildcard here would let any page on the internet
+# upload into a bucket holding student work, so it is worth being able to narrow it
+# on its own.
+# The origin the deployed app is served from.
+#
+# Read from the gateway rather than written down. A copy in a config file is a
+# second source of truth for something AWS already knows, and the obvious place to
+# put it — .env — is the file local development reads, where a non-empty value
+# switches off the loopback allowance the local browser needs. Configuring
+# production would have broken reassignment on a developer's machine.
+app_origin() {
+  if [ -n "${WEB_ORIGINS:-}" ]; then
+    echo "${WEB_ORIGINS}"
+    return 0
+  fi
+  bash deploy/gateway.sh url 2>/dev/null || true
+}
+
+# The policy CI deploys under.
+#
+# A command rather than a documented sequence of console steps, because this policy
+# has drifted from the file twice: once holding a wildcard that let it roll out an
+# unrelated production service, and once still naming a secret the execution role
+# had stopped being allowed to read, which took the site down. If the file is the
+# source of truth then applying it has to be one command.
+ci_role() {
+  local role="${APP}-github-deploy"
+  local rendered="/tmp/${APP}-ci-policy.json"
+  sed -e "s/REPLACE_REGION/${REGION}/g" -e "s/REPLACE_ACCOUNT/${ACCOUNT}/g" \
+    deploy/github-deploy-policy.json > "${rendered}"
+  python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${rendered}"
+  case "$(cat "${rendered}")" in
+    *REPLACE_*) echo "REFUSING: a placeholder survived substitution" >&2; return 1 ;;
+  esac
+  aws iam put-role-policy --role-name "${role}" \
+    --policy-name deploy --policy-document "file://${rendered}"
+  rm -f "${rendered}"
+  echo "  ${role}: policy applied from deploy/github-deploy-policy.json"
+}
+
+bucket_cors() {
+  local origins
+  origins="$(app_origin)"
+  case "${origins}" in https://*) : ;; *) origins="" ;; esac
+  if [ -z "${origins}" ]; then
+    echo "REFUSING: no app origin, and a wildcard would let any page on the" >&2
+    echo "  internet PUT into ${BUCKET}. Run 'deploy/gateway.sh create', or set" >&2
+    echo "  WEB_ORIGINS to the origin serving the app." >&2
+    return 1
+  fi
+  python3 - "${origins}" > "/tmp/${APP}-cors.json" <<'PYCORS'
+import json, sys
+origins = [o.strip() for o in sys.argv[1].split(",") if o.strip()]
+assert origins, "no origins"
+print(json.dumps({"CORSRules": [{
+    "AllowedMethods": ["PUT"],
+    "AllowedOrigins": origins,
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000,
+}]}))
+PYCORS
+  aws s3api put-bucket-cors --bucket "${BUCKET}" \
+    --cors-configuration "file:///tmp/${APP}-cors.json"
+  rm -f "/tmp/${APP}-cors.json"
+  echo "  CORS allows PUT from: ${origins}"
+}
+
 bootstrap() {
   say "ECR repository"
   aws ecr describe-repositories --repository-names "${APP}" --region "${REGION}" >/dev/null 2>&1 \
@@ -128,28 +210,7 @@ bootstrap() {
   aws s3api put-bucket-lifecycle-configuration --bucket "${BUCKET}" \
     --lifecycle-configuration "file://deploy/bucket-lifecycle.json"
 
-  # CORS, so the browser may PUT its own upload.
-  #
-  # Without this the presigned PUT fails a preflight and the browser reports it as a
-  # network error with no detail — which reads as broken upload code rather than a
-  # missing bucket rule. Scoped to the origins actually serving the app; a wildcard
-  # would let any page on the internet upload into this bucket.
-  local cors_origins="${WEB_ORIGINS:-*}"
-  python3 - "${cors_origins}" > /tmp/${APP}-cors.json <<'PYCORS'
-import json, sys
-origins = [o.strip() for o in sys.argv[1].split(",") if o.strip()] or ["*"]
-print(json.dumps({"CORSRules": [{
-    "AllowedMethods": ["PUT"],
-    "AllowedOrigins": origins,
-    "AllowedHeaders": ["*"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3000,
-}]}))
-PYCORS
-  aws s3api put-bucket-cors --bucket "${BUCKET}" \
-    --cors-configuration "file:///tmp/${APP}-cors.json"
-  rm -f /tmp/${APP}-cors.json
-  echo "  CORS allows PUT from: ${cors_origins}"
+  bucket_cors
 
   say "IAM roles"
   local trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
@@ -237,6 +298,10 @@ PYCORS
 
 # ── task definition ──────────────────────────────────────────────────────────
 register_task() {
+  # Same source as the bucket rule, so the two cannot disagree.
+  local APP_ORIGIN
+  APP_ORIGIN="$(app_origin)"
+  case "${APP_ORIGIN}" in https://*) : ;; *) APP_ORIGIN="" ;; esac
   [ -n "${BUCKET}" ] || BUCKET="${APP}-pages-${ACCOUNT}"
   require_pushed_image || return 1
   say "registering task definition"
@@ -273,7 +338,7 @@ register_task() {
         { "name": "OCR_ENGINE", "value": "textract" },
         { "name": "S3_PAGE_BUCKET", "value": "${BUCKET}" },
         { "name": "S3_PAGE_PREFIX", "value": "pages/" },
-        { "name": "WEB_ORIGINS", "value": "${WEB_ORIGINS:-}" },
+        { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
         { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
         { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" }
       ],
@@ -339,8 +404,10 @@ release() {
 
 case "${1:-}" in
   bootstrap) bootstrap ;;
+  cors)      bucket_cors ;;
+  ci-role)   ci_role ;;
   release)   release ;;
   image)     release_image ;;
   task)      register_task ;;
-  *) echo "usage: $0 {bootstrap|release|image|task}" >&2; exit 2 ;;
+  *) echo "usage: $0 {bootstrap|cors|ci-role|release|image|task}" >&2; exit 2 ;;
 esac

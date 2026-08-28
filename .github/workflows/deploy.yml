@@ -127,6 +127,12 @@ jobs:
         run: |
           aws ecs wait services-stable --cluster "$APP" --services "$APP"
 
+      # Without this the stable URL is only stable until the next deploy: the task
+      # gets a new IP each rollout, and the gateway would keep pointing at the old
+      # one. This is the step that makes the address mean anything.
+      - name: Aim the gateway at the new task
+        run: bash deploy/gateway.sh point
+
       - name: Report what is live
         run: |
           set -euo pipefail
@@ -146,18 +152,22 @@ jobs:
 
           # The job summary, because "what exactly and when exactly did I deploy" is
           # the question this whole pipeline exists to answer.
+          stable="$(bash deploy/gateway.sh url)"
+          scode="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
+
           {
             echo "### Deployed"
             echo
             echo "| | |"
             echo "|---|---|"
+            echo "| **share this** | ${stable} |"
             echo "| commit | \`${GITHUB_SHA:0:12}\` |"
             echo "| image | \`${image##*/}\` |"
             echo "| revision | \`${rev##*/}\` |"
-            echo "| url | http://${ip}:8080 |"
-            echo "| homepage | HTTP ${code} |"
-            echo
-            echo "The IP changes whenever the task restarts; it is not a stable address."
+            echo "| via gateway | HTTP ${scode} |"
+            echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          test "$code" = "200"
+          # The gateway is the address people are given, so that is the one whose
+          # failure should fail the deploy.
+          test "$scode" = "200"

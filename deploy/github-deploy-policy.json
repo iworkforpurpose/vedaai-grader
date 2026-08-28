@@ -26,13 +26,19 @@
     {
       "Sid": "RegisterTaskDefinitionsWhichCannotBeScoped",
       "Effect": "Allow",
-      "Action": ["ecs:RegisterTaskDefinition", "ecs:DescribeTaskDefinition"],
+      "Action": [
+        "ecs:RegisterTaskDefinition",
+        "ecs:DescribeTaskDefinition"
+      ],
       "Resource": "*"
     },
     {
       "Sid": "RollOutOnlyThisService",
       "Effect": "Allow",
-      "Action": ["ecs:UpdateService", "ecs:DescribeServices"],
+      "Action": [
+        "ecs:UpdateService",
+        "ecs:DescribeServices"
+      ],
       "Resource": "arn:aws:ecs:REPLACE_REGION:REPLACE_ACCOUNT:service/vedaai-grader/vedaai-grader"
     },
     {
@@ -61,7 +67,9 @@
         "arn:aws:iam::REPLACE_ACCOUNT:role/vedaai-grader-execution"
       ],
       "Condition": {
-        "StringEquals": { "iam:PassedToService": "ecs-tasks.amazonaws.com" }
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
       }
     },
     {
@@ -69,6 +77,15 @@
       "Effect": "Allow",
       "Action": "ec2:DescribeNetworkInterfaces",
       "Resource": "*"
+    },
+    {
+      "Sid": "AimTheGatewayAtTheNewTask",
+      "Effect": "Allow",
+      "Action": [
+        "apigateway:GET",
+        "apigateway:PATCH"
+      ],
+      "Resource": "arn:aws:apigateway:REPLACE_REGION::/apis*"
     }
   ]
 }

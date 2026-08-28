@@ -126,11 +126,31 @@ python tooling/scripts/audit_ui.py <submission-id>   # layout faults across 6 vi
 
 ## Deployment
 
+**Live: https://wvqyfdkpl1.execute-api.ap-south-1.amazonaws.com**
+
 One Fargate task in `ap-south-1` running both processes behind one origin: Next
-serves the browser and proxies `/api/*` to the FastAPI worker on loopback. No CORS,
-no second hostname, and no request-body cap on uploads. Only the browser-facing port
-is published, so the worker is unreachable from outside by construction rather than
-by a security group rule.
+serves the browser and proxies `/api/*` to the FastAPI worker on loopback. No CORS
+and no second hostname. Only the browser-facing port is published, so the worker is
+unreachable from outside by construction rather than by a security group rule.
+
+In front of it sits an API Gateway HTTP API, for one reason: the task's public IP
+changes on every deploy and serves plain HTTP, so the address could not be given to
+anyone and student work travelled unencrypted. The gateway is a fixed hostname with
+an AWS-managed certificate, no load balancer and no domain — a certificate-bearing
+ALB is around ₹1,500 a month, which is not a sensible shape for a test deployment.
+The conventional production answer is CloudFront in front of an ALB, and the code
+path is identical; `deploy/README.md` records the trade-off.
+
+Two of the gateway's quotas shaped the design, and neither can be raised:
+
+- **A 30-second integration timeout.** Survivable only because ingest moved off the
+  request — an upload now answers in about a second and the browser polls. The same
+  upload took 30.7s a day earlier, so this would have been impossible.
+- **A 10 MB request body**, against documents this service accepts up to 40 MB. So
+  uploads do not pass through the gateway at all: the browser asks the service for
+  a presigned URL and sends the file straight to object storage, then names the
+  keys. The service never carries the bytes, which is also why every host's body
+  cap stops being a design constraint rather than being traded against.
 
 See [`deploy/README.md`](deploy/README.md) for what the two IAM roles may do, and
 for the scoped `iam:PassRole` the operator needs — the obvious way to fix the error
@@ -156,14 +176,18 @@ Named rather than half-built:
 
 ## Known limitations
 
-- **Reassignment has no interface.** The logic exists and is tested, but nothing
-  calls it — so a teacher currently cannot correct a wrong mapping. Gradescope
-  treats this as core, and so should this.
 - **Marking varies by about one mark between runs.** Temperature 0 and a fixed seed
   narrowed it; hosted models are not bit-reproducible. Settling it needs
   self-consistency over several samples.
-- **The deployed URL is a task IP over plain HTTP.** It changes on restart, and
-  student work travels unencrypted. A load balancer with a certificate is the fix.
+- **Submissions do not survive a deploy.** They are held in memory, so every
+  rollout and every task restart discards work in progress. This is the one
+  limitation that will bite a real tester rather than a reviewer, and the fix is a
+  DynamoDB table — a couple of hours, not a redesign.
+- **Orphaned writing has never been seen in the wild.** The unplaced-answer card is
+  built and tested, but no sample produces one — not even a programming answer
+  sheet paired with a prose paper, which maps everything wrongly rather than
+  refusing to map it. So it has only ever been exercised against an injected
+  payload.
 - **Real-page recall is unmeasured**, as above.
 
 ## Layout

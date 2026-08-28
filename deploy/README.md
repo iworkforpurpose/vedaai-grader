@@ -230,7 +230,14 @@ DPI — it would silently offset every highlight, so it is worth seeing.
 ## Known limits
 
 - **One task.** In-memory submissions. Restarting the service loses in-flight work.
-- **HTTP, not HTTPS.** Add a certificate in ACM and a 443 listener; the load
+- ~~**HTTP, not HTTPS.**~~ Resolved by `gateway.sh` — an API Gateway HTTP API in
+  front of the task gives a fixed hostname and an AWS-managed certificate. Run
+  `deploy/gateway.sh create` once; CI runs `point` after each rollout, which is
+  what makes the address stable rather than stable-until-the-next-deploy. Its 10 MB
+  body cap is why uploads go straight to object storage, and its 30-second timeout
+  is why ingest runs in the background. Kept below for the record:
+
+  **HTTP, not HTTPS.** Add a certificate in ACM and a 443 listener; the load
   balancer is already there for it.
 - **Textract is unmeasured on this data.** The comparison script is written and
   ready — `tooling/scripts/compare_ocr.py` — and recall is the ceiling on
