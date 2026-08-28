@@ -156,6 +156,76 @@ ci_role() {
   echo "  ${role}: policy applied from deploy/github-deploy-policy.json"
 }
 
+# Which credential ARNs the running task definition asks the agent to fetch.
+#
+# ARNs only — the names of the boxes, never what is in them. Read rather than
+# assumed because these are exactly what the execution role must be allowed to
+# read for a task to start, so the task definition is the authority on the grant.
+# An empty result on a first-ever bootstrap is correct: no task definition exists.
+referenced_credentials() {
+  aws ecs describe-task-definition --task-definition "${APP}" \
+    --region "${REGION}" --output json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    definition = json.load(sys.stdin)["taskDefinition"]
+except Exception:
+    raise SystemExit(0)
+for container in definition.get("containerDefinitions") or []:
+    for reference in container.get("secrets") or []:
+        print(reference["valueFrom"])
+' || true
+}
+
+# Let the agent read the marking credential the task definition names.
+#
+# AmazonECSTaskExecutionRolePolicy covers the image pull and the log stream and
+# nothing else. This permission AWS requires you to add by hand, and the agent —
+# not the application — is what reads it, so it belongs on the execution role. Get
+# it wrong and the task does not fail with a permissions error on an API call; it
+# fails during initialisation, before any container starts, so nothing appears in
+# the application log at all.
+#
+# Its own command as well as part of bootstrap, because restoring this one grant
+# should not mean re-running everything else.
+exec_role_secrets() {
+  # Sourced from the registered task definition as well as the environment, and
+  # that is a fix rather than a refinement: this block caused an outage.
+  #
+  # The ARNs used to come only from the local environment, so running bootstrap
+  # from a machine whose .env does not carry them took the "nothing configured"
+  # branch and deleted the grant — while the running task definition still
+  # referenced the secret. Every task then failed to initialise. The environment
+  # may add to what must be granted; it may not be read as evidence that nothing
+  # needs granting.
+  local arns=() arn
+  for arn in "${OPENAI_SECRET_ARN:-}" "${ANTHROPIC_SECRET_ARN:-}" $(referenced_credentials); do
+    [ -n "${arn}" ] || continue
+    case " ${arns[*]-} " in *"\"${arn}\""*) continue ;; esac
+    arns+=("\"${arn}\"")
+  done
+
+  if [ ${#arns[@]} -gt 0 ]; then
+    # Scoped to those exact ARNs. A wildcard would let anything able to start this
+    # task read every secret in the account.
+    local arn_list
+    arn_list=$(IFS=,; echo "${arns[*]}")
+    sed "s|REPLACE_SECRET_ARNS|${arn_list}|" \
+      deploy/execution-role-secrets-policy.json > "/tmp/${APP}-exec-policy.json"
+    aws iam put-role-policy --role-name "${APP}-execution" \
+      --policy-name "${APP}-marking-credential" \
+      --policy-document "file:///tmp/${APP}-exec-policy.json"
+    rm -f "/tmp/${APP}-exec-policy.json"
+    echo "  execution role may read ${#arns[@]} credential(s)"
+  else
+    # Nothing references one — not the environment, not the task definition — so a
+    # grant from an earlier run is genuinely stale, and dropping it is how turning
+    # marking off removes the permission.
+    aws iam delete-role-policy --role-name "${APP}-execution" \
+      --policy-name "${APP}-marking-credential" 2>/dev/null || true
+    echo "  no credential referenced; grant removed if present"
+  fi
+}
+
 bucket_cors() {
   local origins
   origins="$(app_origin)"
@@ -231,37 +301,7 @@ bootstrap() {
   aws iam attach-role-policy --role-name "${APP}-execution" \
     --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
-  # The managed policy is not enough on its own.
-  #
-  # AmazonECSTaskExecutionRolePolicy covers the image pull and the log stream and
-  # nothing else. Reading a secret referenced from `secrets` in the task definition
-  # is a permission AWS requires you to add by hand, and the agent — not the
-  # application — is what reads it, so it belongs on the execution role rather than
-  # the task role. Without it the task does not start with a permissions error on
-  # the API call; it fails during initialisation, before the container runs, which
-  # is a much less obvious thing to debug.
-  #
-  # Scoped to the exact ARNs configured. A wildcard here would let anything that
-  # can start this task read every secret in the account.
-  local secret_arns=()
-  [ -n "${OPENAI_SECRET_ARN:-}" ] && secret_arns+=("\"${OPENAI_SECRET_ARN}\"")
-  [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && secret_arns+=("\"${ANTHROPIC_SECRET_ARN}\"")
-
-  if [ ${#secret_arns[@]} -gt 0 ]; then
-    local arn_list
-    arn_list=$(IFS=,; echo "${secret_arns[*]}")
-    sed "s|REPLACE_SECRET_ARNS|${arn_list}|" \
-      deploy/execution-role-secrets-policy.json > /tmp/${APP}-exec-policy.json
-    aws iam put-role-policy --role-name "${APP}-execution" \
-      --policy-name "${APP}-marking-credential" \
-      --policy-document "file:///tmp/${APP}-exec-policy.json"
-    rm -f /tmp/${APP}-exec-policy.json
-  else
-    # No credential configured: drop any grant a previous run left behind, so
-    # turning marking off actually removes the permission.
-    aws iam delete-role-policy --role-name "${APP}-execution" \
-      --policy-name "${APP}-marking-credential" 2>/dev/null || true
-  fi
+  exec_role_secrets
 
   # Task role: what the application itself may do. Textract and one S3 prefix,
   # and nothing else — this is the credential the container actually runs with,
@@ -436,8 +476,9 @@ case "${1:-}" in
   bootstrap) bootstrap ;;
   cors)      bucket_cors ;;
   ci-role)   ci_role ;;
+  secrets)   exec_role_secrets ;;
   release)   release ;;
   image)     release_image ;;
   task)      register_task ;;
-  *) echo "usage: $0 {bootstrap|cors|ci-role|release|image|task}" >&2; exit 2 ;;
+  *) echo "usage: $0 {bootstrap|cors|ci-role|secrets|release|image|task}" >&2; exit 2 ;;
 esac
