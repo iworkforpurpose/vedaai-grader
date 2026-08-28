@@ -133,6 +133,9 @@ bootstrap() {
   local secret_arns=()
   [ -n "${OPENAI_SECRET_ARN:-}" ] && secret_arns+=("\"${OPENAI_SECRET_ARN}\"")
   [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && secret_arns+=("\"${ANTHROPIC_SECRET_ARN}\"")
+  # The tailnet key is read by the agent before the sidecar starts, exactly like
+  # the marking credential, so it belongs on the same role for the same reason.
+  [ -n "${TAILSCALE_SECRET_ARN:-}" ] && secret_arns+=("\"${TAILSCALE_SECRET_ARN}\"")
 
   if [ ${#secret_arns[@]} -gt 0 ]; then
     local arn_list
@@ -200,6 +203,61 @@ register_task() {
     secrets=$(IFS=,; echo "${entries[*]}")
   fi
 
+  # The tunnel sidecar, when a tailnet key is configured.
+  #
+  # Appended to the container list, so a deployment without a key is byte-for-byte
+  # the task it was before. The tunnel is additive, not a different way of serving.
+  local tunnel=""
+  if [ -n "${TAILSCALE_SECRET_ARN:-}" ]; then
+    # The serve config travels as base64, and that is not fussiness.
+    #
+    # It has to reach the container with `${TS_CERT_DOMAIN}` intact — the sidecar
+    # substitutes it once the node learns its own name, which is the first moment
+    # the hostname exists. Embedding the JSON in this script put that placeholder
+    # inside a shell expansion, and `set -u` correctly killed the run over an
+    # unbound variable. Base64 contains no `$` and no quotes, so nothing between
+    # here and the container can interpret it.
+    local serve_b64
+    serve_b64="$(base64 < deploy/tailscale-serve.json | tr -d '\n')"
+
+    tunnel=$(cat <<TUNNEL
+    ,{
+      "name": "tunnel",
+      "image": "tailscale/tailscale:stable",
+      "essential": true,
+      "entryPoint": ["/bin/sh", "-c"],
+      "command": ["echo \$SERVE_B64 | base64 -d > /tmp/serve.json && exec /usr/local/bin/containerboot"],
+      "environment": [
+        { "name": "TS_HOSTNAME", "value": "${APP}" },
+        { "name": "TS_SERVE_CONFIG", "value": "/tmp/serve.json" },
+        { "name": "TS_STATE_DIR", "value": "/tmp/tsstate" },
+        { "name": "TS_USERSPACE", "value": "true" },
+        { "name": "TS_ENABLE_HEALTH_CHECK", "value": "true" },
+        { "name": "SERVE_B64", "value": "${serve_b64}" }
+      ],
+      "secrets": [
+        { "name": "TS_AUTHKEY", "valueFrom": "${TAILSCALE_SECRET_ARN}" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/${APP}",
+          "awslogs-region": "${REGION}",
+          "awslogs-stream-prefix": "tunnel"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9002/healthz || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      }
+    }
+TUNNEL
+)
+  fi
+
   cat > /tmp/${APP}-task.json <<JSON
 {
   "family": "${APP}",
@@ -241,7 +299,7 @@ register_task() {
         "retries": 3,
         "startPeriod": 30
       }
-    }
+    }${tunnel}
   ]
 }
 JSON

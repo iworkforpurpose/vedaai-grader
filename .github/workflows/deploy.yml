@@ -112,6 +112,9 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
+          # Present means the task gets a tunnel sidecar and a stable HTTPS
+          # hostname; absent means it does not, and the task is unchanged.
+          TAILSCALE_SECRET_ARN: ${{ vars.TAILSCALE_SECRET_ARN }}
         run: |
           echo "deploying ${GITHUB_SHA} to ${AWS_REGION}"
           bash deploy/deploy.sh release
