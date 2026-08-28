@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from vedaai_contracts import EXPORTED_MODELS
 from vedaai_contracts.geometry import HGBENCH_SCALE, RENDER_DPI
 
+from .render import MAX_BYTES
 from .routes import router
 
 app = FastAPI(
@@ -64,6 +65,13 @@ class Health(BaseModel):
     render_dpi: int
     hgbench_scale: int
     contract_model_count: int
+    #: The largest document render.py will accept, in bytes.
+    #:
+    #: Reported so the upload screen can state the real limit rather than a
+    #: number typed into a label. It said "Max 10MB" — the cap of a host the
+    #: uploads no longer pass through — while the service accepts four times
+    #: that, so a teacher with a phone-photo PDF would not have tried.
+    max_upload_bytes: int
 
 
 @app.get("/health", response_model=Health, tags=["meta"])
@@ -74,6 +82,7 @@ def health() -> Health:
         render_dpi=RENDER_DPI,
         hgbench_scale=HGBENCH_SCALE,
         contract_model_count=len(EXPORTED_MODELS),
+        max_upload_bytes=MAX_BYTES,
     )
 
 

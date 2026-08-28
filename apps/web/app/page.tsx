@@ -1,4 +1,5 @@
 import { ExamsScreen } from "@/components/ExamsScreen";
+import { fetchHealth } from "@/lib/api.server";
 
 /**
  * The Exams tab — the only reachable screen, as scoped.
@@ -11,6 +12,18 @@ import { ExamsScreen } from "@/components/ExamsScreen";
 
 export const dynamic = "force-dynamic";
 
-export default function ExamsPage(): React.JSX.Element {
-  return <ExamsScreen />;
+export default async function ExamsPage(): Promise<React.JSX.Element> {
+  // The upload limit is the service's to state, so it is read from the service.
+  //
+  // Swallowed on failure on purpose: an upload screen that will not render
+  // because a health check timed out is worse than one whose hint omits a size,
+  // and the upload itself does not depend on this answer.
+  let maxUploadBytes: number | undefined;
+  try {
+    maxUploadBytes = (await fetchHealth()).max_upload_bytes;
+  } catch {
+    maxUploadBytes = undefined;
+  }
+
+  return <ExamsScreen maxUploadBytes={maxUploadBytes} />;
 }

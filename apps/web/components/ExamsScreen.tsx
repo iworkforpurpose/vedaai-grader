@@ -12,12 +12,17 @@ import { UploadForm } from "./UploadForm";
  * it does for the mapping frame — which the server cannot know, because it
  * depends on a request that has not been made yet.
  */
-export function ExamsScreen(): React.JSX.Element {
+export function ExamsScreen({
+  maxUploadBytes,
+}: {
+  /** The service's upload limit, fetched by the page on the server. */
+  maxUploadBytes?: number;
+}): React.JSX.Element {
   const [working, setWorking] = useState(false);
 
   return (
     <AppShell crumb="Exams" collapsedRail={working}>
-      <UploadForm onWorkingChange={setWorking} />
+      <UploadForm onWorkingChange={setWorking} maxUploadBytes={maxUploadBytes} />
     </AppShell>
   );
 }

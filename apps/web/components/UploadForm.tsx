@@ -34,9 +34,23 @@ const ACCEPT = ".pdf,.png,.jpg,.jpeg,.tif,.tiff,.webp";
 
 export function UploadForm({
   onWorkingChange,
+  maxUploadBytes,
 }: {
   /** Reported upward so the shell can collapse the rail, as the frame shows it. */
   onWorkingChange?: (working: boolean) => void;
+  /**
+   * The service's own limit, read from its health payload.
+   *
+   * A prop rather than a constant here because the number belongs to the code
+   * that enforces it. The label used to read "Max 10MB", which was the cap of a
+   * host the uploads no longer pass through, and understating a limit by four
+   * times stops someone uploading a file that would have worked.
+   *
+   * Undefined when the health check did not answer. The hint then describes what
+   * the input accepts and says nothing about size, which is better than naming a
+   * limit nobody confirmed.
+   */
+  maxUploadBytes?: number;
 }): React.JSX.Element {
   const router = useRouter();
   const [files, setFiles] = useState<Record<Slot, File | null>>({
@@ -47,6 +61,25 @@ export function UploadForm({
   const [error, setError] = useState<string | null>(null);
 
   const ready = files.question_paper !== null && files.answer_sheet !== null;
+
+  /**
+   * Refuse an oversized file here rather than after uploading it.
+   *
+   * Without this the browser sends the whole thing to object storage, the service
+   * reads it back, and only then reports the size — so the person waits out an
+   * upload that was always going to be rejected, and on a phone pays for it.
+   */
+  function pick(slot: Slot, file: File | null): void {
+    if (file && tooLarge(file, maxUploadBytes)) {
+      setError(
+        `${file.name} is ${(file.size / 1e6).toFixed(1)} MB, above the ` +
+          `${Math.floor((maxUploadBytes ?? 0) / 1e6)} MB limit.`,
+      );
+      return;
+    }
+    setError(null);
+    setFiles((current) => ({ ...current, [slot]: file }));
+  }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -139,13 +172,15 @@ export function UploadForm({
           slot="question_paper"
           label="Question Paper"
           file={files.question_paper}
-          onPick={(file) => setFiles((current) => ({ ...current, question_paper: file }))}
+          hint={sizeHint(maxUploadBytes)}
+          onPick={(file) => pick("question_paper", file)}
         />
         <DropZone
           slot="answer_sheet"
           label="Answer Sheet"
           file={files.answer_sheet}
-          onPick={(file) => setFiles((current) => ({ ...current, answer_sheet: file }))}
+          hint={sizeHint(maxUploadBytes)}
+          onPick={(file) => pick("answer_sheet", file)}
         />
       </div>
 
@@ -233,16 +268,35 @@ async function put(url: string, file: File): Promise<void> {
   }
 }
 
+/**
+ * What the dropzone says about size, and what counts as too large.
+ *
+ * Megabytes rather than mebibytes because the limit is stated in the service's own
+ * message the same way, and a file a teacher's operating system calls 41 MB being
+ * refused for exceeding "40MB" is the kind of small inconsistency that reads as a
+ * bug.
+ */
+function sizeHint(maxBytes: number | undefined): string {
+  if (!maxBytes || maxBytes <= 0) return "PDF or image";
+  return `Max ${Math.floor(maxBytes / 1e6)}MB`;
+}
+
+function tooLarge(file: File, maxBytes: number | undefined): boolean {
+  return Boolean(maxBytes && maxBytes > 0 && file.size > maxBytes);
+}
+
 function DropZone({
   slot,
   label,
   file,
   onPick,
+  hint,
 }: {
   slot: Slot;
   label: string;
   file: File | null;
   onPick: (file: File | null) => void;
+  hint: string;
 }): React.JSX.Element {
   const [dragging, setDragging] = useState(false);
   const id = `pick-${slot}`;
@@ -298,7 +352,7 @@ function DropZone({
         Upload <em>{label}</em>
       </span>
       {file === null ? (
-        <span className="dropzone-hint">Max 10MB</span>
+        <span className="dropzone-hint">{hint}</span>
       ) : (
         <span className="dropzone-file">{file.name}</span>
       )}

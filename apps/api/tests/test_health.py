@@ -22,6 +22,20 @@ def test_health_reports_the_geometry_contract() -> None:
     assert body["contract_model_count"] > 20
 
 
+def test_health_states_the_upload_limit_the_service_enforces() -> None:
+    """The number on the upload screen has to be the number that rejects a file.
+
+    The screen said "Max 10MB" — the request-body cap of a host the uploads no
+    longer pass through — while render.py accepted 40 MB. Understating a limit is
+    not a harmless label: someone with a 25 MB phone-photo PDF reads it and does
+    not try. Asserting the equality is what keeps the two from drifting again.
+    """
+    from grader.render import MAX_BYTES
+
+    body = TestClient(app).get("/health").json()
+    assert body["max_upload_bytes"] == MAX_BYTES
+
+
 def test_contracts_are_importable_across_the_package_boundary() -> None:
     # Guards the uv path dependency. If this breaks, everything downstream
     # breaks with a confusing ImportError deep in a pipeline stage.

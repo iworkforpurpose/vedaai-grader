@@ -32,6 +32,8 @@ export interface Health {
   render_dpi: number;
   hgbench_scale: number;
   contract_model_count: number;
+  /** The largest document the service will accept, in bytes. */
+  max_upload_bytes: number;
 }
 
 /** The DPI the frontend expects. Cross-checked against the API at runtime.
