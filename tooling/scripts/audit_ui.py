@@ -90,6 +90,18 @@ async def main():
             if await ea.count() and await ea.first.is_visible():
                 await ea.first.click(); await pg.wait_for_timeout(800)
             all_f[f"{label}/review-expanded"] = await audit(pg, "review", " (all expanded)")
+
+            # The navigation drawer, opened.
+            #
+            # This was the audit's blind spot: every check skipped elements inside a
+            # closed rail, on the grounds that an off-canvas drawer is off-canvas by
+            # design — and then nothing ever opened it. A 304px drawer containing
+            # eight unlabelled icons sat there through a clean run.
+            opener = pg.locator('button[aria-label="Open navigation"]')
+            if await opener.count() and await opener.first.is_visible():
+                await opener.first.click()
+                await pg.wait_for_timeout(700)
+                all_f[f"{label}/nav-drawer"] = await audit(pg, "nav drawer", " (open)")
             await ctx.close()
         await b.close()
     kinds = {}

@@ -52,10 +52,18 @@
     }
     return null;
   };
+  // Skip the drawer's contents only while it is genuinely off screen. The check is
+  // narrow on purpose: written any looser it excused everything inside the rail,
+  // and the phone drawer was never examined at all.
   const inClosedRail = (el) => {
-    for (let p = el; p; p = p.parentElement)
-      if (p.classList?.contains("rail"))
-        return p.dataset.open !== "true" && getComputedStyle(p).position === "fixed";
+    for (let p = el; p; p = p.parentElement) {
+      if (!p.classList?.contains("rail")) continue;
+      if (p.dataset.open === "true") return false;
+      const cs = getComputedStyle(p);
+      if (cs.position !== "fixed") return false;
+      const r = p.getBoundingClientRect();
+      return r.right <= 0 || r.left >= document.documentElement.clientWidth;
+    }
     return false;
   };
   for (const el of document.querySelectorAll("button, a[href], input, [role='tab']")) {
@@ -89,7 +97,29 @@
       add("stretched-image", `${im.getAttribute("src")?.slice(-28)} ${Math.round(b.width)}x${Math.round(b.height)} vs natural ${im.naturalWidth}x${im.naturalHeight}`);
   }
 
-  // 6. Hygiene.
+  // 6. A wide rail with no labels — the fault a clean run missed entirely.
+  const rail = document.querySelector(".rail");
+  if (rail && !inClosedRail(rail)) {
+    const rw = rail.getBoundingClientRect().width;
+    const rows = [...rail.querySelectorAll(".nav-row")];
+    const hidden = rows.filter((row) => {
+      const lab = row.querySelector(".nav-label");
+      return lab && getComputedStyle(lab).display === "none";
+    });
+    if (rw > 120 && hidden.length === rows.length && rows.length > 0)
+      add("rail-labels-hidden", `rail is ${Math.round(rw)}px wide with all ${rows.length} labels hidden`);
+    for (const row of rows) {
+      const b = row.getBoundingClientRect();
+      const icon = row.querySelector(".nav-icon");
+      if (!icon) continue;
+      const ib = icon.getBoundingClientRect();
+      // An icon parked at the far left of a wide empty row is the visual symptom.
+      if (rw > 120 && b.width - (ib.right - b.left) > b.width * 0.6 && hidden.length)
+        add("rail-row-empty", `${row.textContent.trim().slice(0,14) || "row"} ${Math.round(b.width)}px wide, icon only`);
+    }
+  }
+
+  // 7. Hygiene.
   const ids = {};
   for (const el of document.querySelectorAll("[id]")) ids[el.id] = (ids[el.id] || 0) + 1;
   for (const [id, n] of Object.entries(ids)) if (n > 1) add("duplicate-id", `#${id} x${n}`);
@@ -99,7 +129,7 @@
       add("unlabelled-button", name(el));
   }
 
-  // 7. Text clipped by its own box.
+  // 8. Text clipped by its own box.
   for (const el of document.querySelectorAll("h1,h2,h3,p,span,button,a")) {
     if (el.children.length) continue;
     const s = getComputedStyle(el);

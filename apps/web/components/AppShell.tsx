@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { useNarrow } from "@/lib/breakpoints";
 import {
   AnalyticsIcon,
   ChevronsRightIcon,
@@ -78,6 +79,7 @@ export function AppShell({
 }): React.JSX.Element {
   const [navOpen, setNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(collapsedRail);
+  const narrow = useNarrow();
 
   // Follow the prop when it changes, which is the upload-to-loading transition.
   // `useState` takes it as an initial value only, so without this the rail stayed
@@ -118,7 +120,14 @@ export function AppShell({
           <button
             type="button"
             className="rail-collapse"
-            aria-label="Collapse navigation"
+            /*
+             * The same control, two jobs. Below the rail breakpoint there is
+             * nothing to collapse to — the rail is a drawer — so its only effect
+             * is closing it, and it is the only visible way to do that besides
+             * the scrim. Announcing "collapse" there described something that
+             * does not happen.
+             */
+            aria-label={narrow ? "Close navigation" : "Collapse navigation"}
             onClick={() => {
               setNavOpen(false);
               setCollapsed(true);

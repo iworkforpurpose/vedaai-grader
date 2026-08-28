@@ -15,6 +15,7 @@ import {
   summarizeMarks,
   untranscribedInkByPage,
 } from "@/lib/review";
+import { useNarrow } from "@/lib/breakpoints";
 import { LoadingStage } from "./LoadingStage";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
@@ -35,27 +36,6 @@ import { SheetView } from "./SheetView";
  */
 
 type Tab = "questions" | "sheet";
-
-/**
- * Whether the panes are stacked as tabs rather than shown side by side.
- *
- * The CSS already knows this from a media query; this exists because `inert` is an
- * attribute and cannot be set by one. Kept as a subscription rather than a one-off
- * read so a window resize does not leave a hidden pane focusable.
- */
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(false);
-
-  useEffect(() => {
-    const query = window.matchMedia("(max-width: 1023px)");
-    const sync = () => setNarrow(query.matches);
-    sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
-  }, []);
-
-  return narrow;
-}
 
 export function MapSurface({ initial }: { initial: Submission }): React.JSX.Element {
   const [submission, setSubmission] = useState(initial);

@@ -1102,11 +1102,26 @@ body::before {
  * between them — so it is a state on one component rather than a second rail.
  */
 
-.rail[data-collapsed="true"] .brand-word,
-.rail[data-collapsed="true"] .nav-label,
-.rail[data-collapsed="true"] .nav-badge,
-.rail[data-collapsed="true"] .school-text {
-  display: none;
+/*
+ * Collapsing is a desktop concept, and every rule that implements it belongs
+ * behind the same breakpoint.
+ *
+ * This block was not. The label hiding sat at the base level while all the
+ * collapsed sizing — the 64px rail, the 36px items, the 46px crest tile — was
+ * scoped to 1024 and up. On a phone the review screen opens with `collapsed` set,
+ * so the two halves combined into the worst possible state: a full 304px drawer
+ * containing eight unlabelled icons, no wordmark and no school name. Not a
+ * narrower version of the desktop rail and not the phone drawer either.
+ *
+ * On a phone the drawer is either open with its labels or not on screen at all.
+ */
+@media (min-width: 1024px) {
+  .rail[data-collapsed="true"] .brand-word,
+  .rail[data-collapsed="true"] .nav-label,
+  .rail[data-collapsed="true"] .nav-badge,
+  .rail[data-collapsed="true"] .school-text {
+    display: none;
+  }
 }
 
 .rail-expand {
