@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { animateScrollTo } from "@/lib/motion";
 import type { InkRegion, Page, PageBox } from "@/lib/contracts";
 import { boxToStyle, pointerToNormalized } from "@/lib/geometry";
 import { API_BASE } from "@/lib/api";
@@ -48,6 +49,7 @@ export function SheetView({
   const scroller = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [current, setCurrent] = useState(0);
+  const [loaded, setLoaded] = useState<Set<string>>(new Set());
 
   // Scroll to a page when a question is chosen, and again if the same question is
   // chosen twice — hence the nonce.
@@ -56,32 +58,50 @@ export function SheetView({
     const node = scroller.current;
     const target = node.querySelector<HTMLElement>(`[data-page="${scrollTarget.page}"]`);
     if (target === null) return;
-    node.scrollTo({ top: offsetWithin(node, target, scrollTarget.y), behavior: "smooth" });
+    // Our own tween, not `behavior: "smooth"`: that is about 300ms flat and not
+    // tunable, so crossing a page boundary read as a cut rather than travel. This
+    // eases over 450-950ms by distance, and aborts if the reader starts scrolling.
+    return animateScrollTo(node, offsetWithin(node, target, scrollTarget.y));
   }, [scrollTarget]);
 
-  // Which page is in view, for the counter. Read from scroll position rather than
-  // tracked separately, so it cannot disagree with what is on screen.
+  /*
+   * Which page is in view, for the counter.
+   *
+   * An observer rather than a scroll handler. The handler this replaces ran
+   * `querySelectorAll` plus a `getBoundingClientRect()` per page on every scroll
+   * event, unthrottled — each rect read forces a synchronous layout, so scrolling
+   * a two-page script paid a reflow and a React render per event. That is the
+   * frame budget any animation elsewhere has to come out of.
+   *
+   * The root margin collapses the viewport to a band across its middle, so "the
+   * page in view" means the one under the middle of the window, which is the same
+   * rule as before and the one that matches what a reader would say.
+   */
   useEffect(() => {
     const node = scroller.current;
     if (node === null) return;
-    const onScroll = () => {
-      const middle = node.getBoundingClientRect().top + node.clientHeight / 2;
-      const pageNodes = Array.from(node.querySelectorAll<HTMLElement>("[data-page]"));
-      const index = pageNodes.findIndex((el) => {
-        const rect = el.getBoundingClientRect();
-        return middle >= rect.top && middle < rect.bottom;
-      });
-      if (index >= 0) setCurrent(index);
-    };
-    node.addEventListener("scroll", onScroll, { passive: true });
-    return () => node.removeEventListener("scroll", onScroll);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const hit = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!hit) return;
+        const index = Number((hit.target as HTMLElement).dataset.page);
+        if (!Number.isNaN(index)) setCurrent(index);
+      },
+      { root: node, rootMargin: "-50% 0px -50% 0px", threshold: 0 },
+    );
+
+    node.querySelectorAll<HTMLElement>("[data-page]").forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
   }, [pages.length]);
 
   function goToPage(index: number): void {
     const node = scroller.current;
     const target = node?.querySelector<HTMLElement>(`[data-page="${index}"]`);
     if (!node || !target) return;
-    node.scrollTo({ top: offsetWithin(node, target, 0), behavior: "smooth" });
+    animateScrollTo(node, offsetWithin(node, target, 0));
   }
 
   const count = pages.length;
@@ -172,12 +192,23 @@ export function SheetView({
               if (x >= 0 && x <= 1 && y >= 0 && y <= 1) onPointerPick(index, x, y);
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {/*
+              * Faded in on decode. A scanned page is a large bitmap over the
+              * network, and appearing at full opacity the instant the last byte
+              * lands is the single most abrupt thing on this screen.
+              *
+              * eslint-disable-next-line @next/next/no-img-element
+              */}
             <img
               src={`${API_BASE}/pages/${page.image_key}`}
               alt={`Page ${index + 1} of the answer sheet`}
               width={page.width}
               height={page.height}
+              decoding="async"
+              data-loaded={loaded.has(page.image_key)}
+              onLoad={() =>
+                setLoaded((current) => new Set(current).add(page.image_key))
+              }
             />
 
             {showUntranscribed &&

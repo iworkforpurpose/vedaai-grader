@@ -175,6 +175,29 @@ img {
   border-radius: var(--r-sm);
 }
 
+/* ══ motion ════════════════════════════════════════════════════════════════
+ *
+ * Three durations and one curve, shared by everything.
+ *
+ * Shared because motion that differs per component reads as carelessness rather
+ * than as absence — a 150ms hover next to a 400ms hover is more noticeable than
+ * either alone. The scale is by role, not by taste: `fast` is acknowledgement
+ * (hover, press), `mid` is a state change the reader asked for (selection, a
+ * panel opening), `slow` is something arriving or leaving.
+ *
+ * The curve is the character. A near-zero initial slope with a long tail is what
+ * reads as weight — it leaves slowly and settles rather than stopping, which is
+ * the difference between "animated" and "smooth". `ease` and `ease-in-out` both
+ * start too quickly to feel like anything is being moved.
+ */
+:root {
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --fast: 120ms;
+  --mid: 240ms;
+  --slow: 420ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -182,6 +205,58 @@ img {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * One base rule for everything that responds to a pointer.
+ *
+ * A base rule rather than a transition per component, because the failure mode
+ * here was never one missing transition — it was that four existed in the entire
+ * stylesheet, so every hover, selection and press in the app was a hard cut.
+ * Listing properties rather than using `all` keeps it off layout properties,
+ * which is where transitions get expensive.
+ */
+a,
+button,
+label,
+input,
+summary,
+[role="tab"],
+.q-card,
+.nav-row,
+.dropzone,
+.score,
+.hl {
+  transition-property: background-color, border-color, color, box-shadow, opacity,
+    transform, fill, stroke;
+  transition-duration: var(--fast);
+  transition-timing-function: var(--ease);
+}
+
+/* State the reader asked for takes longer than acknowledgement. */
+.q-card,
+.hl,
+.dropzone,
+.score {
+  transition-duration: var(--mid);
+}
+
+/*
+ * Press feedback.
+ *
+ * The cheapest signal that a control is real. Excluded on the card, which is a
+ * large surface where a scale reads as the whole list lurching.
+ */
+button:active:not(:disabled),
+.dropzone:active {
+  transform: scale(0.97);
+  transition-duration: 60ms;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transition: outline-offset var(--fast) var(--ease);
 }
 
 /* ══ page atmosphere ═══════════════════════════════════════════════════════
@@ -941,7 +1016,35 @@ body::before {
     height: calc(100dvh - (var(--page-pad) * 2));
     border-radius: var(--r-lg);
     transform: none;
-    transition: none;
+    /*
+     * The drawer slide goes, the collapse stays.
+     *
+     * This was a flat `transition: none`, which was right for the transform — the
+     * rail is not a drawer at this width — and wrong for everything else, so
+     * collapsing 304px to 64px was an instant jump of a third of the screen.
+     */
+    transition: width var(--slow) var(--ease), padding var(--slow) var(--ease),
+      gap var(--slow) var(--ease);
+  }
+
+  /*
+   * Labels fade with the width instead of blinking out.
+   *
+   * They are `display: none` when collapsed, which cannot transition — but the
+   * width animation gives the eye something to follow, and holding the text
+   * through it would look like it was being crushed. Fading the whole inner
+   * column is the compromise that reads as intentional.
+   */
+  .rail[data-collapsed="true"] .nav-label,
+  .rail[data-collapsed="true"] .brand-word,
+  .rail[data-collapsed="true"] .school-text {
+    opacity: 0;
+  }
+
+  .nav-label,
+  .brand-word,
+  .school-text {
+    transition: opacity var(--fast) var(--ease);
   }
 
   .rail-scrim {
@@ -1347,6 +1450,79 @@ body::before {
   cursor: progress;
 }
 
+/*
+ * Shared scroller behaviour.
+ *
+ * `overscroll-behavior: contain` stops a scroll that reaches the end of a pane
+ * from continuing into the page behind it, which is the effect that makes nested
+ * scrolling feel like it is slipping. `scrollbar-gutter: stable` reserves the
+ * track whether or not a bar is showing, so content does not shift sideways by
+ * ~15px the moment a list grows past its box.
+ */
+.q-list,
+.sheet-scroll,
+.rail,
+.shell-main {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(0 0 0 / 0.18) transparent;
+}
+
+.q-list::-webkit-scrollbar,
+.sheet-scroll::-webkit-scrollbar,
+.shell-main::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.q-list::-webkit-scrollbar-thumb,
+.sheet-scroll::-webkit-scrollbar-thumb,
+.shell-main::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 100px;
+  background-clip: content-box;
+  background-color: rgb(0 0 0 / 0.18);
+}
+
+.q-list::-webkit-scrollbar-thumb:hover,
+.sheet-scroll::-webkit-scrollbar-thumb:hover,
+.shell-main::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(0 0 0 / 0.32);
+}
+
+.q-list::-webkit-scrollbar-track,
+.sheet-scroll::-webkit-scrollbar-track,
+.shell-main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * Cards arrive rather than appear.
+ *
+ * A 28ms stagger, capped at a dozen cards by the caller. The effect is not
+ * decoration: a list that lands all at once gives the eye no reading order, and
+ * this is a list whose order is the product's central claim.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .q-card {
+    animation: card-in var(--slow) var(--ease-out) both;
+    animation-delay: var(--stagger, 0ms);
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .q-list {
   flex: 1;
   min-height: 0;
@@ -1466,6 +1642,52 @@ body::before {
 }
 
 /* ── AI feedback ───────────────────────────────────────────────────────── */
+
+/*
+ * Animating to an automatic height.
+ *
+ * `height: auto` is not interpolable, and measuring it in JavaScript means a
+ * layout read on every open. A grid row from `0fr` to `1fr` is, so the wrapper
+ * carries the animation and the child carries `overflow: hidden` — which is what
+ * lets the panel find its own height and still be transitioned to.
+ */
+.feedback-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--mid) var(--ease);
+}
+
+.feedback-wrap[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+/* The gap belongs to the open state, or a closed card carries dead space. */
+.feedback-wrap[data-open="true"] .feedback-clip {
+  padding-top: var(--sp-4);
+}
+
+.feedback-clip {
+  overflow: hidden;
+  /* A grid item defaults to `min-height: auto`, which is min-content — it would
+     refuse to shrink below the panel's own height and the row would never close. */
+  min-height: 0;
+}
+
+/* The content lifts and fades slightly behind the height, so the panel reads as
+   opening rather than as a box being stretched. */
+.feedback {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity var(--mid) var(--ease), transform var(--mid) var(--ease);
+}
+
+.feedback-wrap[data-open="true"] .feedback {
+  opacity: 1;
+  transform: none;
+  /* Delayed on the way in only: the height has to have somewhere to put it first.
+     On the way out the fade leads, which hides the reflow. */
+  transition-delay: 60ms;
+}
 
 .feedback {
   display: flex;
@@ -1621,12 +1843,29 @@ body::before {
   position: relative;
   margin: 0 auto;
   background: var(--surface);
+  /*
+   * The zoom eases.
+   *
+   * Transitioning `width` does relayout the page and its highlights each frame,
+   * which is normally the thing to avoid — but measured here it costs nothing: six
+   * zoom steps and sixty scrolled frames produced no long tasks at all. The
+   * alternative, a composited `transform: scale()`, needs the layout box padded
+   * to the scaled size to stay scrollable, and it is the highlight geometry that
+   * would pay for a mistake there. Not worth it against a measurement of zero.
+   */
+  transition: width var(--mid) var(--ease);
 }
 
 .sheet-page img {
   width: 100%;
   height: auto;
   display: block;
+  opacity: 0;
+  transition: opacity var(--slow) var(--ease-out);
+}
+
+.sheet-page img[data-loaded="true"] {
+  opacity: 1;
 }
 
 /* The mapped answer. Green in the frame, with a tab carrying the question label —
@@ -1647,6 +1886,41 @@ body::before {
  * first page and the scroll target leaves the same inset — the two changes are one
  * fix, and either alone puts the label under the toolbar or over the text.
  */
+/*
+ * The box moves between questions rather than teleporting.
+ *
+ * Transitioning inset properties does cost layout, but there are at most a
+ * handful of these on screen and the alternative — a green rectangle that
+ * vanishes here and exists there — is the single most disorienting thing on the
+ * screen, because tracking it is the whole task.
+ */
+.hl {
+  transition: top var(--mid) var(--ease), left var(--mid) var(--ease),
+    width var(--mid) var(--ease), height var(--mid) var(--ease),
+    background-color var(--mid) var(--ease), border-color var(--mid) var(--ease);
+}
+
+/* One pulse on arrival, so the eye is told where to look after a long scroll. */
+@media (prefers-reduced-motion: no-preference) {
+  .hl {
+    animation: hl-arrive 620ms var(--ease-out);
+  }
+}
+
+@keyframes hl-arrive {
+  0% {
+    box-shadow: 0 0 0 0 rgb(61 210 24 / 0.55);
+  }
+
+  60% {
+    box-shadow: 0 0 0 10px rgb(61 210 24 / 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(61 210 24 / 0);
+  }
+}
+
 .hl-tab {
   position: absolute;
   top: -22px;
@@ -1692,6 +1966,7 @@ body::before {
   font-size: var(--fs-lg);
   font-weight: 500;
   cursor: pointer;
+  transition: background-color var(--mid) var(--ease), color var(--mid) var(--ease);
 }
 
 .map-tab[aria-selected="true"] {
@@ -1729,8 +2004,36 @@ body::before {
 /* Below the rail breakpoint only the chosen tab is shown, so the other pane costs
    nothing and the page has one scroll. */
 @media (max-width: 1023px) {
+  /*
+   * Stacked in one grid cell and crossfaded.
+   *
+   * `display: none` was here, and it cannot be transitioned — the pane is out of
+   * the box tree one frame and in it the next, so switching tabs was a cut. Both
+   * panes now occupy the same cell; the inactive one is transparent and
+   * untouchable, and `inert` on the markup side keeps it out of the tab order.
+   */
+  .map-panes {
+    grid-template-areas: "pane";
+  }
+
+  .map-pane {
+    grid-area: pane;
+    transition: opacity var(--mid) var(--ease), transform var(--mid) var(--ease);
+  }
+
   .map-pane[data-active="false"] {
-    display: none;
+    opacity: 0;
+    /* Not `visibility: hidden` — that is not interpolable either, and it would cut
+       the outgoing pane rather than fade it. */
+    pointer-events: none;
+    transform: translateY(6px);
+  }
+
+  .map-pane[data-active="true"] {
+    opacity: 1;
+    transform: none;
+    /* Above the outgoing pane during the crossfade. */
+    z-index: 1;
   }
 
   /*
@@ -1823,5 +2126,37 @@ body::before {
   .tool-button {
     width: 36px;
     height: 36px;
+  }
+}
+
+
+/* ══ screen entrance ═══════════════════════════════════════════════════════
+ *
+ * Upload, waiting and mapping were three hard document swaps. Next remounts the
+ * screen component on navigation, so an animation on each screen's root plays on
+ * arrival with no router hook and nothing to keep in sync — the cheapest correct
+ * version of a route transition.
+ *
+ * The top bar and rail are deliberately excluded. They persist across all three
+ * screens, and re-animating furniture that never left is what makes an app feel
+ * like a website reloading.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .upload,
+  .stage,
+  .map {
+    animation: screen-in var(--slow) var(--ease-out) both;
+  }
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

@@ -19,6 +19,7 @@ import { ChevronDownIcon } from "./icons";
  */
 export function QuestionCard({
   row,
+  index,
   grade,
   selected,
   expanded,
@@ -27,6 +28,8 @@ export function QuestionCard({
   onCite,
 }: {
   row: QuestionRow;
+  /** Position in the list, for the entrance stagger. */
+  index: number;
   grade: QuestionGrade | undefined;
   selected: boolean;
   expanded: boolean;
@@ -40,9 +43,15 @@ export function QuestionCard({
   const cited = grade?.rubric_points.find((point) => point.cited_line_ids.length > 0);
 
   const { badge, sub } = splitLabel(row.question.label_raw);
+  const showPanel = expanded && Boolean(feedback || row.presentation.hint);
 
   return (
-    <div className="q-card" data-selected={selected} onClick={onSelect}>
+    <div
+      className="q-card"
+      data-selected={selected}
+      style={{ "--stagger": `${index * 28}ms` } as React.CSSProperties}
+      onClick={onSelect}
+    >
       <div className="q-row">
         <span className="q-num">{badge}</span>
         {sub && <span className="q-sub">{sub}</span>}
@@ -80,50 +89,54 @@ export function QuestionCard({
         </span>
       </div>
 
-      {expanded && (feedback || row.presentation.hint) && (
-        <div className="feedback">
-          {/*
-            * One panel, headed "AI Feedback", as the frame draws it.
-            *
-            * The heading used to switch to "Why this is flagged" whenever marking
-            * had not run, which made the panel look like two different features
-            * depending on state — and since nothing marked the script until
-            * someone found the button, the flag wording was what a teacher
-            * actually saw. Marking now happens at ingest, so the feedback is the
-            * body; the flag reason stays underneath it, where it explains the
-            * status pill rather than competing with the marker's comment.
-            */}
-          <h3>AI Feedback</h3>
-          {feedback ? (
-            <p>{feedback}</p>
-          ) : (
-            <p className="feedback-pending">
-              No marker comment for this one yet.
-            </p>
-          )}
+      {/*
+        * Always rendered, opened by a data attribute.
+        *
+        * It used to be a conditional render, which cannot animate by
+        * construction: the element is absent one frame and present the next, so
+        * there is nothing for the browser to interpolate and the panel popped.
+        * The wrapper animates `grid-template-rows` from `0fr` to `1fr`, which is
+        * the one way to transition to an automatic height without measuring it in
+        * JavaScript.
+        *
+        * `inert` while closed. The panel is still in the tree at zero height, so
+        * without it the citation button stays in the tab order and a keyboard
+        * reader would land inside a collapsed card.
+        */}
+      <div className="feedback-wrap" data-open={showPanel} inert={!showPanel}>
+        <div className="feedback-clip">
+          <div className="feedback">
+            <h3>AI Feedback</h3>
+            {feedback ? (
+              <p>{feedback}</p>
+            ) : (
+              <p className="feedback-pending">No marker comment for this one yet.</p>
+            )}
 
-          {/* Only where it explains something the pill does not. With a mark on
-              screen, "an answer was found and located" restates the score. */}
-          {row.presentation.hint && tone === "none" && (
-            <p className="feedback-flag">{row.presentation.hint}</p>
-          )}
+            {/* Only where it explains something the pill does not. With a mark on
+                screen, "an answer was found and located" restates the score. */}
+            {row.presentation.hint && tone === "none" && (
+              <p className="feedback-flag">{row.presentation.hint}</p>
+            )}
 
-          {/* The citation is what makes a mark checkable in two seconds rather
-              than something to re-mark from scratch. */}
-          {cited && (
-            <button
-              type="button"
-              className="feedback-cite"
-              onClick={(event) => {
-                event.stopPropagation();
-                onCite(cited);
-              }}
-            >
-              Show the writing this rests on
-            </button>
-          )}
+            {/* The citation is what makes a mark checkable in two seconds rather
+                than something to re-mark from scratch. */}
+            {cited && (
+              <button
+                type="button"
+                className="feedback-cite"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCite(cited);
+                }}
+              >
+                Show the writing this rests on
+              </button>
+            )}
+          </div>
         </div>
-      )}
+      </div>
+
     </div>
   );
 }

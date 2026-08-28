@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import type { Page, RubricPoint, Submission } from "@/lib/contracts";
 import { firstPage } from "@/lib/geometry";
@@ -36,6 +36,27 @@ import { SheetView } from "./SheetView";
 
 type Tab = "questions" | "sheet";
 
+/**
+ * Whether the panes are stacked as tabs rather than shown side by side.
+ *
+ * The CSS already knows this from a media query; this exists because `inert` is an
+ * attribute and cannot be set by one. Kept as a subscription rather than a one-off
+ * read so a window resize does not leave a hidden pane focusable.
+ */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 1023px)");
+    const sync = () => setNarrow(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  return narrow;
+}
+
 export function MapSurface({ initial }: { initial: Submission }): React.JSX.Element {
   const [submission, setSubmission] = useState(initial);
   const [selectedQid, setSelectedQid] = useState<string | null>(null);
@@ -49,6 +70,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const [tab, setTab] = useState<Tab>("questions");
   const [marking, setMarking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const narrow = useNarrow();
 
   const rows = useMemo(() => buildRows(submission), [submission]);
   const summary = useMemo(() => summarize(submission, rows), [submission, rows]);
@@ -159,6 +181,10 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
         <section
           className="q-pane map-pane"
           data-active={tab === "questions"}
+          /* Below the rail breakpoint the panes are stacked and crossfaded rather
+             than swapped with `display`, which cannot transition. `inert` keeps the
+             faded-out pane out of the tab order. */
+          inert={tab !== "questions" && narrow}
           aria-label="Extracted questions"
         >
           <div className="q-head">
@@ -223,9 +249,13 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
           {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
 
           <div className="q-list">
-            {rows.map((row) => (
+            {rows.map((row, index) => (
               <QuestionCard
                 key={row.question.qid}
+                /* Caps the stagger: past a dozen, the last card would wait most of
+                   a second to appear, which reads as slow loading rather than as
+                   arrival. */
+                index={Math.min(index, 12)}
                 row={row}
                 grade={gradeFor(submission, row.question.qid)}
                 selected={row.question.qid === selectedQid}
@@ -252,6 +282,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
         <section
           className="sheet-pane map-pane"
           data-active={tab === "sheet"}
+          inert={tab !== "sheet" && narrow}
           aria-label="Answer sheet"
         >
           {answerPages.length === 0 ? (
