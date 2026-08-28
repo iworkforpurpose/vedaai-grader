@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { AnswerStatus, Mapping, Question, Submission } from "./contracts";
+import type {
+  AnswerStatus,
+  Mapping,
+  Question,
+  QuestionGrade,
+  Submission,
+} from "./contracts";
 import {
   applyReassignment,
   blockPreview,
@@ -7,11 +13,12 @@ import {
   buildRows,
   citationHighlight,
   gradeFor,
-  summarizeMarks,
   highlightByPage,
   questionAtPoint,
+  scoreTone,
   STATUS,
   summarize,
+  summarizeMarks,
   untranscribedInkByPage,
 } from "./review";
 
@@ -548,9 +555,16 @@ describe("citationHighlight", () => {
 });
 
 describe("summarizeMarks", () => {
-  function grade(qid: string, awarded: number, available: number, cited: string[]) {
+  function grade(
+    qid: string,
+    awarded: number,
+    available: number,
+    cited: string[],
+    judged = true,
+  ) {
     return {
       qid,
+      judged,
       marks_available: available,
       marks_awarded: awarded,
       rubric_points: [
@@ -577,11 +591,20 @@ describe("summarizeMarks", () => {
   });
 
   it("separates a rubric with no marks from a genuine zero", () => {
-    // A script that was never marked and one that scored nothing look identical
-    // in a total, and only one of them is a result.
+    /*
+     * A script that was never marked and one that scored nothing look identical
+     * in a total, and only one of them is a result.
+     *
+     * The intent was right and the fixture was wrong. It told the two apart by
+     * giving the scored zero a citation, which is the one thing a real zero never
+     * has — citations evidence marks that were awarded. So this passed while a
+     * marker's 0 out of 4 was being displayed as an unmarked question, because the
+     * fixture had been built to agree with the implementation rather than with a
+     * real payload. The discriminator is now the flag the grade actually carries.
+     */
     const rubricOnly = submission({
       grades: {
-        grades: [grade("A/1", 0, 2, [])],
+        grades: [grade("A/1", 0, 2, [], false)],
         overall_feedback: null,
         weak_topics: [],
         committed: false,
@@ -594,7 +617,8 @@ describe("summarizeMarks", () => {
 
     const scoredZero = submission({
       grades: {
-        grades: [grade("A/1", 0, 2, ["as:0001"])],
+        // A judged zero: no citation, because nothing was awarded to evidence.
+        grades: [grade("A/1", 0, 2, [], true)],
         overall_feedback: null,
         weak_topics: [],
         committed: false,
@@ -670,5 +694,43 @@ describe("stems", () => {
 
   it("is still listed, so the paper's numbering is preserved", () => {
     expect(buildRows(sub).map((r) => r.question.label_raw)).toEqual(["1.", "2.", "(i)"]);
+  });
+});
+
+
+describe("scoreTone and a decided zero", () => {
+  const grade = (over: Partial<QuestionGrade>): QuestionGrade =>
+    ({
+      qid: "A/2",
+      marks_available: 4,
+      marks_awarded: 0,
+      rubric_points: [],
+      feedback: null,
+      graded_by: "openai:gpt-4o-mini",
+      judged: false,
+      confidence: 0,
+      graded_on_partial_text: false,
+      fraction: 0,
+      ...over,
+    }) as QuestionGrade;
+
+  it("shows a marker's zero as a zero", () => {
+    // The bug this guards: a zero cites nothing, because citations evidence marks
+    // that were given. Inferring "judged" from citations made this read "none" and
+    // look identical to an unmarked question.
+    expect(scoreTone(grade({ judged: true }))).toBe("zero");
+  });
+
+  it("shows an unjudged question as unscored, whatever its marks say", () => {
+    expect(scoreTone(grade({ judged: false }))).toBe("none");
+  });
+
+  it("still distinguishes partial from full", () => {
+    expect(scoreTone(grade({ judged: true, marks_awarded: 1 }))).toBe("partial");
+    expect(scoreTone(grade({ judged: true, marks_awarded: 4 }))).toBe("pass");
+  });
+
+  it("treats a question worth no marks as unscored even when judged", () => {
+    expect(scoreTone(grade({ judged: true, marks_available: 0 }))).toBe("none");
   });
 });

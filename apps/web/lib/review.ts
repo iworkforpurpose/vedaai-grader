@@ -391,9 +391,9 @@ export function summarizeMarks(submission: Submission): MarkSummary {
     return { awarded: 0, available: 0, needsReview: 0, marked: false, rubricOnly: false };
   }
 
-  const judged = grades.grades.some((grade) =>
-    grade.rubric_points.some((point) => point.cited_line_ids.length > 0),
-  );
+  // Same correction as scoreTone: the grades say whether they were judged, so the
+  // summary line no longer claims "rubric only" for a script marked all zeros.
+  const judged = grades.grades.some((grade) => grade.judged);
   return {
     awarded: grades.total_awarded,
     available: grades.total_available,
@@ -417,8 +417,17 @@ export type ScoreTone = "pass" | "partial" | "zero" | "none";
  */
 export function scoreTone(grade: QuestionGrade | undefined): ScoreTone {
   if (!grade || grade.marks_available <= 0) return "none";
-  const judged = grade.rubric_points.some((point) => point.cited_line_ids.length > 0);
-  if (!judged && grade.marks_awarded === 0) return "none";
+  /*
+   * Read from the grade, not inferred from its citations.
+   *
+   * This used to treat "no point cites a line" as "nobody marked it", which is
+   * wrong for exactly the case that matters: a marker who awards zero cites
+   * nothing, because citations are evidence *for* marks and there are none. So a
+   * decided 0 out of 4 wore the neutral chip and was indistinguishable from a
+   * question nobody had looked at — which is how "the second question does not get
+   * scored" was reported, when in fact it had been scored zero every time.
+   */
+  if (!grade.judged) return "none";
   if (grade.marks_awarded <= 0) return "zero";
   if (grade.marks_awarded >= grade.marks_available) return "pass";
   return "partial";

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api";
-import type { Page, RubricPoint, Submission } from "@/lib/contracts";
+import type { Page, PageBox, RubricPoint, Submission } from "@/lib/contracts";
 import { firstPage } from "@/lib/geometry";
 import {
   applyReassignment,
@@ -96,20 +96,48 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
     [submission.pages],
   );
 
+  /*
+   * Bring a region into view: scroll to it, and on the phone switch to the tab it
+   * is on.
+   *
+   * One function because there are two ways to ask for a region — picking a
+   * question, and following a citation — and only the first had this. Clicking
+   * "show the writing this rests on" moved the highlight and left the reader
+   * looking at wherever they already were, which on the phone was the questions
+   * tab, so the entire response to the click was invisible. Sharing the path is
+   * what stops the two drifting apart again.
+   */
+  function revealOnSheet(boxes: readonly PageBox[]): void {
+    const page = firstPage(boxes);
+    if (page === null) return;
+    const first = boxes.find((box) => box.page === page);
+    // The nonce makes asking twice for the same region scroll twice, which is what
+    // someone clicking again is asking for.
+    setScrollTarget({ page, y: first?.box.y0 ?? 0, nonce: Date.now() });
+    if (narrow) setTab("sheet");
+  }
+
   function select(qid: string): void {
     setSelectedQid(qid);
     setCitedPoint(null);
-
     const row = rows.find((r) => r.question.qid === qid);
-    const boxes = row?.mapping?.highlight?.boxes ?? [];
-    const page = firstPage(boxes);
-    if (page !== null) {
-      const first = boxes.find((b) => b.page === page);
-      setScrollTarget({ page, y: first?.box.y0 ?? 0, nonce: Date.now() });
-      // On the phone the sheet is a separate tab, so a selection that cannot be
-      // seen is not a selection. Switching is the point of tapping a question.
-      if (window.matchMedia("(max-width: 1023px)").matches) setTab("sheet");
-    }
+    revealOnSheet(row?.mapping?.highlight?.boxes ?? []);
+  }
+
+  /*
+   * Follow a citation: narrow the highlight to the lines behind one mark, and go
+   * there.
+   *
+   * Clicking the same citation again clears it and returns the highlight to the
+   * whole answer, so it is a toggle — and in that direction there is nothing new
+   * to scroll to.
+   */
+  function cite(point: RubricPoint): void {
+    const clearing = citedPoint?.point_id === point.point_id;
+    setCitedPoint(clearing ? null : point);
+    if (clearing) return;
+    const boxes = [...citationHighlight(submission, point.cited_line_ids).values()].flat();
+    revealOnSheet(boxes);
   }
 
   function pickAtPoint(page: number, x: number, y: number): void {
@@ -269,11 +297,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
                     return next;
                   })
                 }
-                onCite={(point) =>
-                  setCitedPoint((current) =>
-                    current?.point_id === point.point_id ? null : point,
-                  )
-                }
+                onCite={cite}
               />
             ))}
           </div>

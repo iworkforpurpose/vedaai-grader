@@ -57,6 +57,23 @@ class QuestionGrade(BaseModel):
         ),
     )
 
+    judged: bool = Field(
+        default=False,
+        description=(
+            "True when a marker actually decided this question. False for a rubric "
+            "produced without marking, for a judgement whose citations were refused, "
+            "and for an answer left to a person to look at.\n\n"
+            "Explicit because it is not recoverable from anything else here, and "
+            "guessing it was a bug. The obvious inference — that a judged point cites "
+            "a line — fails for the commonest interesting case: a genuine zero cites "
+            "nothing, because there is no evidence for marks that were not given. So a "
+            "0 out of 4 that a marker decided looked identical to a question nobody "
+            "had marked, and the difference is the whole point. `confidence` cannot "
+            "stand in either: it is derived from cited share, so it is also 0.0 for a "
+            "real zero."
+        ),
+    )
+
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     graded_on_partial_text: bool = Field(
         default=False,

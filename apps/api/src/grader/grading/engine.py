@@ -127,6 +127,14 @@ class RubricOnly:
         )
 
 
+#: Fixed sampling seed, so two runs over one script agree.
+#:
+#: A constant rather than a config knob: there is no version of this product where
+#: a teacher wants marking to vary run to run, and a configurable seed would be a
+#: setting whose only effect is to make results harder to compare.
+GRADER_SEED = 20240817
+
+
 #: The shape the model must return. Written by hand rather than generated from the
 #: contract so that the model is asked for exactly the fields it should decide —
 #: it never sets identity, availability, or anything downstream code computes.
@@ -215,6 +223,9 @@ class Claude:
 
         message = await self._client.messages.create(
             model=self.model,
+            # Same reason as the OpenAI path: a mark that changes between identical
+            # runs is not checkable. This provider exposes no seed.
+            temperature=0.0,
             max_tokens=2048,
             system=prompt.SYSTEM,
             tools=[
@@ -339,6 +350,18 @@ class OpenAIGrader:
 
         completion = await self._client.chat.completions.create(
             model=self.model,
+            # Marking the same script twice must give the same marks.
+            #
+            # This was unset, and the API default is 1.0 — so re-marking one
+            # submission five times produced totals of 3, 3, 2, 2 and 0. A teacher
+            # cannot check a mark that changes when they look again, and it makes
+            # every accuracy figure measured through this path noise.
+            #
+            # A seed as well, which asks the provider for reproducible sampling. It
+            # is best-effort rather than guaranteed, so temperature is the load
+            # bearing part; the seed narrows what is left.
+            temperature=0.0,
+            seed=GRADER_SEED,
             messages=[
                 {"role": "system", "content": prompt.SYSTEM},
                 {
@@ -499,6 +522,10 @@ def assemble(
         marks_available=rubric.marks_available,
         marks_awarded=sum(p.marks_awarded for p in points),
         rubric_points=points,
+        # The only place this is true. Every other constructor in this module
+        # returns a grade nobody judged, and the difference is not otherwise
+        # recoverable from the payload — see the field's own note.
+        judged=True,
         feedback=judgement.get("feedback"),
         graded_by=graded_by,
         # Confidence is not asked of the model — a self-reported number is not
