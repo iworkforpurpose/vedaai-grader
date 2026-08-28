@@ -1,0 +1,143 @@
+# Build, verify and roll out the grader.
+#
+# Exists because every deploy before it happened from a laptop, and `docker build`
+# reads the working directory rather than a commit — so what was running could not be
+# traced back to anything, and an uncommitted edit would have shipped with nothing
+# recording that it had. Here the commit *is* the input.
+#
+# No stored AWS keys. The job exchanges GitHub's OIDC token for a role scoped to
+# this repository on this branch, so a pull request from a fork cannot deploy even
+# though it can run the tests.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one halfway. Cancelling between the
+# registration and the rollout leaves the service pinned to a revision nobody
+# chose — which is the failure this pipeline is partly here to make impossible.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  APP: vedaai-grader
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The contracts are generated, not committed, and the type check depends on
+      # them — so this has to happen before anything reads them.
+      - name: Generate contracts
+        run: pnpm turbo codegen
+
+      - name: Typecheck
+        run: pnpm turbo typecheck
+
+      - name: Web tests
+        run: pnpm --filter @vedaai/web test
+
+      - name: API tests
+        working-directory: apps/api
+        run: uv run --extra dev python -m pytest -q
+
+  deploy:
+    name: deploy
+    # Only from main, and only if the tests passed. A deploy that skips its own
+    # tests is a deploy nobody can trust, and I have been the one asserting they
+    # passed until now.
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to request the OIDC token
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::872483264706:role/vedaai-grader-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I
+        run: aws sts get-caller-identity
+
+      # The commit is the tag. `deploy/deploy.sh` derives one itself when this is
+      # unset, but passing it explicitly means the log says what it built before it
+      # starts building.
+      - name: Build, push and roll out
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
+        run: |
+          echo "deploying ${GITHUB_SHA} to ${AWS_REGION}"
+          bash deploy/deploy.sh release
+
+      # `release` already reads back the pinned revision and fails if it does not
+      # match. This waits for the task to actually be serving it, which is a
+      # different claim: a rollout can be accepted and then the task can fail to
+      # start.
+      - name: Wait for the new task to be stable
+        run: |
+          aws ecs wait services-stable --cluster "$APP" --services "$APP"
+
+      - name: Report what is live
+        run: |
+          set -euo pipefail
+          task="$(aws ecs list-tasks --cluster "$APP" --service-name "$APP" \
+                    --desired-status RUNNING --query 'taskArns[0]' --output text)"
+          image="$(aws ecs describe-tasks --cluster "$APP" --tasks "$task" \
+                    --query 'tasks[0].containers[0].image' --output text)"
+          rev="$(aws ecs describe-services --cluster "$APP" --services "$APP" \
+                    --query 'services[0].taskDefinition' --output text)"
+          eni="$(aws ecs describe-tasks --cluster "$APP" --tasks "$task" \
+                    --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value | [0]" \
+                    --output text)"
+          ip="$(aws ec2 describe-network-interfaces --network-interface-ids "$eni" \
+                    --query 'NetworkInterfaces[0].Association.PublicIp' --output text)"
+
+          code="$(curl -s -o /dev/null -m 20 -w '%{http_code}' "http://${ip}:8080/" || echo 000)"
+
+          # The job summary, because "what exactly and when exactly did I deploy" is
+          # the question this whole pipeline exists to answer.
+          {
+            echo "### Deployed"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA:0:12}\` |"
+            echo "| image | \`${image##*/}\` |"
+            echo "| revision | \`${rev##*/}\` |"
+            echo "| url | http://${ip}:8080 |"
+            echo "| homepage | HTTP ${code} |"
+            echo
+            echo "The IP changes whenever the task restarts; it is not a stable address."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          test "$code" = "200"

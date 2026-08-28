@@ -24,6 +24,24 @@ MEMORY="${TASK_MEMORY:-1024}"
 ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
 REPO="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP}"
 
+# The image tag, and with it the answer to "what is actually running?".
+#
+# Everything used to be `:latest`, which meant a running task named a tag that had
+# been overwritten several times and could not be traced to anything. Worse, the
+# build context is the working directory rather than a commit — `docker build .`
+# reads the filesystem — so an uncommitted edit would deploy with nothing recording
+# that it had.
+#
+# The tag is the short commit, suffixed `-dirty` when the tree does not match it.
+# A dirty tag is deliberately ugly: seeing it in a task definition is the point.
+if [ -z "${IMAGE_TAG:-}" ]; then
+  IMAGE_TAG="$(git rev-parse --short HEAD 2>/dev/null || echo notgit)"
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    IMAGE_TAG="${IMAGE_TAG}-dirty"
+    echo "WARNING: working tree has uncommitted changes; tagging ${IMAGE_TAG}" >&2
+  fi
+fi
+
 # Progress goes to stderr, not stdout.
 #
 # It was stdout, and one function's stdout is captured as a value —
@@ -35,16 +53,22 @@ say() { printf '\n== %s\n' "$*" >&2; }
 
 # ── build and push ───────────────────────────────────────────────────────────
 release_image() {
-  say "building ${APP}"
+  say "building ${APP} as ${IMAGE_TAG}"
   # linux/amd64 explicitly: Fargate runs x86 unless the task says otherwise, and
   # an image built on an Apple laptop is arm64 by default. The failure is an
   # "exec format error" in the task logs, long after the push looked fine.
-  docker build --platform linux/amd64 -t "${APP}:latest" .
+  docker build --platform linux/amd64 -t "${APP}:${IMAGE_TAG}" .
 
   say "pushing to ${REPO}"
   aws ecr get-login-password --region "${REGION}" \
     | docker login --username AWS --password-stdin "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
-  docker tag "${APP}:latest" "${REPO}:latest"
+
+  # Both tags. The commit tag is what the task definition names, so a running task
+  # can be traced to a commit; `latest` stays as a human-facing pointer to whatever
+  # went out last.
+  docker tag "${APP}:${IMAGE_TAG}" "${REPO}:${IMAGE_TAG}"
+  docker tag "${APP}:${IMAGE_TAG}" "${REPO}:latest"
+  docker push "${REPO}:${IMAGE_TAG}"
   docker push "${REPO}:latest"
 }
 
@@ -155,7 +179,7 @@ bootstrap() {
   echo "the service in the console and point it at the task definition below."
   echo
   echo "  bucket        ${BUCKET}"
-  echo "  image         ${REPO}:latest"
+  echo "  image         ${REPO}:${IMAGE_TAG}"
   echo "  task role     arn:aws:iam::${ACCOUNT}:role/${APP}-task"
   echo "  exec role     arn:aws:iam::${ACCOUNT}:role/${APP}-execution"
 }
@@ -189,7 +213,7 @@ register_task() {
   "containerDefinitions": [
     {
       "name": "grader",
-      "image": "${REPO}:latest",
+      "image": "${REPO}:${IMAGE_TAG}",
       "essential": true,
       "portMappings": [{ "containerPort": 8080, "protocol": "tcp" }],
       "environment": [
