@@ -15,7 +15,7 @@ import os
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from vedaai_contracts import (
     DocumentKind,
@@ -25,7 +25,7 @@ from vedaai_contracts import (
     SubmissionStatus,
 )
 
-from . import align, grading, pipeline, regions, render
+from . import align, grading, pipeline, regions, render, uploads
 from .render import UnsupportedDocument
 from .storage import AnyPageStore, get_page_store
 from .store import SubmissionStore, get_store
@@ -36,12 +36,51 @@ StoreDep = Annotated[SubmissionStore, Depends(get_store)]
 PageStoreDep = Annotated[AnyPageStore, Depends(get_page_store)]
 
 
+@router.post("/uploads", tags=["submissions"])
+def start_upload(
+    question_paper_name: Annotated[str, Body(embed=True)] = "question_paper.pdf",
+    answer_sheet_name: Annotated[str, Body(embed=True)] = "answer_sheet.pdf",
+) -> dict:
+    """Where to put the two documents.
+
+    Returns presigned destinations when object storage is configured, so the browser
+    uploads past this service entirely. Every host caps request bodies — API Gateway
+    at 10 MB, serverless functions lower — and this service accepts documents up to
+    40 MB, so routing them through the host would mean the host choosing the product
+    limit. Uploading past it removes the question.
+
+    Answers `{"mode": "direct"}` when there is no bucket, which is the local
+    development case: there is nothing to presign, so the client posts the file to
+    `/submissions` itself. Two paths, one per environment that exists.
+    """
+    if not uploads.available():
+        return {"mode": "direct"}
+
+    slots = {
+        "question_paper": uploads.presign("question_paper", question_paper_name),
+        "answer_sheet": uploads.presign("answer_sheet", answer_sheet_name),
+    }
+    return {
+        "mode": "s3",
+        "expires_in": uploads.URL_TTL_SECONDS,
+        "slots": {
+            kind: {"key": slot.key, "url": slot.url} for kind, slot in slots.items()
+        },
+    }
+
+
 @router.post("/submissions", response_model=Submission, tags=["submissions"])
 async def create_submission(
     store: StoreDep,
     page_store: PageStoreDep,
-    question_paper: Annotated[UploadFile, File(description="Printed question paper.")],
-    answer_sheet: Annotated[UploadFile, File(description="One student's handwritten sheet.")],
+    question_paper: Annotated[
+        UploadFile | None, File(description="Printed question paper.")
+    ] = None,
+    answer_sheet: Annotated[
+        UploadFile | None, File(description="One student's handwritten sheet.")
+    ] = None,
+    question_paper_key: Annotated[str | None, Form()] = None,
+    answer_sheet_key: Annotated[str | None, Form()] = None,
 ) -> Submission:
     """Accept both documents and start ingest. Returns immediately.
 
@@ -67,16 +106,50 @@ async def create_submission(
     The upload is still validated synchronously, so a file that cannot be read is
     still a 422 on this request rather than a job that fails later.
     """
-    qp_bytes = await question_paper.read()
-    as_bytes = await answer_sheet.read()
+    # Either the files themselves or the keys they were uploaded to, never both.
+    #
+    # Two ways in rather than one because they answer different situations: a
+    # deployment with object storage takes keys and never sees the bytes on the
+    # wire; a laptop with no bucket posts the files. Requiring exactly one is what
+    # keeps that from becoming an ambiguous request nobody validates.
+    by_key = question_paper_key is not None and answer_sheet_key is not None
+    by_file = question_paper is not None and answer_sheet is not None
+    if by_key == by_file:
+        raise HTTPException(
+            status_code=422,
+            detail="Send both documents as files, or both as upload keys — not a mix.",
+        )
+
+    loop = asyncio.get_running_loop()
+    if by_key:
+        try:
+            uploads.check(question_paper_key or "")
+            uploads.check(answer_sheet_key or "")
+        except uploads.UploadRejected as exc:
+            # A key this service did not issue. Refused rather than fetched, because
+            # reading an arbitrary key would let a caller name any object in the
+            # bucket, including another submission's pages.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            qp_bytes = await loop.run_in_executor(None, uploads.read, question_paper_key)
+            as_bytes = await loop.run_in_executor(None, uploads.read, answer_sheet_key)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not read the uploaded documents: {exc}",
+            ) from exc
+        qp_name = (question_paper_key or "").split("/")[-1]
+        as_name = (answer_sheet_key or "").split("/")[-1]
+    else:
+        assert question_paper is not None and answer_sheet is not None
+        qp_bytes = await question_paper.read()
+        as_bytes = await answer_sheet.read()
+        qp_name = question_paper.filename or "question_paper"
+        as_name = answer_sheet.filename or "answer_sheet"
 
     try:
-        qp_source = render.inspect(
-            qp_bytes, question_paper.filename or "question_paper", DocumentKind.QUESTION_PAPER
-        )
-        as_source = render.inspect(
-            as_bytes, answer_sheet.filename or "answer_sheet", DocumentKind.ANSWER_SHEET
-        )
+        qp_source = render.inspect(qp_bytes, qp_name, DocumentKind.QUESTION_PAPER)
+        as_source = render.inspect(as_bytes, as_name, DocumentKind.ANSWER_SHEET)
     except UnsupportedDocument as exc:
         # A rejected upload is the user's problem to fix, so the message says
         # what was wrong rather than surfacing a parser exception.
@@ -87,8 +160,13 @@ async def create_submission(
     store.put(accepted)
     store.remember_content(qp_source.content_hash, submission_id)
 
+    # The originals go once the pages exist. They are the largest objects and the
+    # rendered pages are the durable artefact.
+    discard = [k for k in (question_paper_key, answer_sheet_key) if k] if by_key else []
+
     task = asyncio.create_task(
         _run_ingest(
+            discard_uploads=discard,
             submission_id=submission_id,
             question_paper=(qp_bytes, qp_source),
             answer_sheet=(as_bytes, as_source),
@@ -110,6 +188,7 @@ _BACKGROUND: set[asyncio.Task] = set()
 
 async def _run_ingest(
     *,
+    discard_uploads: list[str] | None = None,
     submission_id: str,
     question_paper: tuple[bytes, object],
     answer_sheet: tuple[bytes, object],
@@ -177,6 +256,9 @@ async def _run_ingest(
         submission.status = SubmissionStatus.COMPLETE
 
     store.put(submission)
+
+    for key in discard_uploads or []:
+        uploads.discard(key)
 
 
 def _auto_mark_enabled() -> bool:

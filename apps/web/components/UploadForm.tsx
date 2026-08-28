@@ -63,11 +63,11 @@ export function UploadForm({
     // Whether this call ends by navigating away rather than returning to the form.
     let leaving = false;
 
-    const body = new FormData();
-    body.append("question_paper", files.question_paper as File);
-    body.append("answer_sheet", files.answer_sheet as File);
-
     try {
+      const body = await sendDocuments(
+        files.question_paper as File,
+        files.answer_sheet as File,
+      );
       const response = await fetch(`${API_BASE}/submissions`, { method: "POST", body });
       if (!response.ok) {
         // The API's 422 detail names what was wrong with the file — wrong format,
@@ -88,8 +88,12 @@ export function UploadForm({
       // the form is a visible flash of the screen the reader just left.
       leaving = true;
       router.push(`/review/${submission.submission_id}`);
-    } catch {
-      setError(`Cannot reach the grader service at ${API_BASE}. Check that it is running.`);
+    } catch (cause) {
+      setError(
+        cause instanceof Error && cause.message.startsWith("Uploading")
+          ? cause.message
+          : `Cannot reach the grader service at ${API_BASE}. Check that it is running.`,
+      );
     } finally {
       if (!leaving) {
         crossFade(() => {
@@ -165,6 +169,68 @@ export function UploadForm({
       </div>
     </form>
   );
+}
+
+/**
+ * Get both documents to the service, past it where possible.
+ *
+ * Asks where to put them first. When object storage is configured the browser PUTs
+ * each file straight there and this returns the keys — the service never carries
+ * the bytes, so whatever limit its host places on request bodies stops applying.
+ * That matters concretely: the service accepts documents up to 40 MB, and an API
+ * gateway in front of it caps requests at 10 MB. Routing uploads through the host
+ * would let the host decide the product's limit.
+ *
+ * When there is no bucket — a laptop, no AWS — the same files go in the request as
+ * before. Not a fallback so much as the other environment: one path each.
+ */
+async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
+  const body = new FormData();
+
+  const plan = await fetch(`${API_BASE}/uploads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question_paper_name: paper.name,
+      answer_sheet_name: sheet.name,
+    }),
+  });
+
+  // A failure here is not fatal: posting the files still works, and is what a
+  // deployment without object storage does anyway.
+  const mode = plan.ok
+    ? ((await plan.json()) as {
+        mode: string;
+        slots?: Record<string, { key: string; url: string }>;
+      })
+    : { mode: "direct" as const };
+
+  if (mode.mode !== "s3" || !mode.slots) {
+    body.append("question_paper", paper);
+    body.append("answer_sheet", sheet);
+    return body;
+  }
+
+  // Both at once. They are independent objects and the sheet is much the larger of
+  // the two, so waiting for the paper first would add its latency for nothing.
+  await Promise.all([
+    put(mode.slots.question_paper!.url, paper),
+    put(mode.slots.answer_sheet!.url, sheet),
+  ]);
+
+  body.append("question_paper_key", mode.slots.question_paper!.key);
+  body.append("answer_sheet_key", mode.slots.answer_sheet!.key);
+  return body;
+}
+
+async function put(url: string, file: File): Promise<void> {
+  const response = await fetch(url, { method: "PUT", body: file });
+  if (!response.ok) {
+    // Named as an upload failure rather than folded into "cannot reach the
+    // service", because the destination is a different host and the fix is
+    // different — most often the bucket's CORS rules.
+    throw new Error(`Uploading ${file.name} failed with HTTP ${response.status}`);
+  }
 }
 
 function DropZone({

@@ -459,3 +459,66 @@ def _submission_ready_to_mark(client: TestClient) -> str:
     )
     store_module.store.put(submission)
     return submission_id
+
+
+class TestUploadRouting:
+    """Two ways in, and exactly one per request."""
+
+    def test_says_direct_when_there_is_no_bucket(self, client: TestClient, monkeypatch) -> None:
+        # The local case. There is nothing to presign, so the client is told to post
+        # the file itself rather than being handed a URL that cannot work.
+        monkeypatch.delenv("S3_PAGE_BUCKET", raising=False)
+        response = client.post("/uploads", json={})
+        assert response.status_code == 200, response.text
+        assert response.json() == {"mode": "direct"}
+
+    def test_presigns_when_there_is(self, client: TestClient, monkeypatch) -> None:
+        from grader import uploads
+
+        monkeypatch.setenv("S3_PAGE_BUCKET", "a-bucket")
+        monkeypatch.setattr(
+            uploads,
+            "presign",
+            lambda kind, name, **_: uploads.UploadSlot(
+                key=f"{'0' * 32}/{kind}.pdf", url=f"https://example.test/{kind}", fields={}
+            ),
+        )
+        body = client.post(
+            "/uploads",
+            json={"question_paper_name": "p.pdf", "answer_sheet_name": "s.pdf"},
+        ).json()
+        assert body["mode"] == "s3"
+        assert set(body["slots"]) == {"question_paper", "answer_sheet"}
+        assert body["slots"]["answer_sheet"]["url"] == "https://example.test/answer_sheet"
+
+    def test_refuses_a_mix_of_files_and_keys(self, client: TestClient) -> None:
+        """Ambiguity is refused rather than resolved by precedence.
+
+        A request carrying both a file and a key does not say which the caller meant,
+        and quietly preferring one is how a submission ends up processing a document
+        nobody thinks they sent.
+        """
+        qp, _ = question_paper()
+        response = client.post(
+            "/submissions",
+            files={"question_paper": ("p.pdf", qp, "application/pdf")},
+            data={"answer_sheet_key": f"{'0' * 32}/answer_sheet.pdf"},
+        )
+        assert response.status_code == 422
+        assert "not a mix" in response.json()["detail"]
+
+    def test_refuses_neither(self, client: TestClient) -> None:
+        assert client.post("/submissions").status_code == 422
+
+    def test_refuses_a_key_it_did_not_issue(self, client: TestClient) -> None:
+        # The attack this closes: naming another submission's rendered page, or any
+        # other object sharing the bucket, and having the service fetch it.
+        response = client.post(
+            "/submissions",
+            data={
+                "question_paper_key": "pages/058f7ebffc67155a/p0000.png",
+                "answer_sheet_key": f"{'0' * 32}/answer_sheet.pdf",
+            },
+        )
+        assert response.status_code == 422
+        assert "not an upload key" in response.json()["detail"]

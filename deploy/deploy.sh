@@ -100,6 +100,29 @@ bootstrap() {
   aws s3api put-bucket-lifecycle-configuration --bucket "${BUCKET}" \
     --lifecycle-configuration "file://deploy/bucket-lifecycle.json"
 
+  # CORS, so the browser may PUT its own upload.
+  #
+  # Without this the presigned PUT fails a preflight and the browser reports it as a
+  # network error with no detail — which reads as broken upload code rather than a
+  # missing bucket rule. Scoped to the origins actually serving the app; a wildcard
+  # would let any page on the internet upload into this bucket.
+  local cors_origins="${WEB_ORIGINS:-*}"
+  python3 - "${cors_origins}" > /tmp/${APP}-cors.json <<'PYCORS'
+import json, sys
+origins = [o.strip() for o in sys.argv[1].split(",") if o.strip()] or ["*"]
+print(json.dumps({"CORSRules": [{
+    "AllowedMethods": ["PUT"],
+    "AllowedOrigins": origins,
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000,
+}]}))
+PYCORS
+  aws s3api put-bucket-cors --bucket "${BUCKET}" \
+    --cors-configuration "file:///tmp/${APP}-cors.json"
+  rm -f /tmp/${APP}-cors.json
+  echo "  CORS allows PUT from: ${cors_origins}"
+
   say "IAM roles"
   local trust='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 
