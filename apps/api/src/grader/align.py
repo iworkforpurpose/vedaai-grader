@@ -469,6 +469,67 @@ def align(
         # Recorded so a run of three blocks carries through, not only two.
         owner_of_block[block.block_id] = above
 
+    blocks_by_id = {block.block_id: block for block in blocks}
+
+    # A block whose own question has already been taken joins it, rather than
+    # settling for whatever is left.
+    #
+    # A student answered question 1 on page one and again on page two. Both blocks
+    # prefer question 1 and prefer it clearly — 0.626 and 0.656, against 0.493 and
+    # 0.351 for the next best. The stronger one took it, and a claimed question
+    # leaves the alignment entirely, so the page-one block came back to a field
+    # with its own answer missing from it and settled on "State whether a python
+    # is a specialist or a generalist", worth one mark. Clicking that question lit
+    # up the whole pandas paragraph, which is what a teacher reported.
+    #
+    # Nothing in the scoring was wrong. What was wrong is that being taken removed
+    # question 1 instead of making it something to join — and a few lines above,
+    # for blocks the evidence has *narrowed* to one question, this module already
+    # says the opposite: a second block on the same question is the rest of that
+    # answer, not a competitor for it. This is the same statement for a block that
+    # prefers a question without having been narrowed to it.
+    for block in blocks:
+        if block.block_id in claimed_blocks or block.block_id in labelled_blocks:
+            continue
+        if block.is_text_free or not block.text.strip():
+            continue
+
+        scored = sorted(
+            ((_semantic(question, block, similarity), question) for question in questions),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
+        if not scored:
+            continue
+        top_score, top = scored[0]
+        floor = float(getattr(similarity, "unrelated_below", 0.0) or 0.0)
+        if top.qid not in claimed_qids or (floor > 0.0 and top_score < floor):
+            continue
+
+        owner = next((a for a in assignments if a.qid == top.qid), None)
+        if owner is None:
+            continue
+
+        # Only where it answers that question about as well as the writing already
+        # placed on it. Two halves of one answer look alike to the scorer — 0.626
+        # and 0.656 here — and rough work sitting on the same paper does not.
+        #
+        # Judged against the answer already there rather than against the
+        # runner-up, because the runner-up says nothing about whether this is more
+        # of the same answer, and handing every leftover to whichever answer
+        # already exists is how a highlight quietly grows to cover the page.
+        placed = [
+            _semantic(top, blocks_by_id[bid], similarity)
+            for bid in owner.block_ids
+            if bid in blocks_by_id
+        ]
+        if not placed or top_score < max(placed) * SETTLE_RATIO:
+            continue
+
+        owner.block_ids.append(block.block_id)
+        claimed_blocks.add(block.block_id)
+        owner.block_ids.sort(key=lambda bid: order.get(bid, 0))
+
     remaining_questions = [q for q in questions if q.qid not in claimed_qids]
     remaining_blocks = [b for b in blocks if b.block_id not in claimed_blocks]
 

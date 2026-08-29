@@ -303,6 +303,92 @@ class TestMultiBlockAnswers:
         )
 
 
+class TestABlockWhoseQuestionIsAlreadyTakenJoinsIt:
+    """Two blocks that both answer question 1 must both go to question 1.
+
+    The complaint that started this, reproduced on the deployed service with the
+    scorer it really uses. A student answered question 1 on page one and again on
+    page two. Measured against the paper:
+
+        page one block   question 1 = 0.626,  question 3(ii) = 0.493
+        page two block   question 1 = 0.656,  question 3(ii) = 0.351
+
+    Both prefer question 1, and clearly. The stronger one takes it, and a claimed
+    question leaves the alignment entirely — so the page-one block came back to a
+    field with its own answer missing from it and settled for 3(ii), "State
+    whether a python is a specialist or a generalist", worth one mark. Clicking
+    3(ii) lit up the whole pandas paragraph.
+
+    Nothing in the scoring is wrong. What was wrong is that being taken removed
+    question 1 from consideration instead of making it something to join, and the
+    module already says as much where two blocks are *decided* on one question:
+    "A second block decided on the same question is the rest of that answer, not a
+    competitor for it." This is the same statement for blocks that prefer one
+    without being narrowed to it.
+    """
+
+    QUESTIONS = [
+        q("A/1", "1.", "Explain how pandas in China are similar to koalas in "
+          "Australia, and how both are different from the python.", 0, ["1"], marks=5),
+        q("A/2", "2.", "The author uses the word 'invasive' throughout the passage. "
+          "Explain why this word is significant.", 1, ["2"], marks=4),
+        q("A/3/i", "(i)", "Name the single food source each specialist depends on.",
+          2, ["3", "i"], marks=2),
+        q("A/3/ii", "(ii)", "State whether a python is a specialist or a generalist.",
+          3, ["3", "ii"], marks=1),
+    ]
+
+    FIRST = (
+        "As described in the article, pandas eat an abundance of bamboo and "
+        "therefore are specialist to China, while the koala eats eucalyptus "
+        "leaves almost exclusively. Both these animals are specialists to one "
+        "habitat while the python, a generalist is able to live in a wider "
+        "range of habitats virtually anywhere."
+    )
+    SECOND = (
+        "Pandas and koalas are similar because they both need a certain food "
+        "that they eat such as bamboo and eucalyptus leaves, but a python will "
+        "not eat anything so specific and can live in many more places."
+    )
+
+    #: Measured on the deployed service against `text-embedding-3-small`.
+    MEASURED = {
+        ("A/1", "first"): 0.626, ("A/1", "second"): 0.656,
+        ("A/2", "first"): 0.173, ("A/2", "second"): 0.150,
+        ("A/3/i", "first"): 0.414, ("A/3/i", "second"): 0.342,
+        ("A/3/ii", "first"): 0.493, ("A/3/ii", "second"): 0.351,
+    }
+
+    def _mapping(self):
+        by_text = {question.text: question.qid for question in self.QUESTIONS}
+        first_text, measured = self.FIRST, self.MEASURED
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, block_text: str) -> float:
+                which = "first" if block_text == first_text else "second"
+                return measured.get((by_text.get(question_text, ""), which), 0.0)
+
+        result = resolve(
+            paper(self.QUESTIONS),
+            [
+                block("blk:000", self.FIRST, y0=0.10, page=0, line_ids=["as:0001"]),
+                block("blk:001", self.SECOND, y0=0.10, page=1, line_ids=["as:0002"]),
+            ],
+            [],
+            [],
+            similarity=Measured(),
+        )
+        return {m.qid: m for m in result.mappings}
+
+    def test_both_blocks_reach_the_question_they_answer(self) -> None:
+        assert self._mapping()["A/1"].block_ids == ["blk:000", "blk:001"]
+
+    def test_the_one_mark_question_is_not_given_the_leftover(self) -> None:
+        assert self._mapping()["A/3/ii"].status is not AnswerStatus.ANSWERED
+
+
 class TestATailCarriesOnFromTheAnswerAboveIt:
     """A block that continues a placed answer joins it, rather than finding a home.
 
