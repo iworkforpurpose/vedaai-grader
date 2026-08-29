@@ -575,16 +575,19 @@ class TestSubPartsAnsweredInOneRun:
                "An atom has 11 protons and 12 neutrons. Give its atomic number "
                "and mass number.", 2, ["11", "b"], marks=1)
 
+    #: The block verbatim, forty-four words of it. The length matters to the test:
+    #: measured against 11(b)'s single mark the run is nearly four times too long,
+    #: and it is that ratio, not the wording, that used to lose it.
     BOTH = (
         "11. Atomic number is the number of protons in the nucleus and mass "
-        "number is the total of protons and neutrons. The atom has atomic "
-        "number 11 and mass number 23."
+        "number is the total of protons and neutrons. For the given atom the "
+        "atomic number is 11 and the mass number is 11 + 12 = 23. So it is sodium."
     )
 
     #: What `text-embedding-3-small` returns for this run against these two, which
     #: is what the deployed service scores with. Word overlap does not reproduce
     #: the fault, and a test that passes before the fix demonstrates nothing.
-    MEASURED = {"B/11/a": 0.720, "B/11/b": 0.830, "C/15": 0.244, "C/16": 0.207}
+    MEASURED = {"B/11/a": 0.659, "B/11/b": 0.752, "C/15": 0.244, "C/16": 0.207}
 
     def _similarity(self):
         by_text = {

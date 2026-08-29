@@ -707,7 +707,22 @@ def _score_matrix(
     DP with nothing but a position prior that reversal had inverted.
     """
     hints = label_hints or {}
-    raw = [[_fit(question, block, similarity) for block in blocks] for question in questions]
+    # Kept apart on purpose. `meaning` is how much the two texts are about the same
+    # thing; `raw` adds whether the answer is the size the question asked for. The
+    # floor below is a statement about relatedness and is calibrated on meaning —
+    # an unrelated paper scores 0.148 to 0.154, a paper against its own answers
+    # 0.536 to 0.779 — so applying it to the scaled number reads a scale mismatch
+    # as unrelatedness. Question 11(b) of a real script means 0.752 to the run that
+    # answers it and scales to 0.205, and was thrown out as though it were writing
+    # from somebody else's paper.
+    meaning = [
+        [_semantic(question, block, similarity) for block in blocks]
+        for question in questions
+    ]
+    raw = [
+        [meaning[i][j] * _scope_fit(question, blocks[j]) for j in range(len(blocks))]
+        for i, question in enumerate(questions)
+    ]
     # Each block's similarities re-expressed as deviations from its own mean.
     #
     # Centring says the necessary thing: a block equally similar to every question
@@ -778,7 +793,7 @@ def _score_matrix(
             # different paper scored 0.15 against every question while reporting
             # five of seven answered, and highlighted handwritten C as an essay
             # about pandas.
-            if floor > 0.0 and raw[i][j] < floor:
+            if floor > 0.0 and meaning[i][j] < floor:
                 matrix[i][j] = -inf
                 continue
             if best > 0.0 and raw[i][j] < best * SETTLE_RATIO:
