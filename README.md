@@ -78,9 +78,9 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer mapping accuracy | 81.1% |
-| Highlight IoU vs the writing, mean | 0.600 |
-| Highlight IoU@0.5 hit rate | 82% |
+| Answer mapping accuracy | 82.6% |
+| Highlight IoU vs the writing, mean | 0.612 |
+| Highlight IoU@0.5 hit rate | 84% |
 | Written labels reaching their own line | 100% |
 | **False "unanswered" rate** | **0.0%** |
 

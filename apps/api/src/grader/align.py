@@ -87,7 +87,6 @@ from .questions.expects import expects_a_drawing
 W_LABEL = 3.0
 W_SEMANTIC = 1.0
 W_ORDER = 0.15
-W_LENGTH = 0.2
 
 #: Cost of leaving a question unanswered, and of emitting an orphan block.
 #:
@@ -292,7 +291,7 @@ def align(
     # change as questions are taken.
     block_best = {
         block.block_id: max(
-            (similarity.score(question.text, block.text) for question in questions),
+            (_fit(question, block, similarity) for question in questions),
             default=0.0,
         )
         for block in blocks
@@ -392,6 +391,75 @@ def align(
     for assignment in decided_by_qid.values():
         assignment.block_ids.sort(key=lambda bid: order.get(bid, 0))
 
+    # A block that carries on from the answer directly above it.
+    #
+    # Page four of a real script held one answer to question 2, written down the
+    # page with a paragraph break in the middle. The segmenter read the break as a
+    # boundary, and the second half opens mid-sentence and quotes the passage —
+    # which sent it to question 6, "describe the tone ... quoting one phrase in
+    # support", because quoting is what it appeared to be doing.
+    #
+    # `continue` is the move for exactly this, and it could not run: question 2 had
+    # already been claimed above, so it had left the alignment entirely and there
+    # was nothing for the tail to continue. Adjacency is settled before the rest
+    # runs, on the same terms the rest uses — a tail joins the answer above it when
+    # no question of its own beats settling for that one.
+    hints = _label_hints(anchors, block_of_line, known_qids)
+    labelled_blocks = {block_id for _qid, block_id in hints}
+    owner_of_block: dict[str, Assignment] = {
+        block_id: assignment
+        for assignment in assignments
+        for block_id in assignment.block_ids
+    }
+    question_by_qid = {question.qid: question for question in questions}
+
+    for position, block in enumerate(blocks):
+        if position == 0 or block.block_id in claimed_blocks:
+            continue
+        if block.block_id in labelled_blocks:
+            # The student wrote a question number beside it. Their statement of
+            # intent outranks what the block above happens to be.
+            continue
+        if block.is_text_free or not block.text.strip():
+            # A region with no readable text has nothing to be the rest of. It
+            # could be a diagram, and _text_free_match_is_plausible is where that
+            # is decided — on the two honest reasons, a drawing question or the
+            # student's own label. Reaching around it here attached an unreadable
+            # region to the answer above purely because it sat under it, which is
+            # how a highlight grows past the writing it is supposed to mark.
+            continue
+        previous = blocks[position - 1]
+        above = owner_of_block.get(previous.block_id)
+        if above is None:
+            continue
+        question = question_by_qid.get(above.qid)
+        if question is None:
+            continue
+        if not _runs_on_from(previous, block):
+            continue
+
+        # No absolute floor on the resemblance, unlike everywhere else. A
+        # continuation is the rest of a sentence and need not look like the
+        # question at all — this one scores 0.176 against question 2, well under
+        # the 0.30 that marks a pair as unrelated, and it is still question 2's.
+        # Its evidence is positional.
+        #
+        # What keeps that from spreading is the rule's own shape: it can only
+        # extend an answer that something else already established. An answer
+        # sheet belonging to a different paper claims nothing in the first place,
+        # so there is no answer for a tail to join.
+        fit = _fit(question, block, similarity)
+        best = block_best.get(block.block_id, 0.0)
+        if best > 0.0 and fit < best * SETTLE_RATIO:
+            # It prefers somewhere else clearly enough that this is a new answer,
+            # not the rest of the one above.
+            continue
+
+        above.block_ids.append(block.block_id)
+        claimed_blocks.add(block.block_id)
+        # Recorded so a run of three blocks carries through, not only two.
+        owner_of_block[block.block_id] = above
+
     remaining_questions = [q for q in questions if q.qid not in claimed_qids]
     remaining_blocks = [b for b in blocks if b.block_id not in claimed_blocks]
 
@@ -400,7 +468,7 @@ def align(
             remaining_questions,
             remaining_blocks,
             similarity=similarity,
-            label_hints=_label_hints(anchors, block_of_line, known_qids),
+            label_hints=hints,
             block_best=block_best,
         )
     )
@@ -434,9 +502,7 @@ def _decided_pairs(
         if len(live) != 1:
             continue
         i = live[0]
-        pairs.append((questions[i].qid, block.block_id, similarity.score(
-            questions[i].text, block.text
-        )))
+        pairs.append((questions[i].qid, block.block_id, _fit(questions[i], block, similarity)))
 
     pairs.sort(key=lambda pair: pair[2], reverse=True)
     return pairs
@@ -641,9 +707,7 @@ def _score_matrix(
     DP with nothing but a position prior that reversal had inverted.
     """
     hints = label_hints or {}
-    raw = [
-        [_semantic(question, block, similarity) for block in blocks] for question in questions
-    ]
+    raw = [[_fit(question, block, similarity) for block in blocks] for question in questions]
     # Each block's similarities re-expressed as deviations from its own mean.
     #
     # Centring says the necessary thing: a block equally similar to every question
@@ -682,7 +746,6 @@ def _score_matrix(
             score = (
                 W_SEMANTIC * (raw[i][j] - baselines[j])
                 + W_ORDER * _order_prior(i, j, len(questions), len(blocks))
-                + W_LENGTH * _length_plausibility(question, block)
                 + hint
             )
             # Unavailable, not clamped. A pairing this weak must lose to a gap,
@@ -706,12 +769,30 @@ def _score_matrix(
         # to prevent.
         column = [raw[i][j] for i in range(len(questions))]
         best = (block_best or {}).get(block.block_id) or (max(column) if column else 0.0)
+        # The question this block prefers among the ones on offer here. Its
+        # relatives are exempt from the settle rule below, which is not the same
+        # as the paper-wide best used for the threshold itself.
+        preferred = max(range(len(questions)), key=lambda i: column[i]) if column else None
         for i in range(len(questions)):
             # Unrelated to this question outright. An answer sheet belonging to a
             # different paper scored 0.15 against every question while reporting
             # five of seven answered, and highlighted handwritten C as an essay
             # about pandas.
-            if floor > 0.0 and raw[i][j] < floor or best > 0.0 and raw[i][j] < best * SETTLE_RATIO:
+            if floor > 0.0 and raw[i][j] < floor:
+                matrix[i][j] = -inf
+                continue
+            if best > 0.0 and raw[i][j] < best * SETTLE_RATIO:
+                # A sibling of the question this block prefers is not somewhere to
+                # settle for — it is the other half of the same answer. Question 11
+                # of a real script was answered in one 44-word run covering both
+                # (a), worth 2, and (b), worth 1; measured against (b) alone the run
+                # is four times too long, so this rule cut (b) out before `share`
+                # could be considered and reported it uncertain. Whether the run
+                # really covers both is what `share` and `_share_support` decide.
+                if preferred is not None and _is_part_of_the_same_question(
+                    questions[preferred], questions[i], block
+                ):
+                    continue
                 matrix[i][j] = -inf
 
     # Judged on the semantic deviations alone, not on the assembled score.
@@ -847,6 +928,48 @@ def _text_free_match_is_plausible(
     return expects_a_drawing(question.text)
 
 
+#: Vertical space, as a share of page height, that a continuation may leave below
+#: the answer it carries on from. About two blank lines of ordinary handwriting —
+#: a paragraph break, not a fresh start further down the page.
+_TAIL_MAX_GAP = 0.12
+
+#: How far down a page a continuation may begin when it carries on from the page
+#: before. An answer running over the page break resumes at the top of the next
+#: one; writing that starts halfway down it is something else.
+_TAIL_PAGE_TOP = 0.25
+
+
+def _runs_on_from(previous: AnswerBlock, block: AnswerBlock) -> bool:
+    """Whether this block sits where the rest of the one above it would.
+
+    Adjacency in the block list is not enough on its own. A block of rough work
+    at the foot of the page is also "next", and joining it to the answer at the
+    top would attach working to a question the student never meant it for.
+    """
+    if not previous.geometry or not block.geometry:
+        return False
+
+    ends = max(previous.geometry, key=lambda box: (box.page, box.box.y1))
+    starts = min(block.geometry, key=lambda box: (box.page, box.box.y0))
+
+    if starts.page == ends.page:
+        return starts.box.y0 - ends.box.y1 <= _TAIL_MAX_GAP
+    if starts.page == ends.page + 1:
+        return starts.box.y0 <= _TAIL_PAGE_TOP
+    return False
+
+
+def _fit(question: Question, block: AnswerBlock, similarity: Similarity) -> float:
+    """How well this block answers this question — in meaning and in scale.
+
+    The two are combined here rather than further down because every rule that
+    follows reads this number: which question a block prefers, whether it is
+    settling for one, whether the evidence has decided. A scale mismatch that only
+    reaches the assembled score arrives after those have already run.
+    """
+    return _semantic(question, block, similarity) * _scope_fit(question, block)
+
+
 def _semantic(question: Question, block: AnswerBlock, similarity: Similarity) -> float:
     if not block.text.strip():
         # A text-free block is a diagram or an unreadable region. It carries no
@@ -854,6 +977,38 @@ def _semantic(question: Question, block: AnswerBlock, similarity: Similarity) ->
         # against a gap — leaving a question answered by a drawing unanswered.
         return 0.25
     return similarity.score(question.text, block.text)
+
+
+def _is_part_of_the_same_question(
+    owner: Question, candidate: Question, block: AnswerBlock
+) -> bool:
+    """Whether these two are parts of one numbered question — 11 (a) and 11 (b).
+
+    Stricter than `_may_share`, deliberately. That one calls two questions
+    siblings when their labels have the same parent, and the parent of every
+    top-level question is the same empty root, so under it question 1, question 4
+    and question 6 are all siblings. In the alignment that is held in check by
+    what sharing costs and by the length evidence supporting it. Used to excuse a
+    question from the settle rule it is not held in check by anything, and one
+    block about refraction was let through to "the chemical formula of washing
+    soda" and "the tissue that transports water in a plant".
+
+    So this asks the narrower question: are they parts of one question, rather
+    than merely two questions at the same level.
+    """
+    if block.is_text_free or not block.text.strip():
+        return False
+
+    owner_path, candidate_path = tuple(owner.path), tuple(candidate.path)
+    if len(owner_path) < 2 and len(candidate_path) < 2:
+        # Two whole questions. Answering both in one run is possible and is what
+        # `share` is for; it is not a reason to exempt either from settling.
+        return False
+    if owner_path[:-1] and owner_path[:-1] == candidate_path[:-1]:
+        return True
+    # A part and the question it belongs to.
+    shorter, longer = sorted((owner_path, candidate_path), key=len)
+    return len(longer) > len(shorter) and longer[: len(shorter)] == shorter
 
 
 def _may_share(owner: Question, candidate: Question, block: AnswerBlock) -> bool:
@@ -920,19 +1075,70 @@ def _order_prior(i: int, j: int, n: int, m: int) -> float:
     return 1.0 - abs((i / (n - 1)) - (j / (m - 1)))
 
 
-def _length_plausibility(question: Question, block: AnswerBlock) -> float:
-    """Whether the answer's length suits the marks on offer.
+#: Words a mark buys in a written answer. Rough by nature; it is the order of
+#: magnitude that carries the signal, not the number.
+_WORDS_PER_MARK = 12
 
-    A five-mark question answered in four words, or a one-mark question answered
-    in two hundred, is worth a small nudge away from. Small, because students are
-    not consistent and a terse correct answer is still correct.
+#: The shortest answer any question is expected to draw.
+_WORDS_MINIMUM = 6
+
+#: What a question asking for a diagram expects in words: a handful of labels.
+#: The answer is meant to be in ink, so prose is evidence against the pairing
+#: however much vocabulary it shares.
+_WORDS_FOR_A_DRAWING = 8
+
+#: Below this share of what was expected, an answer is a fragment rather than a
+#: terse answer, and the difference is worth saying.
+_FRAGMENT_SHARE = 0.25
+
+
+def _expected_words(question: Question) -> int | None:
+    """Roughly how much writing this question asks for."""
+    if expects_a_drawing(question.text):
+        return _WORDS_FOR_A_DRAWING
+    if question.marks is None:
+        return None
+    return max(_WORDS_MINIMUM, question.marks * _WORDS_PER_MARK)
+
+
+def _scope_fit(question: Question, block: AnswerBlock) -> float:
+    """Whether the answer's size suits what the question asked for.
+
+    A multiplier on the meaning, neutral at 1.0, because everything downstream —
+    which question a block prefers, whether it is settling for one, whether the
+    evidence has already decided — reasons about the similarity itself. Added
+    alongside instead, this was overruled before it could be heard: the settle
+    rule eliminated the pandas paragraph's own question on the raw score, and
+    nothing further down had it to choose.
+
+    Meaning alone cannot always separate two questions, because one can be a topic
+    of the other. Four pages of real handwriting showed it: the answer to "Explain
+    how pandas in China are similar to koalas in Australia, and how both are
+    different from the python" — worth 5, and five lines long — mentions a python
+    and a generalist along the way, and so scored higher against "State whether a
+    python is a specialist or a generalist", worth ONE. Clicking 3(ii) lit up the
+    whole pandas paragraph. The same paragraph scored higher still against "Draw a
+    labelled diagram", which asks for no prose at all.
+
+    Scale is what separates them, and it is asymmetric, which the earlier version
+    of this was not. Writing **less** than the marks suggest is ordinary — a terse
+    correct answer is still correct, and the student loses marks rather than their
+    place on the paper — so it costs nothing until the answer is so short it reads
+    as a fragment. Writing several times **more** than a one-mark question can
+    justify is real evidence that it is not that question's answer.
     """
-    if question.marks is None or not block.text.strip():
-        return 0.0
+    expected = _expected_words(question)
+    if expected is None or not block.text.strip():
+        # Nothing to say. A text-free region is judged by the rules that exist for
+        # it, and a question printing no marks gives no scale to measure against.
+        return 1.0
+
     words = len(block.text.split())
-    expected = max(6, question.marks * 12)
-    ratio = min(words, expected) / max(words, expected)
-    return ratio
+    if words > expected:
+        return expected / words
+    # Terse, which is ordinary, until it is a fragment of what was asked for.
+    fragment = expected * _FRAGMENT_SHARE
+    return 1.0 if words >= fragment else words / fragment
 
 
 def _traceback(

@@ -144,6 +144,91 @@ class TestConfirmedAnchors:
         assert mapping.evidence.label_agreement < 3.0
 
 
+class TestAnAnswerMustFitWhatTheQuestionAsked:
+    """A one-mark question is not answered in five lines, and a diagram is not prose.
+
+    From four pages of genuine handwriting. The student's answer to question 1 —
+    "Explain how pandas in China are similar to koalas in Australia, and how both
+    are different from the python", worth 5 — runs five lines and thirty-one words:
+
+        As described in the article, pandas eat an abundance of bamboo and
+        therefore are specialist to China, while the koala eats eucalyptus leaves
+        almost exclusively. Both these animals are specialists to one habitat
+        while the python, a generalist is able to live in a wider range of
+        habitats virtually anywhere.
+
+    Because it names a python and a generalist, it scored higher against 3(ii) —
+    "State whether a python is a specialist or a generalist", worth ONE mark —
+    than against the question it plainly answers. Clicking question 3(ii) lit up
+    the whole pandas paragraph.
+
+    Meaning alone cannot separate these: 3(ii) really is a topic of the paragraph.
+    What separates them is scale. One mark buys a phrase, and a question asking
+    for a labelled diagram is not answered in thirty-one words of prose at all.
+    """
+
+    ANSWER = (
+        "As described in the article, pandas eat an abundance of bamboo and "
+        "therefore are specialist to China, while the koala eats eucalyptus "
+        "leaves almost exclusively. Both these animals are specialists to one "
+        "habitat while the python, a generalist is able to live in a wider "
+        "range of habitats virtually anywhere."
+    )
+
+    COMPARE = q(
+        "A/1", "1.",
+        "Explain how pandas in China are similar to koalas in Australia, and how "
+        "both are different from the python.",
+        0, ["1"], marks=5,
+    )
+    STATE = q(
+        "A/3/ii", "(ii)",
+        "State whether a python is a specialist or a generalist.",
+        1, ["3", "ii"], marks=1,
+    )
+    DRAW = q(
+        "A/4", "4.",
+        "Draw a labelled diagram contrasting the range of a specialist with that "
+        "of a generalist.",
+        2, ["4"], marks=3,
+    )
+
+    def _where_it_landed(self) -> str | None:
+        result = resolve(
+            paper([self.COMPARE, self.STATE, self.DRAW]),
+            [block("blk:000", self.ANSWER, y0=0.10, line_ids=["as:0001"])],
+            [],
+            [],
+        )
+        for mapping in result.mappings:
+            if mapping.status is AnswerStatus.ANSWERED:
+                return mapping.qid
+        return None
+
+    def test_the_paragraph_goes_to_the_question_it_answers(self) -> None:
+        assert self._where_it_landed() == "A/1"
+
+    def test_a_one_mark_question_does_not_claim_five_lines(self) -> None:
+        assert self._where_it_landed() != "A/3/ii"
+
+    def test_a_drawing_question_is_not_answered_in_prose(self) -> None:
+        assert self._where_it_landed() != "A/4"
+
+    def test_a_terse_answer_to_a_big_question_is_still_its_answer(self) -> None:
+        # The mirror case, and the reason under-length costs nothing. Students are
+        # not paid by the word: a correct one-line answer to a five-mark question
+        # loses marks, not its place on the paper.
+        result = resolve(
+            paper([MOTOR, REFRACTION]),
+            [block("blk:000", "The motor spins because the current turns the coil.",
+                   y0=0.10, line_ids=["as:0001"])],
+            [],
+            [],
+        )
+        landed = {m.qid: m.status for m in result.mappings}
+        assert landed["A/3"] is AnswerStatus.ANSWERED
+
+
 class TestGapsAndOrphans:
     def test_an_unanswered_question_is_a_gap_on_the_question_axis(self) -> None:
         questions = [REFRACTION, MOTOR]
@@ -229,6 +314,159 @@ class TestMultiBlockAnswers:
         )
 
 
+class TestATailCarriesOnFromTheAnswerAboveIt:
+    """A block that continues a placed answer joins it, rather than finding a home.
+
+    Page four of the same real script, in full. One answer to question 2 — "The
+    author uses the word 'invasive' throughout the passage. Explain why this word
+    is significant" — written down the page with a paragraph break in the middle,
+    which the segmenter read as the end of one block and the start of another:
+
+        The word "invasive", is very important to rest of the article.
+
+        ecosystems, the author writes, "Biologists, however, say that invasive
+        species unchecked by natural predators are a major threat to biodiversity."
+
+    The second block opens mid-sentence and quotes the passage, and that quoting
+    is what undid it: question 6 asks the student to describe a tone "quoting one
+    phrase in support", so the tail landed there instead.
+
+    Question 2 had already been claimed by the block above, and a claimed question
+    leaves the alignment entirely — so the move that exists for exactly this,
+    carrying an answer across a block boundary, had nothing left to carry it to.
+    A tail whose own preference is no better than settling therefore joins the
+    answer directly above it before the rest of the alignment runs.
+    """
+
+    QUESTIONS = [
+        q("A/1", "1.", "Explain how pandas in China are similar to koalas in "
+          "Australia, and how both are different from the python.", 0, ["1"], marks=5),
+        q("A/2", "2.", "The author uses the word 'invasive' throughout the passage. "
+          "Explain why this word is significant.", 1, ["2"], marks=4),
+        q("A/3/i", "(i)", "Name the single food source each specialist depends on.",
+          2, ["3", "i"], marks=2),
+        q("A/3/ii", "(ii)", "State whether a python is a specialist or a generalist.",
+          3, ["3", "ii"], marks=1),
+        q("A/4", "4.", "Draw a labelled diagram contrasting the range of a "
+          "specialist with that of a generalist.", 4, ["4"], marks=3),
+        q("B/5", "5.", "Suggest two measures a government could take to limit the "
+          "spread of an invasive species.", 5, ["5"], marks=5),
+        q("B/6", "6.", "Describe the tone the author adopts towards the pet trade, "
+          "quoting one phrase in support.", 6, ["6"], marks=5),
+    ]
+    QID_BY_TEXT = {question.text: question.qid for question in QUESTIONS}
+
+    HEAD = 'The word "invasive", is very important to rest of the article.'
+    TAIL = (
+        'ecosystems, the author writes, "Biologists, however, say that invasive '
+        'species unchecked by natural predators are a major threat to biodiversity."'
+    )
+
+    #: Measured, not invented. These are what `text-embedding-3-small` returns for
+    #: this page against this paper — the scorer the deployed service uses. Word
+    #: overlap does not reproduce the fault at all, and a test that cannot fail
+    #: before the fix demonstrates nothing, so the real numbers are pinned here.
+    MEASURED = {
+        ("A/1", "head"): 0.083, ("A/1", "tail"): 0.115,
+        ("A/2", "head"): 0.369, ("A/2", "tail"): 0.176,
+        ("A/3/i", "head"): 0.043, ("A/3/i", "tail"): 0.064,
+        ("A/3/ii", "head"): 0.081, ("A/3/ii", "tail"): 0.122,
+        ("A/4", "head"): 0.048, ("A/4", "tail"): 0.107,
+        ("B/5", "head"): 0.186, ("B/5", "tail"): 0.215,
+        ("B/6", "head"): 0.143, ("B/6", "tail"): 0.115,
+    }
+
+    def _similarity(self):
+        outer = self
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, block_text: str) -> float:
+                which = "head" if block_text == outer.HEAD else "tail"
+                for (qid, part), value in outer.MEASURED.items():
+                    if part == which and qid in outer.QID_BY_TEXT.get(question_text, ""):
+                        return value
+                return 0.0
+
+        return Measured()
+
+    def _mapping(self):
+        result = resolve(
+            paper(self.QUESTIONS),
+            [
+                block("blk:004", self.HEAD, y0=0.22, page=3, line_ids=["as:0004"]),
+                block("blk:005", self.TAIL, y0=0.29, page=3, line_ids=["as:0005"]),
+            ],
+            [],
+            [],
+            similarity=self._similarity(),
+        )
+        return {m.qid: m for m in result.mappings}
+
+    def test_the_tail_joins_the_answer_it_continues(self) -> None:
+        assert self._mapping()["A/2"].block_ids == ["blk:004", "blk:005"]
+
+    def test_the_tail_does_not_answer_a_question_of_its_own(self) -> None:
+        assert self._mapping()["B/6"].status is not AnswerStatus.ANSWERED
+
+    def test_an_unreadable_region_below_an_answer_is_not_swallowed_by_it(self) -> None:
+        """A region with no readable text has nothing to be the rest of.
+
+        Caught by the golden set rather than by reasoning: the first version of
+        the tail rule reached around the guard that says an unreadable region
+        needs a reason — a drawing question, or a label the student wrote — and
+        attached one to the answer above purely because it sat underneath. Which
+        is how a highlight grows past the writing it is meant to mark, and how
+        the unassigned-ink total that qualifies every absence claim on the page
+        quietly goes to zero.
+        """
+        ink = AnswerBlock(
+            block_id="blk:ink000",
+            line_ids=[],
+            ink_region_ids=["ink:000"],
+            text="",
+            geometry=[PageBox(page=0, box=BBox(x0=0.1, y0=0.22, x1=0.5, y1=0.30))],
+            pages_spanned=[0],
+            is_text_free=True,
+        )
+        result = resolve(
+            paper([REFRACTION]),
+            [
+                block("blk:000", "Refraction is the bending of light as it passes "
+                                 "from one medium into another.", y0=0.10,
+                      line_ids=["as:0001"]),
+                ink,
+            ],
+            [anchor("anc:000", "1.", "A/1", "as:0001")],
+            [],
+        )
+        placed = {m.qid: m.block_ids for m in result.mappings}
+        assert placed["A/1"] == ["blk:000"]
+        assert [o.block_id for o in result.orphans] == ["blk:ink000"]
+
+    def test_a_block_that_clearly_answers_its_own_question_is_left_alone(self) -> None:
+        # The guard. Two answers written one after the other must not be merged
+        # just because they are adjacent — the tail rule only applies where the
+        # block has no better home of its own than settling for its neighbour's.
+        result = resolve(
+            paper([REFRACTION, REFLECTION]),
+            [
+                block("blk:000", "Refraction is the bending of light as it passes "
+                                 "from one medium into another.", y0=0.10,
+                      line_ids=["as:0001"]),
+                block("blk:001", "The angle of incidence equals the angle of "
+                                 "reflection, and both rays lie in one plane.",
+                      y0=0.40, line_ids=["as:0002"]),
+            ],
+            [],
+            [],
+        )
+        placed = {m.qid: m.block_ids for m in result.mappings}
+        assert placed["A/1"] == ["blk:000"]
+        assert placed["A/2"] == ["blk:001"]
+
+
 class TestWritingThatAnswersNothing:
     """Refusing to place writing that does not answer the question it is offered.
 
@@ -308,6 +546,112 @@ class TestWritingThatAnswersNothing:
         assert motor.status is not AnswerStatus.ANSWERED, (
             "a block scoring 0.439 was accepted by a question whose own best is 0.689"
         )
+
+
+class TestSubPartsAnsweredInOneRun:
+    """A block answering two sub-parts must not be cut off from one of them.
+
+    Question 11 of the science script, answered as a single 44-word run:
+
+        11. Atomic number is the number of protons in the nucleus and mass number
+        is the total of protons and neutrons. The atom has atomic number 11 and
+        mass number 23.
+
+    11(a) is worth 2 and 11(b) worth 1, so measured against 11(b) alone the run is
+    nearly four times too long — and the rule that stops a block settling for a
+    question when its own is taken read that as settling, and cut 11(b) before the
+    move that exists for exactly this could be considered. 11(b) came back
+    uncertain on a question the student had plainly answered.
+
+    A sibling of the block's best question is not somewhere to settle for. It is
+    the other half of the same answer, and whether the block really covers both is
+    what `share` and its length support are there to decide.
+    """
+
+    PARENT = q("B/11", "11.", "Answer the following:", 0, ["11"], marks=None)
+    PART_A = q("B/11/a", "11 (a)", "Define atomic number and mass number.",
+               1, ["11", "a"], marks=2)
+    PART_B = q("B/11/b", "11 (b)",
+               "An atom has 11 protons and 12 neutrons. Give its atomic number "
+               "and mass number.", 2, ["11", "b"], marks=1)
+
+    BOTH = (
+        "11. Atomic number is the number of protons in the nucleus and mass "
+        "number is the total of protons and neutrons. The atom has atomic "
+        "number 11 and mass number 23."
+    )
+
+    #: What `text-embedding-3-small` returns for this run against these two, which
+    #: is what the deployed service scores with. Word overlap does not reproduce
+    #: the fault, and a test that passes before the fix demonstrates nothing.
+    MEASURED = {"B/11/a": 0.720, "B/11/b": 0.830, "C/15": 0.244, "C/16": 0.207}
+
+    def _similarity(self):
+        by_text = {
+            question.text: question.qid
+            for question in (self.PART_A, self.PART_B, self.DISTRACTOR)
+        }
+        measured = self.MEASURED
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, _block_text: str) -> float:
+                return measured.get(by_text.get(question_text, ""), 0.0)
+
+        return Measured()
+
+    DISTRACTOR = q("C/15", "15.",
+                   "Explain the process of photosynthesis, naming the raw "
+                   "materials and the products.", 3, ["15"], marks=5)
+
+    def test_both_sub_parts_are_reported_answered(self) -> None:
+        result = resolve(
+            paper([self.PART_A, self.PART_B, self.DISTRACTOR]),
+            [block("blk:008", self.BOTH, y0=0.10,
+                   line_ids=["as:0008", "as:0009", "as:0010"])],
+            [],
+            [],
+            similarity=self._similarity(),
+        )
+        status = {m.qid: m.status for m in result.mappings}
+        assert status["B/11/a"] is AnswerStatus.ANSWERED
+        assert status["B/11/b"] is AnswerStatus.ANSWERED, (
+            "the student answered it in the same breath as (a)"
+        )
+
+    def test_two_whole_questions_are_not_parts_of_one(self) -> None:
+        """The exemption is for parts of a question, not for questions.
+
+        The first version of it asked `_may_share`, which calls two questions
+        siblings when their labels share a parent — and the parent of every
+        top-level question is the same empty root. So question 1, question 4 and
+        question 6 were all each other's siblings, and one block about refraction
+        was let through the settle rule onto "the chemical formula of washing
+        soda" and "the tissue that transports water in a plant".
+        """
+        refraction = block(
+            "blk:000",
+            "Refraction is the bending of light as it passes from one medium "
+            "into another of different density.",
+            y0=0.10, line_ids=["as:0001"],
+        )
+        result = resolve(
+            paper([
+                REFRACTION,
+                q("A/4", "4.", "Write the chemical formula of washing soda.",
+                  1, ["4"], marks=1),
+                q("A/6", "6.", "Name the tissue that transports water in a plant.",
+                  2, ["6"], marks=1),
+            ]),
+            [refraction],
+            [anchor("anc:000", "1.", "A/1", "as:0001")],
+            [],
+        )
+        placed = {m.qid: m.block_ids for m in result.mappings}
+        assert placed["A/1"] == ["blk:000"]
+        assert placed["A/4"] == []
+        assert placed["A/6"] == []
 
 
 class TestFourStateStatus:
