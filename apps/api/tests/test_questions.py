@@ -180,6 +180,78 @@ class TestMarks:
         assert body == "Name the complex [Fe(H2O)6]3+"
 
 
+class TestAFigureBetweenTheHeadingAndTheQuestion:
+    """A diagram must not sever the question it belongs to.
+
+    Page 3 of the user's Class 9 mathematics paper, verbatim: "T4 (5 Marks)", then
+    a quadrilateral drawn with its vertices labelled D, C, 3, 2, A, B scattered
+    across the page, then "A point O is inside an equilateral quadrilateral ABCD
+    such that OD = OB. Show that ... OC lie on the same straight line."
+
+    T4 came out with the text "D C", and the sentence that is actually the
+    question came out as nothing at all. Both from one cause: the vertex labels
+    directly under the heading were read as the start of the question's text, and
+    the ones after them broke the chain, so every line below — the real question
+    included — was furniture.
+
+    Classification had already worked out where the question text was: T4 is a
+    question precisely because a heading with real prose beneath it is one. It was
+    extraction that then built the body out of what lay in between.
+    """
+
+    PAGE = [
+        # (text, x0). T3 opens the fixture because `T` is only a label prefix when
+        # the paper uses it repeatedly — which this one does, T1 through T5.
+        ("T3 (5 Marks)", 0.143),
+        ("Bisectors of angle B and angle C of isosceles triangle ABC meet at O.", 0.145),
+        ("T4 (5 Marks)", 0.142),
+        ("D", 0.238),
+        ("C", 0.508),
+        ("3", 0.304),
+        ("2", 0.247),
+        ("A", 0.161),
+        ("B", 0.445),
+        ("A point O is inside an equilateral quadrilateral ABCD such that OD = OB.", 0.144),
+        ("Show that O, A and OC lie on the same straight line.", 0.144),
+        ("T5 (5 Marks)", 0.143),
+        ("In PQR, PQ = QR and L, M, N are mid-points of PQ, QR and RP respectively.", 0.143),
+        ("Prove that LN = MN.", 0.142),
+    ]
+
+    def _paper(self):
+        return extract(index_of(*self.PAGE))
+
+    def test_the_question_text_is_the_prose_not_the_vertex_labels(self) -> None:
+        by_label = {q.label_raw: q.text for q in self._paper().questions}
+        assert by_label["T4"].startswith("A point O is inside an equilateral quadrilateral")
+
+    def test_no_vertex_label_reaches_the_question_text(self) -> None:
+        by_label = {q.label_raw: q.text for q in self._paper().questions}
+        assert not by_label["T4"].startswith("D C")
+        for stray in ("D C", "A B", " 3 ", " 2 "):
+            assert stray not in by_label["T4"]
+
+    def test_the_figure_does_not_become_a_question_of_its_own(self) -> None:
+        assert [q.label_raw for q in self._paper().questions] == ["T3", "T4", "T5"]
+
+    def test_the_question_after_the_figure_is_untouched(self) -> None:
+        by_label = {q.label_raw: q.text for q in self._paper().questions}
+        assert by_label["T5"].startswith("In PQR, PQ = QR")
+        assert by_label["T5"].endswith("Prove that LN = MN.")
+
+    def test_a_short_continuation_at_the_margin_is_still_kept(self) -> None:
+        # The rule cannot simply be "short lines are figure". A wrapped line ending
+        # in "MN." is three characters and belongs to the question.
+        paper = extract(
+            index_of(
+                ("5. (5 Marks)", 0.143),
+                ("In PQR, L, M, N are mid-points. Prove that LN =", 0.143),
+                ("MN.", 0.142),
+            )
+        )
+        assert paper.questions[0].text.endswith("MN.")
+
+
 class TestSectionLevelMarks:
     """Marks stated once for a whole section belong to every question in it.
 

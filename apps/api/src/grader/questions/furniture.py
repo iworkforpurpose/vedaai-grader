@@ -175,17 +175,18 @@ _HEADING_LOOKAHEAD = 12
 _FRAGMENT_MAX_CHARS = 4
 
 
-def _body_from_following(
-    body: str, following: tuple[str, ...], *, prefixes: frozenset[str]
-) -> str:
-    """The question text for a label that has none on its own line.
+def _body_offset(following: tuple[str, ...], *, prefixes: frozenset[str]) -> int | None:
+    """How far below a bare label its question text starts, if it does.
 
     Skips fragments on the way down, because a diagram sits between the heading
     and the question more often than not. Stops at anything that starts something
     else — another label, a section header — so a bare number at the foot of a
     page cannot reach forward and adopt the next question's text as its own.
+
+    Returned as a position rather than as the text itself, because the lines
+    skipped over are the figure and the caller needs to know which ones they were.
     """
-    for text in following[:_HEADING_LOOKAHEAD]:
+    for offset, text in enumerate(following[:_HEADING_LOOKAHEAD]):
         candidate = text.strip()
         if not candidate or len(candidate) <= _FRAGMENT_MAX_CHARS:
             continue
@@ -194,9 +195,17 @@ def _body_from_following(
         if _SECTION_HEADER.match(candidate):
             break
         if len(candidate) >= 12:
-            return candidate
+            return offset
         break
-    return body
+    return None
+
+
+def _body_from_following(
+    body: str, following: tuple[str, ...], *, prefixes: frozenset[str]
+) -> str:
+    """The question text for a label that has none on its own line."""
+    offset = _body_offset(following, prefixes=prefixes)
+    return following[offset].strip() if offset is not None else body
 
 
 def classify(
@@ -328,10 +337,19 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
     # papers exist that head straight into question 1 with no section at all.
     started = False
 
+    # Lines a heading has already accounted for as its figure — see below.
+    inside_a_figure: set[int] = set()
+
     for position, line in enumerate(lines):
         upcoming = tuple(
             ln.text for ln in lines[position + 1 : position + 1 + _HEADING_LOOKAHEAD]
         )
+        if position in inside_a_figure:
+            # Furniture, and it does not interrupt anything: the question it sits
+            # inside is still open when the line below it arrives.
+            roles[line.line_id] = LineRole.FURNITURE
+            continue
+
         role = classify(
             line,
             repeated=repeated,
@@ -343,6 +361,28 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
         if role in {LineRole.QUESTION_START, LineRole.SECTION_HEADER}:
             started = True
         roles[line.line_id] = role
+
+        # A label whose own line carries no question text is a heading, and what
+        # sits between it and its text is a diagram. Classification already worked
+        # that out — it is why the heading is a question at all — and the lines it
+        # stepped over are named here so extraction steps over them too.
+        #
+        # Page 3 of a real mathematics paper: "T4 (5 Marks)", a quadrilateral with
+        # its vertices labelled D, C, 3, 2, A, B, then the question. T4 came out
+        # with the text "D C" — the first row of vertex labels, read as the start
+        # of its text — and the sentence that was actually the question came out
+        # as nothing at all, because the labels below broke the chain and left
+        # every line under them, the question included, looking like furniture.
+        if role is LineRole.QUESTION_START:
+            parsed = parse_label(line.text, prefixes=prefixes)
+            body, _marks = extract_marks(parsed.remainder) if parsed else ("x", None)
+            if parsed is not None and not looks_like_a_question(parsed, body):
+                offset = _body_offset(upcoming, prefixes=prefixes)
+                if offset:
+                    inside_a_figure.update(
+                        range(position + 1, position + 1 + offset)
+                    )
+
         # Instructions and section headers interrupt a question's text, so they
         # must not leave a following unlabelled line looking like a continuation
         # of something several lines back.
