@@ -323,3 +323,41 @@ def extract_marks(text: str) -> tuple[str, int | None]:
     if match is None:
         return text, None
     return text[: match.start()].rstrip(), int(match.group(1))
+
+
+#: A marks allocation stated once for a group of questions rather than beside
+#: each one: "(Each question carries 1 mark)", "6 marks each".
+#:
+#: Most papers state it this way. Repeating "[1]" against six one-mark questions
+#: is noise a teacher does not write, so a paper that says it once and a parser
+#: that only reads it beside the question produce six questions with no
+#: denominator — graded out of nothing and shown as "0/0".
+#:
+#: "each" is required, and what follows it is constrained. "Each section carries
+#: 20 marks" is a section total and would be badly wrong applied per question,
+#: and "this paper carries 80 marks" is the paper's.
+_PER_QUESTION_MARKS = re.compile(
+    r"\b(?:each|every)\s+(?:questions?|sub-?questions?|parts?|items?)?\s*"
+    r"(?:carries|carry|carrying|is\s+of|are\s+of|is\s+worth|are\s+worth|worth|of)\s*"
+    r"(\d{1,2})\s*marks?\b",
+    re.IGNORECASE,
+)
+
+#: The same rule with the words the other way round: "of 6 marks each",
+#: "carry 1 mark each".
+_MARKS_EACH = re.compile(r"\b(\d{1,2})\s*marks?\s+each\b", re.IGNORECASE)
+
+
+def per_question_marks(text: str) -> int | None:
+    """What each question in a group is worth, if the line says so.
+
+    Returns None for anything that states a total rather than a rate, and for
+    "all questions carry equal marks", which is true and says nothing about how
+    many.
+    """
+    for pattern in (_PER_QUESTION_MARKS, _MARKS_EACH):
+        match = pattern.search(text)
+        if match is not None:
+            marks = int(match.group(1))
+            return marks if marks > 0 else None
+    return None

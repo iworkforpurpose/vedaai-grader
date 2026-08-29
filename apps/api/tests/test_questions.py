@@ -180,6 +180,154 @@ class TestMarks:
         assert body == "Name the complex [Fe(H2O)6]3+"
 
 
+class TestSectionLevelMarks:
+    """Marks stated once for a whole section belong to every question in it.
+
+    A real Class 9 science paper prints "(Each question carries 1 mark)" under
+    SECTION A and nothing beside questions 1 to 6, which is how most papers are
+    laid out: repeating "[1]" six times is noise a teacher does not write. The
+    marks reached no question, so six answered questions were graded out of
+    nothing and displayed to the teacher as "0/0".
+
+    Two separate faults produced that. The line was classified as furniture and
+    discarded — SECTION C's directive survived only because it happens to also
+    say "attempt any three", which matches the instruction phrase list — and even
+    the surviving one was read for its choice rule and not for its marks.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("(Each question carries 1 mark)", 1),
+            ("(Each question carries 3 marks)", 3),
+            ("(Each question carries 5 marks. Attempt any three questions.)", 5),
+            ("Each question carries 2 marks.", 2),
+            ("Each carries 4 marks", 4),
+            ("Every question is of 3 marks", 3),
+            ("Each question carry 2 marks", 2),  # printed on real papers
+            ("Answer any five questions of 6 marks each.", 6),
+            ("Questions 1 to 10 carry 1 mark each.", 1),
+        ],
+    )
+    def test_reads_a_per_question_allocation(self, text, expected) -> None:
+        assert numbering.per_question_marks(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Maximum Marks: 70",
+            "Each section carries 20 marks",  # the section total, not per question
+            "This paper carries 80 marks",
+            "All questions carry equal marks",  # true, and says nothing about how many
+            "Draw neat diagrams wherever necessary.",
+            "Define refraction of light. [2]",
+        ],
+    )
+    def test_does_not_invent_one(self, text) -> None:
+        assert numbering.per_question_marks(text) is None
+
+    def test_the_directive_is_kept_rather_than_dismissed_as_an_aside(self) -> None:
+        # Bracketed asides are furniture by default, which is why this line was
+        # being thrown away before it could be read.
+        role = furniture.classify(
+            line(1, "(Each question carries 1 mark)", y0=0.1),
+            repeated=set(),
+            previous_role=LineRole.SECTION_HEADER,
+        )
+        assert role is LineRole.INSTRUCTION
+
+    def test_every_question_in_the_section_gets_them(self) -> None:
+        paper = extract(
+            index_of(
+                ("SECTION A", 0.09),
+                ("(Each question carries 1 mark)", 0.09),
+                ("1. Define refraction of light.", 0.09),
+                ("2. State the SI unit of pressure.", 0.09),
+                ("SECTION B", 0.09),
+                ("(Each question carries 3 marks)", 0.09),
+                ("7. Explain why a pencil appears bent in water.", 0.09),
+            )
+        )
+        assert {q.qid: q.marks for q in paper.questions} == {
+            "A/1": 1,
+            "A/2": 1,
+            "B/7": 3,
+        }
+
+    def test_a_printed_mark_beside_the_question_still_wins(self) -> None:
+        # The section states a default; the question states a fact.
+        paper = extract(
+            index_of(
+                ("SECTION A", 0.09),
+                ("(Each question carries 1 mark)", 0.09),
+                ("1. Define refraction of light.", 0.09),
+                ("2. State the SI unit of pressure. [4]", 0.09),
+            )
+        )
+        assert {q.qid: q.marks for q in paper.questions} == {"A/1": 1, "A/2": 4}
+
+    def test_sub_parts_divide_the_question_rather_than_each_taking_it_whole(self) -> None:
+        # "Each question carries 4 marks" is about question 11, not about 11(a)
+        # and 11(b) separately; giving both 4 would double the paper's total.
+        paper = extract(
+            index_of(
+                ("SECTION B", 0.09),
+                ("(Each question carries 4 marks)", 0.09),
+                ("11 (a) Define atomic number.", 0.09),
+                ("11 (b) Define mass number.", 0.09),
+            )
+        )
+        assert {q.qid: q.marks for q in paper.questions} == {"B/11/a": 2, "B/11/b": 2}
+
+    def test_a_sub_part_with_printed_marks_leaves_the_remainder_to_its_sibling(self) -> None:
+        paper = extract(
+            index_of(
+                ("SECTION C", 0.09),
+                ("(Each question carries 5 marks)", 0.09),
+                ("14. (i) State the law of conservation of mass. [2]", 0.09),
+                ("14. (ii) Find the mass of carbon dioxide formed.", 0.09),
+            )
+        )
+        assert {q.qid: q.marks for q in paper.questions} == {"C/14/i": 2, "C/14/ii": 3}
+
+    def test_an_uneven_split_is_declined_rather_than_guessed(self) -> None:
+        # Three sub-parts sharing five marks could be 2/2/1 or 1/2/2. Inventing
+        # one produces a denominator a teacher cannot check, so nothing is set.
+        paper = extract(
+            index_of(
+                ("SECTION C", 0.09),
+                ("(Each question carries 5 marks)", 0.09),
+                ("13. (i) Name the process.", 0.09),
+                ("13. (ii) Describe the process.", 0.09),
+                ("13. (iii) Explain one use of it.", 0.09),
+            )
+        )
+        assert all(q.marks is None for q in paper.questions)
+
+    def test_a_paper_with_no_sections_takes_the_rule_from_its_cover(self) -> None:
+        paper = extract(
+            index_of(
+                ("Annual Examination 2026", 0.09),
+                ("Each question carries 2 marks.", 0.09),
+                ("1. Define refraction of light.", 0.09),
+                ("2. State the SI unit of pressure.", 0.09),
+            )
+        )
+        assert [q.marks for q in paper.questions] == [2, 2]
+
+    def test_a_section_rule_beats_the_cover_page(self) -> None:
+        paper = extract(
+            index_of(
+                ("Annual Examination 2026", 0.09),
+                ("Each question carries 2 marks.", 0.09),
+                ("SECTION B", 0.09),
+                ("(Each question carries 3 marks)", 0.09),
+                ("7. Explain why a pencil appears bent in water.", 0.09),
+            )
+        )
+        assert [q.marks for q in paper.questions] == [3]
+
+
 class TestFurniture:
     def test_recognizes_section_headers(self) -> None:
         for text in ("SECTION A", "Section B", "PART C", "MODULE 2"):

@@ -251,7 +251,7 @@ class TestCitationValidation:
         )
         assert graded.marks_awarded == 0.0
 
-    def test_marks_with_no_citation_are_refused(self) -> None:
+    def test_marks_with_no_citation_earn_nothing(self) -> None:
         answer, _other, index = self._setup()
         spec = rubric.derive(self.PAPER_QUESTION)
 
@@ -267,7 +267,11 @@ class TestCitationValidation:
                 "uncertain": False,
             },
         )
+        # The invariant that matters is unchanged: no mark is ever awarded on
+        # evidence nobody can look at. What changed is the blast radius — the
+        # uncited point is dropped, rather than every point beside it.
         assert graded.marks_awarded == 0.0
+        assert graded.needs_review is True
 
     def test_a_properly_cited_grade_is_accepted(self) -> None:
         answer, _other, index = self._setup()
@@ -450,11 +454,19 @@ class TestASatisfiedClaimStillNeedsEvidence:
 
     QUESTION = q("C/16", "16.", "Calculate the mass of the product formed.", 0, marks=5)
 
-    def _graded(self, *, cited_third: bool):
+    def _graded(
+        self,
+        *,
+        cited_third: bool,
+        third_marks: float = 0.0,
+        third_satisfied: bool = True,
+        third_cites: list[str] | None = None,
+    ):
         first = line(1, "Mass of reactant A is six grams", y0=0.10)
         second = line(2, "Mass of reactant B is sixteen grams", y0=0.14)
         index = index_of(first, second)
-        third_cites = [first.line_id] if cited_third else []
+        if third_cites is None:
+            third_cites = [first.line_id] if cited_third else []
         return engine.assemble(
             question=self.QUESTION,
             rubric=rubric.Rubric(
@@ -497,8 +509,8 @@ class TestASatisfiedClaimStillNeedsEvidence:
                     },
                     {
                         "index": 3,
-                        "marks_awarded": 0.0,
-                        "satisfied": True,
+                        "marks_awarded": third_marks,
+                        "satisfied": third_satisfied,
                         "cited_line_ids": third_cites,
                     },
                 ],
@@ -523,6 +535,34 @@ class TestASatisfiedClaimStillNeedsEvidence:
 
     def test_a_cited_claim_is_still_promoted(self) -> None:
         assert self._graded(cited_third=True).marks_awarded == 5.0
+
+    def test_marks_claimed_without_a_citation_are_dropped_the_same_way(self) -> None:
+        # The same omission wearing different clothes. On the next run of the same
+        # script the model returned the third point NOT satisfied but carrying
+        # marks, still citing nothing, and the question was refused again — a
+        # separate branch reaching the identical dead end.
+        #
+        # Which of the two shapes turns up is chance, so both have to survive it.
+        graded = self._graded(cited_third=False, third_marks=1.5, third_satisfied=False)
+        assert graded.judged is True
+        assert graded.marks_awarded == 3.5
+
+    def test_a_dropped_point_sends_the_grade_to_review(self) -> None:
+        # The student may well have earned that point; nothing here can tell, and
+        # a silent zero on an answer nobody re-reads is how a grade goes quietly
+        # wrong. So the marks that stand are kept and a person is asked to look.
+        assert self._graded(cited_third=False).needs_review is True
+        assert self._graded(cited_third=True).needs_review is False
+
+    def test_an_invented_citation_still_refuses_the_whole_question(self) -> None:
+        # The distinction the two behaviours turn on. A missing citation is an
+        # omission: the point cannot be checked, so it earns nothing and the rest
+        # of the grade is untouched. A citation naming a line that does not exist
+        # is fabrication, and a model inventing evidence for one point has said
+        # nothing trustworthy about the others.
+        graded = self._graded(cited_third=False, third_cites=["as:9999"])
+        assert graded.judged is False
+        assert graded.marks_awarded == 0.0
 
 
 class TestWholeSubmission:

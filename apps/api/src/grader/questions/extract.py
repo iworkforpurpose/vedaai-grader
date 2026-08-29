@@ -38,6 +38,7 @@ from .numbering import (
     detect_section_prefixes,
     extract_marks,
     parse_label,
+    per_question_marks,
 )
 from .validate import find_gaps
 
@@ -165,8 +166,10 @@ def extract(index: LineIndex) -> QuestionPaper:
 
         if role is LineRole.INSTRUCTION:
             instructions.append(line.text)
-            if current_section is not None:
-                section_instructions.setdefault(current_section, []).append(line.text)
+            # Recorded under the open section, or under None while still on the
+            # cover page. A cover-page rule governs the whole paper and a section's
+            # own overrides it, which needs the two kept apart.
+            section_instructions.setdefault(current_section, []).append(line.text)
             continue
 
         if role is LineRole.MARKS:
@@ -236,6 +239,9 @@ def extract(index: LineIndex) -> QuestionPaper:
 
     sections = _apply_requirements(sections, instructions, section_instructions)
     questions = mark_stems(questions)
+    # After mark_stems, so a stem — which introduces its parts and is worth
+    # nothing itself — is not handed a share of its own question's marks.
+    questions = _apply_section_marks(questions, section_instructions)
     paper = QuestionPaper(
         questions=questions,
         sections=sections,
@@ -369,6 +375,77 @@ def _apply_requirements(
             section.model_copy(update={"requirement": requirement or Requirement()})
         )
     return out
+
+
+def _section_of(question: Question) -> str | None:
+    """The section a question sits in, read back off its canonical id."""
+    if question.section_id is not None:
+        return question.section_id
+    suffix = "/".join(question.path)
+    return question.qid[: -len(suffix)].rstrip("/") or None
+
+
+def _apply_section_marks(
+    questions: list[Question],
+    section_instructions: dict[str | None, list[str]],
+) -> list[Question]:
+    """Spread a marks allocation stated once over the questions it governs.
+
+    Most papers state marks for a group rather than beside every question:
+    "(Each question carries 1 mark)" under SECTION A, and nothing at all against
+    questions 1 to 6. Read only beside the question, that leaves six questions
+    with no denominator — graded out of nothing, and shown to a teacher as "0/0".
+
+    Three rules, in the order they matter.
+
+    **A printed mark wins.** The section states a default; the question states a
+    fact, and a fact about this question beats a rule about its neighbours.
+
+    **The allocation is the whole question's, not each sub-part's.** "Each
+    question carries 4 marks" beside 11(a) and 11(b) means four between them.
+    Giving both four would double what the paper is out of. So sub-parts share,
+    and a sibling that printed its own marks takes them off the top first — with
+    5 for the question and "[2]" against part (i), part (ii) is worth 3.
+
+    **An uneven share is declined.** Five marks across three parts could be
+    2/2/1 or 1/2/2, and a denominator a teacher cannot check is worse than none.
+    """
+    rates: dict[str | None, int] = {}
+    for section_id, texts in section_instructions.items():
+        for text in texts:
+            marks = per_question_marks(text)
+            if marks is not None:
+                rates.setdefault(section_id, marks)
+                break
+    if not rates:
+        return questions
+
+    groups: dict[tuple[str | None, str], list[int]] = {}
+    for position, question in enumerate(questions):
+        if question.is_stem:
+            continue
+        groups.setdefault((_section_of(question), question.path[0]), []).append(position)
+
+    updated = list(questions)
+    for (section_id, _root), members in groups.items():
+        rate = rates.get(section_id)
+        if rate is None:
+            rate = rates.get(None)
+        if rate is None:
+            continue
+
+        unknown = [i for i in members if updated[i].marks is None]
+        if not unknown:
+            continue
+        spoken_for = sum(updated[i].marks or 0 for i in members)
+        remaining = rate - spoken_for
+        if remaining <= 0 or remaining % len(unknown):
+            continue
+        share = remaining // len(unknown)
+        for i in unknown:
+            updated[i] = updated[i].model_copy(update={"marks": share})
+
+    return updated
 
 
 def _sum_marks(questions: list[Question]) -> int | None:

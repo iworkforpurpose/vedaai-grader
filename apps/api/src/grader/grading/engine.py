@@ -470,6 +470,9 @@ def assemble(
     """
     allowed = set(line_ids)
     points: list[RubricPoint] = []
+    #: Points that claimed credit and cited nothing. They earn nothing, and they
+    #: are counted because the student may have deserved them — see _confidence.
+    unevidenced: list[str] = []
 
     for i, criterion in enumerate(rubric.criteria):
         raw = _point_for(judgement, i + 1)
@@ -502,23 +505,31 @@ def assemble(
         # Partial credit is still expressible and is what an unsatisfied point with
         # a positive mark means: partly there, not met.
         #
-        # Only for a point that cited its evidence, though. Question 16 of a real
-        # script, worth 5: two points cited four lines each and a third came back
-        # satisfied with an empty citation list. Promoting that third point to its
-        # marks produced "marks awarded with no line cited", and the citation check
-        # refuses a question whole rather than in part — so a correct, evidenced
-        # 3.5 became 0 and unjudged. The rule was meant to reconcile two fields
-        # that disagreed; applied without evidence it destroys the grade instead.
+        # Neither reading applies to a point that credited itself and cited
+        # nothing. Question 16 of a real script, worth 5: two points cited four
+        # lines each, and the third claimed credit with an empty citation list —
+        # satisfied on one run, unsatisfied but carrying marks on the next. Either
+        # way the citation check saw "marks awarded with no line cited", and it
+        # refuses a question whole rather than in part, so a correct and fully
+        # evidenced 3.5 became 0 and unjudged. Twice, by two different routes.
+        #
+        # A missing citation is an omission, not a fabrication. The model did not
+        # invent evidence; it failed to give any, and the answer to an unevidenced
+        # claim is to not credit that claim — not to throw away the claims that
+        # were evidenced. An invented or out-of-scope line id is the other thing
+        # entirely, and still refuses the question below: a model making evidence
+        # up for one point has said nothing trustworthy about the others.
         cited = [str(lid) for lid in raw.get("cited_line_ids", [])]
         comment = raw.get("comment")
-        if satisfied and not cited:
-            # Nor is it shown as met. "Satisfied, nought marks" recreates in the
+        if not cited and (satisfied or awarded > 0):
+            # Not shown as met either. "Satisfied, nought marks" recreates in the
             # other direction the contradiction the promotion exists to remove.
             satisfied = False
             awarded = 0.0
+            unevidenced.append(f"{rubric.qid}#{i + 1}")
             comment = (
-                "The marker called this point met but cited no line for it, "
-                "so it could not be credited."
+                "The marker credited this point but cited no line for it, so it "
+                "could not be checked and earned nothing. Worth reading yourself."
             )
         elif satisfied:
             awarded = criterion.marks
@@ -565,7 +576,7 @@ def assemble(
         # Confidence is not asked of the model — a self-reported number is not
         # evidence. It is derived from whether the model flagged the transcription
         # as unreadable and from how much of the rubric it managed to cite.
-        confidence=0.35 if uncertain else _cited_share(points),
+        confidence=0.35 if uncertain else _confidence(points, unevidenced=len(unevidenced)),
         graded_on_partial_text=uncertain,
     )
 
@@ -575,6 +586,19 @@ def _point_for(judgement: dict, index: int) -> dict | None:
         if isinstance(raw, dict) and raw.get("index") == index:
             return raw
     return None
+
+
+def _confidence(points: list[RubricPoint], *, unevidenced: int) -> float:
+    """How far a teacher can take this grade on trust.
+
+    A point that claimed credit and cited nothing was dropped to zero. Whether
+    the student had actually earned it is exactly what cannot be established
+    here, so the grade goes to a person however clean the rest of it looks — a
+    quiet zero on an answer nobody re-reads is how marking goes wrong without
+    anyone noticing.
+    """
+    share = _cited_share(points)
+    return min(share, 0.5) if unevidenced else share
 
 
 def _cited_share(points: list[RubricPoint]) -> float:

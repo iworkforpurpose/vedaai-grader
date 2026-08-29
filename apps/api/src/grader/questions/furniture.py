@@ -25,6 +25,7 @@ from .numbering import (
     extract_marks,
     looks_like_a_question,
     parse_label,
+    per_question_marks,
 )
 
 #: A section or part heading. Papers divide themselves this way and questions
@@ -244,6 +245,18 @@ def classify(
 
     lowered = text.lower()
     if any(phrase in lowered for phrase in _INSTRUCTION_PHRASES):
+        return LineRole.INSTRUCTION
+
+    # A marks allocation stated for a whole section is rubric, and the section's
+    # questions are graded out of nothing without it. It needs naming here rather
+    # than in the phrase list above because the phrase that identifies it is a
+    # shape — "each ... N marks" — not a fixed string.
+    #
+    # Both rules below would otherwise discard it. On the science paper,
+    # "(Each question carries 1 mark)" and "(Each question carries 3 marks)" were
+    # dismissed as bracketed asides, and only SECTION C's directive survived,
+    # because it happens to also say "attempt any three questions".
+    if per_question_marks(text) is not None:
         return LineRole.INSTRUCTION
 
     # Checked after instructions, so "(Attempt any two questions)" is recognised
