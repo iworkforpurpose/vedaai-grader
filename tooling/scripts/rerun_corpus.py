@@ -30,6 +30,13 @@ from pathlib import Path
 
 from build_corpus import EXAMPLES, LIVE, summarise  # noqa: E402  - same directory
 
+#: The deployed service sits behind Next, which owns the /api prefix and proxies
+#: past it. A local uvicorn is the bare API and has no prefix. Deriving it from the
+#: address avoids a flag that has to be remembered in step with --base.
+def api_prefix(base: str) -> str:
+    return "" if ":8000" in base else "/api"
+
+
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "data" / "corpus"
 RUNS = CORPUS / "runs"
@@ -37,8 +44,9 @@ RUNS = CORPUS / "runs"
 
 def submit(base: str, paper: Path, script: Path) -> str:
     """Upload one pair the way the browser does, and return the submission id."""
+    API = api_prefix(base)
     request = urllib.request.Request(
-        f"{base}/api/uploads", method="POST",
+        f"{base}{API}/uploads", method="POST",
         data=json.dumps({"question_paper_name": paper.name,
                          "answer_sheet_name": script.name}).encode(),
         headers={"Content-Type": "application/json"},
@@ -75,7 +83,7 @@ def submit(base: str, paper: Path, script: Path) -> str:
         payload = b"".join(chunks)
 
     request = urllib.request.Request(
-        f"{base}/api/submissions", data=payload, method="POST",
+        f"{base}{API}/submissions", data=payload, method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
     with urllib.request.urlopen(request, timeout=180) as response:
@@ -83,8 +91,9 @@ def submit(base: str, paper: Path, script: Path) -> str:
 
 
 def wait(base: str, sid: str, *, limit: int = 100) -> dict:
+    API = api_prefix(base)
     for _ in range(limit):
-        with urllib.request.urlopen(f"{base}/api/submissions/{sid}", timeout=40) as response:
+        with urllib.request.urlopen(f"{base}{API}/submissions/{sid}", timeout=40) as response:
             body = json.load(response)
         if body["status"] in ("complete", "failed"):
             return body

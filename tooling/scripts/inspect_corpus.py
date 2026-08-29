@@ -39,6 +39,13 @@ import json
 import urllib.request
 from pathlib import Path
 
+#: The deployed service sits behind Next, which owns the /api prefix and proxies
+#: past it. A local uvicorn is the bare API and has no prefix. Deriving it from the
+#: address avoids a flag that has to be remembered in step with --base.
+def api_prefix(base: str) -> str:
+    return "" if ":8000" in base else "/api"
+
+
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "data" / "corpus"
 RUNS = CORPUS / "runs"
@@ -64,6 +71,27 @@ _LABEL_MAX_WIDTH = 0.08
 _SAME_ROW = 0.5
 
 
+#: Lines this close to the top or bottom edge are page furniture.
+_EDGE_BAND = 0.06
+
+
+def _looks_like_a_question_number(text: str) -> bool:
+    """Whether a short line is a question number rather than a short word.
+
+    Uses the product's own label parser instead of a guess. The first version of
+    this metric counted any short, narrow line, which on a mathematics proof made
+    labels of "Now,", "Then," and "Given", and on handwritten code made one of `{`.
+    Those inflated the denominator and made a fixed page look two-thirds fixed.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "apps/api/src"))
+    from grader.questions.numbering import parse_label
+
+    return parse_label(text.strip()) is not None
+
+
 def label_binding(submission: dict) -> tuple[int, int, list[str]]:
     """How many margin labels are immediately followed by their own line."""
     lines = (submission.get("answer_sheet_lines") or {}).get("lines") or []
@@ -75,6 +103,11 @@ def label_binding(submission: dict) -> tuple[int, int, list[str]]:
         if (box["x1"] - box["x0"]) > _LABEL_MAX_WIDTH:
             continue
         if len(line["text"].strip()) > 6:
+            continue
+        if not _looks_like_a_question_number(line["text"]):
+            continue
+        # A page number in a footer parses as a label and is not one.
+        if box["y0"] <= _EDGE_BAND or box["y1"] >= (1.0 - _EDGE_BAND):
             continue
 
         # Its row-mate: the widest line on the same page sharing this line's row.
@@ -176,6 +209,7 @@ def main() -> int:
     parser.add_argument("--shots", action="store_true", help="Also drive a browser and screenshot")
     args = parser.parse_args()
 
+    API = api_prefix(args.base)
     run = json.loads((RUNS / f"{args.run}.json").read_text())
     earlier = {}
     if args.against and (RUNS / f"{args.against}.json").exists():
@@ -185,7 +219,7 @@ def main() -> int:
 
     for name, summary in run.items():
         sid = summary["submission_id"]
-        with urllib.request.urlopen(f"{args.base}/api/submissions/{sid}", timeout=40) as response:
+        with urllib.request.urlopen(f"{args.base}{API}/submissions/{sid}", timeout=40) as response:
             submission = json.load(response)
 
         bound, total, broken = label_binding(submission)

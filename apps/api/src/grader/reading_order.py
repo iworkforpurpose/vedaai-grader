@@ -46,6 +46,17 @@ _PROJECTION_BINS = 200
 #: than a column of their own.
 _MIN_COLUMN_LINES = 3
 
+#: Two boxes sharing at least this much of the shorter one's height are on the
+#: same written row.
+_SAME_ROW_OVERLAP = 0.5
+
+#: A line no wider than this share of the page's text width is a token — a
+#: question number in the margin, not a line of writing.
+_TOKEN_MAX_WIDTH_SHARE = 0.10
+
+#: Characters. A margin label is "7", "11.", "(iii)" — never a sentence.
+_TOKEN_MAX_CHARS = 6
+
 
 @dataclass
 class OrderedPage:
@@ -88,6 +99,19 @@ def order_page(lines: list[Line]) -> OrderedPage:
     if span <= 0:
         return OrderedPage(lines=_by_position(lines), column_count=1, confidence=1.0)
 
+    # Band splitting exists to stop a full-width heading being swallowed by one
+    # column of a two-column paper. On a single-column page it has nothing to do,
+    # and doing it anyway is how this went wrong: on an answer sheet the writing
+    # *is* most of the page width, so every ordinary line measured as "full width",
+    # became a band of its own, and a question number in the margin could never
+    # sort ahead of the line it labels. Measured on a real script: 0 of 12 numbers
+    # bound to their own answer, so every answer began with its neighbour's words.
+    #
+    # Asking whether the page has columns at all, before cutting it into bands,
+    # keeps the two-column behaviour and leaves the common case alone.
+    if not _has_columns(lines, left=left, span=span):
+        return OrderedPage(lines=_by_position(lines), column_count=1, confidence=1.0)
+
     bands = _split_into_bands(lines, left=left, span=span)
 
     ordered: list[Line] = []
@@ -105,17 +129,93 @@ def order_page(lines: list[Line]) -> OrderedPage:
     return OrderedPage(lines=ordered, column_count=column_count, confidence=confidence)
 
 
-def _by_position(lines: list[Line]) -> list[Line]:
-    """Sort within one column: banded by height, then left to right.
+def _is_token(line: Line, *, span: float) -> bool:
+    """Whether a line is a margin token rather than a line of writing.
 
-    Banding matters because two boxes on a shared baseline differ in ``y0`` by a
-    pixel or two, and raw ``y0`` ordering would scramble them.
+    A question number written beside an answer. Short in both senses — few
+    characters and little width — because either alone is ambiguous: "OK" is a
+    short word inside a sentence, and a narrow box can be one long word.
+    """
+    width_share = (line.box.x1 - line.box.x0) / span if span > 0 else 1.0
+    return (
+        width_share <= _TOKEN_MAX_WIDTH_SHARE
+        and len(line.text.strip()) <= _TOKEN_MAX_CHARS
+    )
+
+
+def _shares_a_row(a: Line, b: Line) -> bool:
+    top, bottom = max(a.box.y0, b.box.y0), min(a.box.y1, b.box.y1)
+    if bottom <= top:
+        return False
+    shorter = min(a.box.y1 - a.box.y0, b.box.y1 - b.box.y0)
+    return shorter > 0 and (bottom - top) / shorter >= _SAME_ROW_OVERLAP
+
+
+def _has_columns(lines: list[Line], *, left: float, span: float) -> bool:
+    """Whether this page really is laid out in columns.
+
+    The gutter test alone says yes far too readily on an answer sheet: numbers
+    down the left margin leave a genuine vertical strip of untouched page, wide
+    enough for the projection to find, and calling that a column would order every
+    number before every answer — worse than the fault being fixed.
+
+    What separates the two is what is *in* the candidate column. A column of a
+    question paper holds lines of text. A margin holds tokens, and each token sits
+    on a row with writing beside it. So a candidate whose members are nearly all
+    tokens with a row-mate elsewhere is a margin, not a column.
+    """
+    columns = _detect_columns(lines, left=left, span=span)
+    if len(columns) < 2:
+        return False
+
+    real = 0
+    for column in columns:
+        others = [line for line in lines if line not in column]
+        tokens_with_mates = sum(
+            1
+            for line in column
+            if _is_token(line, span=span)
+            and any(_shares_a_row(line, other) for other in others)
+        )
+        if tokens_with_mates < len(column) * 0.6:
+            real += 1
+
+    return real >= 2
+
+
+def _by_position(lines: list[Line]) -> list[Line]:
+    """Sort within one column: by row, then left to right inside each row.
+
+    Rows are built by asking which boxes actually overlap vertically, not by
+    rounding ``y0`` onto a grid. Rounding was the earlier approach and it is
+    unreliable in exactly the case that matters: a question number and its line
+    differ by a fraction of a line height, so whether they land in the same bucket
+    depends on where that fraction falls relative to a rounding boundary. The
+    first number on a page would bind and the second would not.
+
+    Overlap has no boundary to fall the wrong side of. Two boxes either share
+    vertical extent or they do not.
     """
     if not lines:
         return []
-    heights = sorted(line.box.y1 - line.box.y0 for line in lines)
-    band = max(heights[len(heights) // 2] * 0.6, 1e-6)
-    return sorted(lines, key=lambda line: (round(line.box.y0 / band), line.box.x0))
+
+    rows: list[list[Line]] = []
+    for line in sorted(lines, key=lambda ln: ln.box.y0):
+        # Compared against the row's lowest member rather than its first, so a
+        # tall row does not keep absorbing lines below it.
+        placed = False
+        for row in rows:
+            if any(_shares_a_row(line, member) for member in row):
+                row.append(line)
+                placed = True
+                break
+        if not placed:
+            rows.append([line])
+
+    ordered: list[Line] = []
+    for row in sorted(rows, key=lambda r: min(member.box.y0 for member in r)):
+        ordered.extend(sorted(row, key=lambda ln: ln.box.x0))
+    return ordered
 
 
 def _split_into_bands(lines: list[Line], *, left: float, span: float) -> list[list[Line]]:

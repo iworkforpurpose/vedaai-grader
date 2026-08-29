@@ -366,6 +366,63 @@ class TestReadingOrder:
         ordered, _confidence = order_lines(lines)
         assert len(ordered) == 9
 
+    def test_a_margin_question_number_reads_before_its_own_line(self) -> None:
+        """The answer-sheet case, and the reason every answer picked up its
+        neighbour's words.
+
+        Geometry copied from a real script: the number sits a fraction *below* the
+        top of the line it labels, because a hand does not write a number on the
+        same baseline as the text beside it. Sorting by top edge therefore emits
+        the text first, segmentation starts a block at the number, and the first
+        line of every answer is left attached to the answer above.
+
+        The number and its line share a row. That is the fact the ordering has to
+        respect, and it holds whichever of the two happens to sit a pixel higher.
+        """
+        lines: list[Line] = []
+        index = 1
+        for k in range(4):
+            y = 0.09 + k * 0.12
+            # Text first in input order, and marginally higher — exactly the
+            # arrangement that produced 0 of 12 correct bindings.
+            lines.append(line(index, f"answer {k} first line", x0=0.115, y0=y, width=0.44))
+            index += 1
+            lines.append(line(index, f"{k + 1}.", x0=0.049, y0=y + 0.0016, width=0.017))
+            index += 1
+            lines.append(line(index, f"answer {k} second line", x0=0.115, y0=y + 0.03, width=0.44))
+            index += 1
+
+        ordered, _confidence = order_lines(lines)
+        texts = [ln.text for ln in ordered]
+
+        assert texts == [
+            "1.", "answer 0 first line", "answer 0 second line",
+            "2.", "answer 1 first line", "answer 1 second line",
+            "3.", "answer 2 first line", "answer 2 second line",
+            "4.", "answer 3 first line", "answer 3 second line",
+        ], "each margin number must lead the answer it labels"
+
+    def test_margin_numbers_are_not_mistaken_for_a_column(self) -> None:
+        """A strip of numbers down the left edge is not a column of text.
+
+        There is a real gutter between them and the writing, wide enough that
+        projection finds it, so a column detector reading the page structurally
+        would put every number first and every answer after — which is a worse
+        ordering than the one being fixed.
+        """
+        lines: list[Line] = []
+        index = 1
+        for k in range(6):
+            y = 0.08 + k * 0.09
+            lines.append(line(index, f"{k + 1}.", x0=0.049, y0=y + 0.001, width=0.017))
+            index += 1
+            lines.append(line(index, f"the answer to question {k + 1}", x0=0.115, y0=y, width=0.46))
+            index += 1
+
+        ordered, _confidence = order_lines(lines)
+        texts = [ln.text for ln in ordered]
+        assert texts[:4] == ["1.", "the answer to question 1", "2.", "the answer to question 2"]
+
 
 class TestExtraction:
     def test_extracts_a_flat_paper(self) -> None:
