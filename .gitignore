@@ -56,3 +56,6 @@ data/
 
 # os
 .DS_Store
+
+# Rebuilt corpus pages and run results — real student answer scripts.
+data/corpus/
