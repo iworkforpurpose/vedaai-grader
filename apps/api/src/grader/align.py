@@ -44,6 +44,7 @@ from vedaai_contracts import (
     AnchorStatus,
     AnswerBlock,
     AnswerStatus,
+    BBox,
     Highlight,
     InkRegion,
     Mapping,
@@ -937,25 +938,83 @@ def _unassigned_ink_share(
     return min(1.0, unassigned / total)
 
 
+#: How much two lines must share horizontally before they may sit under one
+#: rectangle, and how small the gap between them must be.
+#:
+#: Both conditions are needed, which took two attempts to establish. Merging on the
+#: vertical gap alone chained all 43 lines of a page of handwritten code into a
+#: single run — code is written tightly, so every gap qualifies — and the union of
+#: that run spanned the whole page width because a few lines were long and the rest
+#: indented. It painted 0.77 of a page to cover 0.28 of writing.
+#:
+#: Requiring similar horizontal extent as well means a run is a stack of lines that
+#: genuinely look like one block of text. Everything else gets its own rectangle,
+#: which is what a highlighter pen does anyway.
+_MERGE_GAP_SHARE = 0.35
+_MERGE_OVERLAP_SHARE = 0.8
+
+
 def _highlight(blocks: list[AnswerBlock]) -> Highlight | None:
-    """Union of the blocks' geometry, one box per page."""
+    """Where the writing is, drawn tightly enough to mean something.
+
+    One box per page was the earlier shape, and on a multi-line answer it was
+    mostly paper: measured across real submissions, 60 to 74 per cent of the
+    rectangle covered no writing at all. A bounding box around four lines spread
+    down a page includes the gaps between them and the ragged right-hand edge, and
+    a teacher reading it cannot tell which part the answer actually occupies.
+
+    `Highlight.boxes` has always been a list, and the page already renders every
+    box in it, so there was never a reason to pay for the gaps. Lines close enough
+    to be one paragraph are merged; lines with space between them are not.
+    """
     boxes: list[PageBox] = [pb for block in blocks for pb in block.geometry]
     if not boxes:
         return None
-
-    from vedaai_contracts import BBox
 
     per_page: dict[int, list[BBox]] = {}
     for pb in boxes:
         per_page.setdefault(pb.page, []).append(pb.box)
 
+    merged: list[PageBox] = []
+    for page, page_boxes in sorted(per_page.items()):
+        for run in _runs(page_boxes):
+            merged.append(PageBox(page=page, box=BBox.union_all(run)))
+
     derived = "ink_regions" if all(b.is_text_free for b in blocks) else "ocr_lines"
-    return Highlight(
-        boxes=[
-            PageBox(page=page, box=BBox.union_all(bs)) for page, bs in sorted(per_page.items())
-        ],
-        derived_from=derived,
-    )
+    return Highlight(boxes=merged, derived_from=derived)
+
+
+def _runs(boxes: list[BBox]) -> list[list[BBox]]:
+    """Group boxes on one page into vertically contiguous runs."""
+    ordered = sorted(boxes, key=lambda b: (b.y0, b.x0))
+    runs: list[list[BBox]] = []
+
+    for box in ordered:
+        if runs:
+            previous = runs[-1]
+            bottom = max(b.y1 for b in previous)
+            # Measured against the taller of the two lines, so a short line does
+            # not make an ordinary paragraph gap look enormous.
+            height = max(box.y1 - box.y0, max(b.y1 - b.y0 for b in previous))
+            close = box.y0 - bottom <= height * _MERGE_GAP_SHARE
+            if close and _shares_width(box, previous):
+                previous.append(box)
+                continue
+        runs.append([box])
+
+    return runs
+
+
+def _shares_width(box: BBox, run: list[BBox]) -> bool:
+    """Whether a line lines up with the run above it well enough to join it."""
+    left, right = min(b.x0 for b in run), max(b.x1 for b in run)
+    overlap = min(right, box.x1) - max(left, box.x0)
+    if overlap <= 0:
+        return False
+    # Against the narrower of the two, so a short final line still joins the
+    # paragraph it belongs to, while an indented line under a long one does not.
+    narrower = min(right - left, box.x1 - box.x0)
+    return narrower > 0 and overlap / narrower >= _MERGE_OVERLAP_SHARE
 
 
 def reassign(

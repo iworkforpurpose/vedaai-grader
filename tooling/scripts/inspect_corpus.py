@@ -131,8 +131,15 @@ def label_binding(submission: dict) -> tuple[int, int, list[str]]:
 
 
 def ink_coverage(submission: dict) -> tuple[float, list[tuple[str, float]]]:
-    """Painted highlight area versus the area of the lines under it."""
+    """Painted highlight area versus the area of the writing under it.
+
+    Counts ink regions as well as OCR lines. A diagram answer has no lines at all
+    — its block is built from ink alone — so measuring lines only scored every
+    drawing at zero and made a highlight that was in fact perfectly tight look like
+    the worst case in the corpus.
+    """
     lines = {line["line_id"]: line for line in (submission.get("answer_sheet_lines") or {}).get("lines", [])}
+    regions = {r["region_id"]: r for r in submission.get("ink_regions") or []}
     blocks = {block["block_id"]: block for block in submission.get("blocks") or []}
 
     per_question: list[tuple[str, float]] = []
@@ -145,9 +152,14 @@ def ink_coverage(submission: dict) -> tuple[float, list[tuple[str, float]]]:
             continue
         ink = 0.0
         for block_id in block_ids:
-            for line_id in blocks.get(block_id, {}).get("line_ids", []):
+            block = blocks.get(block_id, {})
+            for line_id in block.get("line_ids", []):
                 if line_id in lines:
                     ink += area(lines[line_id]["box"])
+            if not block.get("line_ids"):
+                for region_id in block.get("ink_region_ids", []):
+                    if region_id in regions:
+                        ink += area(regions[region_id]["box"])
         per_question.append((entry["qid"], min(1.0, ink / painted)))
 
     average = sum(c for _q, c in per_question) / len(per_question) if per_question else 0.0

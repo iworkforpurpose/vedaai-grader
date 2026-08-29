@@ -9,6 +9,7 @@ absence — even where that costs precision elsewhere.
 
 from __future__ import annotations
 
+import pytest
 from vedaai_contracts import (
     Anchor,
     AnchorStatus,
@@ -191,7 +192,41 @@ class TestMultiBlockAnswers:
         assert highlight is not None
         assert highlight.spans_pages
         assert highlight.pages == [0, 1]
-        assert len(highlight.boxes) == 2, "one union box per page, not one across both"
+        assert len(highlight.boxes) == 2, "one box per page, not one across both"
+
+    def test_a_highlight_covers_the_writing_and_not_the_gaps(self) -> None:
+        """Four lines of an answer, spread down a page with space between them.
+
+        The bounding box of those four lines is mostly paper. Measured on real
+        submissions, 60 to 74 per cent of a multi-line highlight was blank page,
+        which is what "it highlights more than it should" looks like as a number.
+
+        A highlight is allowed several boxes on a page, so there is no reason to
+        pay for the gaps.
+        """
+        lines = [
+            PageBox(page=0, box=BBox(x0=0.11, y0=0.10 + i * 0.08, x1=0.55, y1=0.12 + i * 0.08))
+            for i in range(4)
+        ]
+        spread = AnswerBlock(
+            block_id="blk:000",
+            line_ids=[f"as:{i:04d}" for i in range(1, 5)],
+            text="Refraction is the bending of light as it passes between media.",
+            geometry=lines,
+            pages_spanned=[0],
+        )
+        anchors = [anchor("anc:000", "1.", "A/1", "as:0001")]
+        result = resolve(paper([REFRACTION]), [spread], anchors, [])
+        highlight = result.by_qid()["A/1"].highlight
+
+        assert highlight is not None
+        painted = sum(
+            (b.box.x1 - b.box.x0) * (b.box.y1 - b.box.y0) for b in highlight.boxes
+        )
+        ink = sum((b.box.x1 - b.box.x0) * (b.box.y1 - b.box.y0) for b in lines)
+        assert painted == pytest.approx(ink, rel=0.02), (
+            f"highlight paints {painted:.4f} to cover {ink:.4f} of writing"
+        )
 
 
 class TestFourStateStatus:

@@ -21,7 +21,7 @@ lines, and it is still an answer that has to be highlightable.
 
 from __future__ import annotations
 
-from vedaai_contracts import AnswerBlock, BBox, InkRegion, InkRegionKind, Line, PageBox
+from vedaai_contracts import AnswerBlock, InkRegion, InkRegionKind, Line, PageBox
 
 from ..questions.numbering import parse_label
 from . import furniture
@@ -207,7 +207,12 @@ def _build(index: int, lines: list[Line]) -> AnswerBlock:
         block_id=f"blk:{index:03d}",
         line_ids=[line.line_id for line in lines],
         text=text,
-        geometry=_union_per_page([PageBox(page=ln.page, box=ln.box) for ln in lines]),
+        # Per line, not one box per page. Collapsing here threw the shape of the
+        # answer away before anything downstream could use it, and the highlight
+        # inherited a rectangle that was mostly blank paper. What to merge is a
+        # question about how the answer looks on the page, so it belongs where the
+        # highlight is drawn, not here.
+        geometry=[PageBox(page=ln.page, box=ln.box) for ln in lines],
         pages_spanned=pages,
         has_continuation_marker=_mentions_continuation(text),
     )
@@ -216,15 +221,6 @@ def _build(index: int, lines: list[Line]) -> AnswerBlock:
 def _mentions_continuation(text: str) -> bool:
     lowered = text.lower()
     return any(marker in lowered for marker in _CONTINUATION_MARKERS)
-
-
-def _union_per_page(boxes: list[PageBox]) -> list[PageBox]:
-    per_page: dict[int, list[BBox]] = {}
-    for pb in boxes:
-        per_page.setdefault(pb.page, []).append(pb.box)
-    return [
-        PageBox(page=page, box=BBox.union_all(bs)) for page, bs in sorted(per_page.items())
-    ]
 
 
 def _attach_ink(blocks: list[AnswerBlock], ink: list[InkRegion]) -> list[AnswerBlock]:
@@ -257,9 +253,7 @@ def _attach_ink(blocks: list[AnswerBlock], ink: list[InkRegion]) -> list[AnswerB
                 line_ids=[],
                 ink_region_ids=[region.region_id for region in group],
                 text="",
-                geometry=_union_per_page(
-                    [PageBox(page=region.page, box=region.box) for region in group]
-                ),
+                geometry=[PageBox(page=region.page, box=region.box) for region in group],
                 pages_spanned=sorted({region.page for region in group}),
             )
         )
