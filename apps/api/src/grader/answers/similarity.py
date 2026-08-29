@@ -22,8 +22,10 @@ order-consistency as an alternative route.
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections import Counter
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 #: Words too common to carry topical signal. Kept short on purpose: an
@@ -168,6 +170,144 @@ class StrongerOf:
         return max(self._word.score(a, b), self._trigram.score(a, b))
 
 
+#: The embedding model. Small and cheap: this compares short exam answers, not
+#: documents, and the larger model's extra capacity is not used by the task.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+
+#: How many texts to embed per request. One paper's questions and one script's
+#: blocks together are tens of items, so a single round trip usually covers a whole
+#: submission.
+_EMBED_BATCH = 128
+
+
+class SemanticSimilarity:
+    """How close two texts are in meaning, rather than in spelling.
+
+    The measures above compare surfaces — shared words, shared character runs — and
+    a good answer does not share the question's surface. Measured on real pairs:
+
+        Name the process by which plants lose water   -> It is called transpiration
+        word overlap 0.000, trigrams 0.000
+
+    Both are silent on an answer that is exactly right, because "transpiration" and
+    "the process by which plants lose water" have nothing in common as strings. The
+    aligner then has only position to go on, which is why a script written out of
+    order gets placed by habit rather than by content. That is not a tuning problem;
+    it is the limit of comparing characters, and it is the same limit whatever the
+    subject — history, geography and English answers restate ideas even more freely
+    than science ones do.
+
+    Embeddings put both texts in a space where "transpiration" and "plants losing
+    water as vapour" are near each other, which is the property the aligner has
+    needed all along.
+
+    Three practical commitments:
+
+    * **Every text is embedded once.** Scoring is quadratic — every question
+      against every block — so without a cache one submission would make hundreds
+      of identical calls.
+    * **Failure is never fatal.** No key, no network, a provider outage: the score
+      falls back to the surface measure. Weaker is not useless, and a submission
+      that errors is worse than one placed by trigrams.
+    * **The seam is unchanged.** This satisfies the same `Similarity` protocol as
+      the others, so it is swapped in by configuration and out again by removing a
+      key.
+    """
+
+    def __init__(self, *, embed: Callable[[list[str]], list[list[float]]] | None = None,
+                 fallback: Similarity | None = None) -> None:
+        self._embed = embed or _openai_embed
+        self._fallback = fallback or StrongerOf()
+        self._cache: dict[str, list[float] | None] = {}
+        #: Set once the provider has failed. One failure means the next call will
+        #: almost certainly fail too, and a submission should not pay that latency
+        #: once per pair.
+        self._unavailable = False
+
+    def score(self, a: str, b: str) -> float:
+        if not a.strip() or not b.strip():
+            return 0.0
+
+        first, second = self._vectors(a, b)
+        if first is None or second is None:
+            return self._fallback.score(a, b)
+
+        dot = sum(x * y for x, y in zip(first, second, strict=False))
+        norm_a = math.sqrt(sum(x * x for x in first))
+        norm_b = math.sqrt(sum(y * y for y in second))
+        if not norm_a or not norm_b:
+            return self._fallback.score(a, b)
+
+        # Cosine similarity of these models lands in roughly [0, 1] for related
+        # text and near zero for unrelated, but is not guaranteed non-negative.
+        # Clamped because the aligner's weights assume a score in [0, 1].
+        return max(0.0, min(1.0, dot / (norm_a * norm_b)))
+
+    def warm(self, texts: list[str]) -> None:
+        """Embed a set of texts in as few requests as possible.
+
+        Called with a paper's questions and a script's blocks before alignment, so
+        the whole submission costs one or two round trips instead of one per pair.
+        """
+        missing = [t for t in dict.fromkeys(texts) if t.strip() and t not in self._cache]
+        for start in range(0, len(missing), _EMBED_BATCH):
+            self._fetch(missing[start : start + _EMBED_BATCH])
+
+    def _vectors(self, a: str, b: str) -> tuple[list[float] | None, list[float] | None]:
+        self.warm([a, b])
+        return self._cache.get(a), self._cache.get(b)
+
+    def _fetch(self, texts: list[str]) -> None:
+        if not texts:
+            return
+        if self._unavailable:
+            for text in texts:
+                self._cache[text] = None
+            return
+        try:
+            vectors = self._embed(texts)
+        except Exception:  # noqa: BLE001 - any provider failure degrades the same way
+            self._unavailable = True
+            for text in texts:
+                self._cache[text] = None
+            return
+        for text, vector in zip(texts, vectors, strict=False):
+            self._cache[text] = vector
+
+
+def _openai_embed(texts: list[str]) -> list[list[float]]:
+    """Embed with OpenAI, which the marking path already depends on.
+
+    No new dependency and no new credential: the client is installed for grading
+    and the key is already present wherever marking runs.
+    """
+    from openai import OpenAI
+
+    response = OpenAI().embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    return [item.embedding for item in response.data]
+
+
+def semantic_available() -> bool:
+    """Whether meaning-based scoring can run at all."""
+    if not os.getenv("OPENAI_API_KEY", "").strip():
+        return False
+    try:
+        import openai  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
+def build_similarity() -> Similarity:
+    """The scorer for this deployment.
+
+    Semantics where a key exists, surfaces where one does not — the same shape as
+    marking, which degrades to a rubric rather than failing. A developer with no
+    key still gets a working mapping, just a weaker one.
+    """
+    return SemanticSimilarity() if semantic_available() else StrongerOf()
+
+
 #: The default. Swapped by passing a different implementation rather than by
 #: changing this, so an experiment does not require editing the pipeline.
-default_similarity: Similarity = StrongerOf()
+default_similarity: Similarity = build_similarity()

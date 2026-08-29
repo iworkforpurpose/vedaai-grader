@@ -150,6 +150,29 @@ MATCH_MINIMUM = -0.35
 #: system is in no position to tell a teacher a question was left blank.
 UNASSIGNED_INK_SUPPRESSES = 0.18
 
+#: How far a block's best question must lead the rest before that preference is
+#: treated as a statement rather than a lean.
+#:
+#: This exists because maximising the whole path and getting each block right are
+#: different objectives, and on a real script they disagree. Four pages of genuine
+#: handwriting answered two questions: pages one and two answered question 1, pages
+#: three and four answered question 2. Semantics said so unambiguously — +0.603 and
+#: +0.608 for question 1, +0.525 and +0.556 for question 2, with every runner-up
+#: half that or less.
+#:
+#: The aligner spread them across six questions anyway, and its arithmetic was
+#: sound. Continuing an answer consumes a block without advancing to the next
+#: question, so every question after it has fewer blocks to draw on; whereas
+#: advancing collects a positive match now and avoids a -0.40 skip later. Six
+#: mediocre matches beat two good ones plus four honest gaps. The DP was rewarded
+#: for inventing answers.
+#:
+#: A margin this wide is not a lean. When a block prefers one question by this
+#: much, that preference is evidence, and no amount of downstream bookkeeping
+#: should be able to trade it away. Below it the DP's global view is still the
+#: better judge, which is why this is a gate on strong cases and not a new weight.
+DECISIVE_MARGIN = 0.25
+
 #: Similarity to any block above which an unassigned question is reported
 #: uncertain rather than unanswered.
 #:
@@ -229,6 +252,18 @@ def align(
     written in order.
     """
     similarity = similarity or default_similarity
+
+    # Give the scorer everything it will be asked about, in one go. Scoring is
+    # every question against every block, so a scorer that fetches per pair makes
+    # hundreds of calls for one submission; one that is told the whole set up front
+    # makes one. Scorers with nothing to prepare do not implement this.
+    warm = getattr(similarity, "warm", None)
+    if callable(warm):
+        warm(
+            [q.text for q in paper.in_print_order() if not q.is_stem]
+            + [b.text for b in blocks]
+        )
+
     # Stems are excluded from candidacy. "2. Answer the following:" is a heading
     # with no marks and no answer of its own, and leaving it in the candidate list
     # lets it absorb the answer to its own sub-part — which costs two mappings,
@@ -401,12 +436,30 @@ def _align_segment(
                 bonus = 0.0
                 if blocks[j - 1].has_continuation_marker if j > 0 else False:
                     bonus = 0.5  # the student said so themselves
+                # Two blocks in a row that both point unmistakably at the same
+                # question are one answer that segmentation split, not two
+                # answers. Left to its own arithmetic the DP prefers to advance —
+                # a match now plus a skip avoided later beats continuing — so it
+                # spread two pages about pandas across four questions while the
+                # scores said "question 1" twice, at +0.36 against +0.06 for the
+                # runner-up. The bonus makes the evidence decide it.
+                if _agrees_with_the_answer_so_far(scores, j, i - 1, blocks):
+                    bonus += 1.0
                 _offer(
                     table,
                     (i, j + 1, _State.IN_MULTI),
-                    base + CONTINUE_BASE + bonus + W_SEMANTIC * _semantic(
-                        questions[i - 1], blocks[j], similarity
-                    ),
+                    # The same centred score `match` uses, not the raw one.
+                    #
+                    # This was raw similarity, and against surface scorers the
+                    # difference was small enough to hide. Embeddings made it
+                    # decisive: any two English texts sit around 0.4 apart, so a
+                    # raw score carried a constant floor that `match` had already
+                    # subtracted out, and continuing an answer therefore looked
+                    # better than matching one no matter which question it was.
+                    # A real script showed the cost — two blocks whose meaning
+                    # pointed unambiguously at question 1, at 0.66 against 0.35
+                    # for the runner-up, were placed on questions 3 and 4.
+                    base + CONTINUE_BASE + bonus + scores[i - 1][j],
                     _Move("continue", i - 1, j),
                     (i, j, base_state),
                 )
@@ -423,7 +476,8 @@ def _align_segment(
                     (i + 1, j, _State.IN_SHARE),
                     base
                     + SHARE_BASE
-                    + W_SEMANTIC * _semantic(questions[i], blocks[j - 1], similarity)
+                    # Centred, for the same reason as `continue` above.
+                    + scores[i][j - 1]
                     + _share_support(questions[i], blocks[j - 1]),
                     _Move("share", i, j - 1),
                     (i, j, base_state),
@@ -512,7 +566,93 @@ def _score_matrix(
             # and clamping would instead make it beat one.
             row.append(score if score > MATCH_MINIMUM else -inf)
         matrix.append(row)
+
+    # Judged on the semantic deviations alone, not on the assembled score.
+    #
+    # The order prior narrows the very margins this gate is asking about: on a real
+    # script, two blocks whose meaning preferred question 2 by 0.281 and 0.250 came
+    # out of the full score at 0.226 and 0.184, under the threshold. Which is
+    # circular — position is exactly the signal being overruled, so letting it
+    # decide whether the evidence is strong enough guarantees it wins whenever it
+    # disagrees.
+    deviations = [
+        [raw[i][j] - baselines[j] if matrix[i][j] != -inf else -inf for j in range(len(blocks))]
+        for i in range(len(questions))
+    ]
+    return _withhold_decided_blocks(matrix, deviations)
+
+
+def _withhold_decided_blocks(
+    matrix: list[list[float]], evidence: list[list[float]]
+) -> list[list[float]]:
+    """Take away the pairings a block's own content has already ruled out.
+
+    Where one question leads the rest by ``DECISIVE_MARGIN``, the block has said
+    which question it answers, and the DP is not entitled to spend it elsewhere to
+    balance its books. Making the alternatives unavailable is the same device the
+    match floor uses, and for the same reason: a preference the DP can outvote is
+    not a constraint.
+
+    Deliberately narrow. It fires only on a clear margin, so a block that genuinely
+    could belong to either of two questions is still settled by the DP's global
+    view, which is better at that than any single pairing can be.
+    """
+    if not matrix:
+        return matrix
+
+    for j in range(len(matrix[0])):
+        column = [(evidence[i][j], i) for i in range(len(matrix))]
+        finite = [(s, i) for s, i in column if s != -inf]
+        if len(finite) < 2:
+            continue
+
+        finite.sort(reverse=True)
+        (best, winner), (runner_up, _) = finite[0], finite[1]
+        if best - runner_up < DECISIVE_MARGIN:
+            continue
+
+        for _score, i in finite:
+            if i != winner:
+                matrix[i][j] = -inf
+
     return matrix
+
+
+def _decided_question(matrix: list[list[float]], j: int) -> int | None:
+    """The question a block has been narrowed to, if it has been."""
+    live = [i for i in range(len(matrix)) if matrix[i][j] != -inf]
+    return live[0] if len(live) == 1 else None
+
+
+#: A block shorter than this is a fragment, not an answer: a trailing word that
+#: segmentation cut off, a stray mark. Measured on a real script, "there." — the
+#: last word of an answer, separated from it by a page break.
+_FRAGMENT_MAX_CHARS = 12
+
+
+def _agrees_with_the_answer_so_far(
+    matrix: list[list[float]], j: int, question: int, blocks: list[AnswerBlock]
+) -> bool:
+    """Whether this block continues an answer the previous block already stated.
+
+    Adjacency by index was the first attempt, and a real script broke it at once:
+    between two pages that both plainly answered the same question sat the block
+    "there." — the tail of the first page's last sentence, cut off by the page
+    break. Three blocks, not two, so nothing was adjacent and the evidence was
+    ignored.
+
+    Fragments are therefore looked past. A block of a dozen characters carries no
+    opinion about which question it belongs to, and letting one break the chain
+    means the commonest segmentation artefact there is can silently undo this.
+    """
+    if _decided_question(matrix, j) != question:
+        return False
+
+    for previous in range(j - 1, -1, -1):
+        if len(blocks[previous].text.strip()) <= _FRAGMENT_MAX_CHARS:
+            continue
+        return _decided_question(matrix, previous) == question
+    return False
 
 
 def _may_continue_into(question: Question, block: AnswerBlock) -> bool:

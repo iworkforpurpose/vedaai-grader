@@ -375,6 +375,90 @@ class TestLexicalOverlap:
         assert overlap.score("anything", "") == 0.0
 
 
+class TestSemanticSimilarity:
+    """Understanding, rather than counting shared characters.
+
+    The gap this closes, measured on the surface scorers:
+
+        Define refraction of light.            -> The bending of light...   0.236
+        Name the process by which plants...    -> It is called transpiration 0.000
+        State the SI unit of pressure.         -> The pascal.               0.081
+        Describe the causes of the revolution  -> Heavy taxes, a bankrupt... 0.169
+
+    Four of five correct answers score at or near zero against their own question,
+    because an answer restates the idea rather than the wording — which is what a
+    good answer does. With semantics silent the aligner falls back to position, and
+    a script whose answers are not in order is then placed by habit.
+
+    Stubbed rather than calling a live service: what belongs to this module is the
+    caching, the batching and the fallback, and none of that needs a network.
+    """
+
+    def test_meaning_beats_shared_words(self) -> None:
+        from grader.answers.similarity import SemanticSimilarity
+
+        # Vectors chosen so the surface scorers would get this exactly backwards:
+        # the wrong answer repeats the question's own words, the right one does not.
+        vectors = {
+            "Name the process by which plants lose water as water vapour.": [1.0, 0.0],
+            "It is called transpiration.": [0.96, 0.28],
+            "The process of water and plants is a process.": [0.0, 1.0],
+        }
+        similarity = SemanticSimilarity(embed=lambda texts: [vectors[t] for t in texts])
+
+        question = "Name the process by which plants lose water as water vapour."
+        right = similarity.score(question, "It is called transpiration.")
+        wrong = similarity.score(question, "The process of water and plants is a process.")
+        assert right > wrong
+
+    def test_texts_are_embedded_once_however_often_they_are_compared(self) -> None:
+        """Every question is scored against every block, so caching is not an
+        optimisation — it is the difference between a few calls and a few hundred.
+        """
+        from grader.answers.similarity import SemanticSimilarity
+
+        calls: list[list[str]] = []
+
+        def embed(texts: list[str]) -> list[list[float]]:
+            calls.append(list(texts))
+            return [[1.0, 0.0] for _ in texts]
+
+        similarity = SemanticSimilarity(embed=embed)
+        for _ in range(5):
+            similarity.score("a question", "an answer")
+
+        assert len(calls) == 1, f"embedded {len(calls)} times, expected once"
+        assert sorted(calls[0]) == ["a question", "an answer"]
+
+    def test_falls_back_when_the_service_is_unavailable(self) -> None:
+        """A failure here must not fail a submission.
+
+        Marking already degrades to a rubric when no key is set, and mapping has
+        to degrade the same way: the surface scorers are weaker, not useless, and
+        an answer sheet placed by trigrams and position is far better than a
+        submission that errored.
+        """
+        from grader.answers.similarity import SemanticSimilarity
+
+        def broken(texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("no network")
+
+        similarity = SemanticSimilarity(embed=broken)
+        score = similarity.score(
+            "Define refraction of light.",
+            "Refraction is the bending of light.",
+        )
+        assert score > 0.0, "must fall back to the surface measure, not return zero"
+
+    def test_an_empty_text_scores_zero_without_calling_out(self) -> None:
+        from grader.answers.similarity import SemanticSimilarity
+
+        calls: list[list[str]] = []
+        similarity = SemanticSimilarity(embed=lambda t: (calls.append(t), [[1.0]] * len(t))[1])
+        assert similarity.score("", "anything") == 0.0
+        assert calls == []
+
+
 class TestScriptDetails:
     """Separating a student's answers from the details they wrote at the top.
 
