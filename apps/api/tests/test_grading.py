@@ -81,6 +81,59 @@ class TestRubricDerivation:
         assert len(spec.criteria) == 1
         assert spec.marks_split_inferred is False
 
+    def test_a_quantity_in_the_question_is_not_a_count_of_answers(self) -> None:
+        """"Six grams of carbon" is not a request for six things.
+
+        Found on the science script. Question 14(ii) reads "Six grams of carbon
+        burns completely in sixteen grams of oxygen. Find the mass of carbon
+        dioxide formed and justify your answer" — one question, one answer, worth
+        3. It was split into six criteria of half a mark, and the student was told
+        the answer "does not provide a second method or calculation", then a
+        third, a fourth, a fifth and a sixth. They scored 0.5 out of 3 for
+        answering it.
+
+        A counted request has two properties this has neither of: the number
+        follows the instruction rather than opening the sentence, and it counts
+        items rather than measuring a quantity.
+        """
+        question = q(
+            "C/14/ii",
+            "14. (ii)",
+            "Six grams of carbon burns completely in sixteen grams of oxygen. "
+            "Find the mass of carbon dioxide formed and justify your answer.",
+            0,
+            marks=3,
+        )
+        assert rubric.requested_count(question.text) is None
+        assert len(rubric.derive(question).criteria) == 1
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Six grams of carbon burns completely in oxygen. Find the mass formed.",
+            "Calculate the mass of two moles of oxygen gas.",
+            "Find the current when three volts are applied across the resistor.",
+            "A train travels for four hours. Calculate its average speed.",
+            "State the value correct to three decimal places.",
+        ],
+    )
+    def test_a_measurement_is_never_a_count(self, text) -> None:
+        assert rubric.requested_count(text) is None
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("State two conditions for total internal reflection.", 2),
+            ("Give any three examples of a chemical change.", 3),
+            ("List 2 uses of washing soda.", 2),
+            ("Describe the three states of matter in terms of arrangement.", 3),
+            ("Write two differences between speed and velocity.", 2),
+            ("Mention any four properties of metals.", 4),
+        ],
+    )
+    def test_a_real_counted_request_still_splits(self, text, expected) -> None:
+        assert rubric.requested_count(text) == expected
+
     def test_a_stated_count_splits_the_marks(self) -> None:
         # "State two conditions ... [3]" is two things worth three marks. The
         # total is exact and the split is inferred, and the criteria still sum to

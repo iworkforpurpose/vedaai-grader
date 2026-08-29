@@ -42,6 +42,63 @@ _COUNTED_REQUEST = re.compile(
     re.IGNORECASE,
 )
 
+#: The word that opens a task. A counted request follows one: "State two
+#: conditions", "Describe the three states of matter". A number that arrives
+#: before any instruction is part of the scenario the question sets up, not a
+#: count of the answers it wants.
+_COMMANDS = (
+    "state", "give", "list", "name", "define", "identify", "mention",
+    "write", "describe", "explain", "discuss", "outline", "suggest",
+    "enumerate", "compare", "contrast", "distinguish", "differentiate",
+    "calculate", "compute", "find", "determine", "evaluate", "solve",
+    "draw", "sketch", "label", "illustrate", "justify", "what", "which",
+)
+
+#: Nouns that make the number a measurement rather than a tally of answers.
+#:
+#: A question worth 3 was split into six criteria of half a mark because it opens
+#: "Six grams of carbon burns completely in sixteen grams of oxygen", and the
+#: student was told their answer gave no second, third, fourth, fifth or sixth
+#: method. Enumerating units is short; enumerating the item nouns a paper might
+#: ask for is not, which is why the exclusion is written this way round.
+_UNITS = frozenset(
+    {
+        # mass
+        "gram", "grams", "g", "kg", "kilogram", "kilograms", "mg",
+        "milligram", "milligrams", "tonne", "tonnes",
+        # volume
+        "litre", "litres", "liter", "liters", "ml", "millilitre",
+        "millilitres", "cc",
+        # length
+        "metre", "metres", "meter", "meters", "cm", "mm", "km",
+        "centimetre", "centimetres", "millimetre", "millimetres",
+        # amount of substance
+        "mole", "moles", "molecule", "molecules",
+        # time
+        "second", "seconds", "minute", "minutes", "hour", "hours",
+        "day", "days", "week", "weeks", "month", "months", "year", "years",
+        "times", "fold",
+        # temperature
+        "degree", "degrees", "kelvin", "celsius",
+        # derived units
+        "joule", "joules", "newton", "newtons", "volt", "volts",
+        "ampere", "amperes", "amp", "amps", "ohm", "ohms",
+        "watt", "watts", "pascal", "pascals", "hertz",
+        "calorie", "calories",
+        # proportions and precision
+        "percent", "percentage", "decimal", "significant",
+        "places", "figures", "digits",
+    }
+)
+
+
+def _is_a_counted_request(text: str, match: re.Match[str]) -> bool:
+    """Whether a matched number is asking for that many answers."""
+    if match.group(2).lower() in _UNITS:
+        return False
+    opening = text[: match.start()].lower()
+    return any(command in opening for command in _COMMANDS)
+
 
 @dataclass(frozen=True)
 class Criterion:
@@ -84,13 +141,14 @@ def requested_count(text: str) -> int | None:
     thing — the difference matters, because inventing a count would split marks
     against a structure the paper never claimed.
     """
-    match = _COUNTED_REQUEST.search(text)
-    if match is None:
-        return None
-
-    word = match.group(1).lower()
-    count = _COUNTS.get(word) or int(word)
-    return count if count > 1 else None
+    for match in _COUNTED_REQUEST.finditer(text):
+        if not _is_a_counted_request(text, match):
+            continue
+        word = match.group(1).lower()
+        count = _COUNTS.get(word) or int(word)
+        if count > 1:
+            return count
+    return None
 
 
 def derive(question: Question) -> Rubric:
