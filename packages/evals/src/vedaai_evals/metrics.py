@@ -419,6 +419,80 @@ def multi_box_iou(truth: list[PageBox], predicted: list[PageBox]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+# -- does a written label reach its own answer? ---------------------------
+
+
+#: A line no wider than this share of the page is a margin token, not a line of
+#: writing.
+_LABEL_MAX_WIDTH = 0.08
+
+#: Two boxes sharing this much of the shorter one's height are on the same row.
+_SAME_ROW = 0.5
+
+
+@dataclass
+class BindingReport:
+    """Whether each question number reaches the line it was written beside.
+
+    Measured directly rather than inferred from the mapping, because a mapping is
+    an outcome and this is a property — and the difference is not academic. A fault
+    that made every margin number bind to the *following* line, so that every
+    answer began with its neighbour's last sentence, changed no number in this
+    harness at all: the answers here are two lines long and semantically distinct,
+    so the aligner still picked the right question from shifted text and the
+    outcome looked fine. On a real script with longer answers it mangled all of
+    them.
+
+    An outcome metric cannot see a defect that does not change the outcome on easy
+    data. This is the property itself.
+    """
+
+    bound: int = 0
+    total: int = 0
+    broken: list[str] = field(default_factory=list)
+
+    @property
+    def share(self) -> float | None:
+        """None, not 1.0, when the script writes no numbers — there is nothing to
+        measure, and scoring that as perfect would flatter the average."""
+        return (self.bound / self.total) if self.total else None
+
+
+def label_binding(lines: list[tuple[int, BBox, str]]) -> BindingReport:
+    """How many margin numbers are immediately followed by their own line."""
+    report = BindingReport()
+
+    for i, (page, box, text) in enumerate(lines):
+        if (box.x1 - box.x0) > _LABEL_MAX_WIDTH or len(text.strip()) > 6:
+            continue
+
+        mates = [
+            (p, b, t)
+            for j, (p, b, t) in enumerate(lines)
+            if j != i and p == page and _row_overlap(box, b) >= _SAME_ROW
+        ]
+        if not mates:
+            continue
+
+        report.total += 1
+        widest = max(mates, key=lambda m: (m[1].x1 - m[1].x0))
+        following = lines[i + 1] if i + 1 < len(lines) else None
+        if following is not None and following[2] == widest[2]:
+            report.bound += 1
+        else:
+            report.broken.append(f"{text.strip()!r} p{page}")
+
+    return report
+
+
+def _row_overlap(a: BBox, b: BBox) -> float:
+    top, bottom = max(a.y0, b.y0), min(a.y1, b.y1)
+    if bottom <= top:
+        return 0.0
+    shorter = min(a.y1 - a.y0, b.y1 - b.y0)
+    return (bottom - top) / shorter if shorter > 0 else 0.0
+
+
 # -- cross-detector agreement (no labelling required) ---------------------
 
 

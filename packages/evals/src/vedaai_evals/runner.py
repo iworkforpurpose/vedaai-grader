@@ -59,6 +59,7 @@ class SampleScore:
     mapping: metrics.MappingReport | None = None
     ious: list[float] | None = None
     line_ious: list[float] | None = None
+    binding: metrics.BindingReport | None = None
     recall: metrics.RecallReport | None = None
     agreement: metrics.AgreementReport | None = None
 
@@ -164,6 +165,13 @@ def score_sample(sample: GoldenSample, submission: Submission) -> SampleScore:
                 )
             )
         score.mapping, score.ious, score.line_ious = metrics.mapping_scores(cases)
+
+    # Whether each written question number reached its own line. A property, not
+    # an outcome, and the two come apart: see BindingReport.
+    if submission.answer_sheet_lines is not None:
+        score.binding = metrics.label_binding(
+            [(ln.page, ln.box, ln.text) for ln in submission.answer_sheet_lines.lines]
+        )
 
     # Needs a human-labelled real sample. Synthetic pages cannot measure this:
     # they are rendered from fonts, so recognition on them says nothing about
@@ -353,6 +361,18 @@ def report(
     else:
         out("  answer mapping           pending — Phase 6\n")
         out("  highlight IoU            pending — Phase 6\n")
+
+    bindings = [s.binding for s in scores if s.binding is not None and s.binding.total]
+    if bindings:
+        bound = sum(b.bound for b in bindings)
+        total = sum(b.total for b in bindings)
+        broken = [q for b in bindings for q in b.broken]
+        out(
+            f"  written labels bound     {bound}/{total} "
+            f"({bound / total * 100:.0f}%)   <- each number reaching its own line\n"
+        )
+        for note in broken[:4]:
+            out(f"    unbound: {note}\n")
 
     agreements = [s.agreement for s in scores if s.agreement is not None]
     if agreements:

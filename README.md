@@ -78,9 +78,10 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer mapping accuracy | 81.2% |
-| Highlight IoU vs the writing, mean | 0.608 |
-| Highlight IoU@0.5 hit rate | 83% |
+| Answer mapping accuracy | 81.1% |
+| Highlight IoU vs the writing, mean | 0.600 |
+| Highlight IoU@0.5 hit rate | 82% |
+| Written labels reaching their own line | 100% |
 | **False "unanswered" rate** | **0.0%** |
 
 **These figures replace earlier ones, and two of them are lower.** Mapping accuracy
@@ -102,6 +103,22 @@ generated ones. A user's Class 9 mathematics paper extracted one question of nin
 while the harness reported 100% extraction F1, because the golden set is generated
 by the same code that parses it and therefore only ever contained label styles the
 parser already handled.
+
+Four cases were added for the styles it could not previously express — a label
+printed as a heading with the question below it, a section the paper numbers
+`T1`..`Tn`, a lettered instruction block, and numbers written in the margin. The
+check that they are worth having is that removing the fixes now moves the numbers:
+extraction F1 falls from 100% to 88.2% and mapping from 81.1% to 72.0%. Before, the
+same removal changed nothing at all.
+
+**One fault remains outside what the synthetic set can reach, and it is worth
+naming.** Synthetic pages are read from their PDF text layer rather than through
+recognition — deliberately, so that a mapping regression is not confused with a
+recognition one. But a question number written in the margin only becomes a
+separate line, sitting a fraction below the line it labels, when a recognizer
+reports it that way. That is how the reading-order fault arose and why no synthetic
+case reproduces it: reverting that fix leaves every figure here unchanged. The
+corpus of real documents is the harness for that class, which is why it exists.
 
 Transcription engines, on five real handwritten pages with ground-truth
 transcriptions:
