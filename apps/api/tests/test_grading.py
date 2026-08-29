@@ -394,7 +394,9 @@ class TestSatisfiedMeansTheMarksAreEarned:
     QUESTION = q("B/11/a", "11 (a)", "Define atomic number and mass number.", 0, marks=2)
 
     def _graded(self, *, satisfied: bool, awarded: float):
-        answer = line(1, "Atomic number is the protons and mass number is protons plus neutrons", y0=0.1)
+        answer = line(
+            1, "Atomic number is the protons and mass number is protons plus neutrons", y0=0.1
+        )
         index = index_of(answer)
         return engine.assemble(
             question=self.QUESTION,
