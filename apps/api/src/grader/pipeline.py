@@ -420,6 +420,18 @@ def map_answers(submission: Submission) -> list[str]:
 
     warnings: list[str] = []
 
+    # Scoring fell back to comparing wording. A mapping placed by spelling is a
+    # materially different product from one placed by meaning — it is the regime
+    # where an answer that restates the idea in its own words goes unrecognised —
+    # and the teacher reading the result is the person who needs to be told.
+    if getattr(align_module.default_similarity, "degraded", False):
+        warnings.append(
+            "Answers were matched by wording rather than by meaning for this "
+            "submission, because the language service could not be reached. "
+            "Placements may be less reliable than usual; re-running in a few "
+            "minutes should restore it."
+        )
+
     # The sheet-does-not-match-the-paper case, said plainly and first.
     #
     # A comprehension paper was uploaded against a script of handwritten C, and

@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import time
 from collections import Counter
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
@@ -207,6 +208,12 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 _EMBED_BATCH = 128
 
 
+#: How long to stop calling the provider after it fails, in seconds. Long enough
+#: that a submission does not pay the timeout on every pair, short enough that an
+#: outage does not outlive itself.
+_OUTAGE_COOLDOWN = 60.0
+
+
 class SemanticSimilarity:
     """How close two texts are in meaning, rather than in spelling.
 
@@ -248,14 +255,23 @@ class SemanticSimilarity:
     unrelated_below = 0.30
 
     def __init__(self, *, embed: Callable[[list[str]], list[list[float]]] | None = None,
-                 fallback: Similarity | None = None) -> None:
+                 fallback: Similarity | None = None,
+                 now: Callable[[], float] | None = None) -> None:
         self._embed = embed or _openai_embed
         self._fallback = fallback or StrongerOf()
+        self._now = now or time.monotonic
         self._cache: dict[str, list[float] | None] = {}
-        #: Set once the provider has failed. One failure means the next call will
-        #: almost certainly fail too, and a submission should not pay that latency
-        #: once per pair.
-        self._unavailable = False
+        #: When the provider may be tried again. A failure means the next call
+        #: will almost certainly fail too, and a submission should not pay that
+        #: latency once per pair — but it must expire.
+        #:
+        #: This flag used to have no expiry, and the scorer is built once at
+        #: import and shared by every submission the task handles. So one timeout
+        #: meant every script uploaded afterwards was placed by word overlap
+        #: instead of by meaning, for as long as the task lived, with nothing said
+        #: to anyone. It is the most likely reason the same script mapped
+        #: differently on two runs.
+        self._retry_after: float | None = None
 
     def score(self, a: str, b: str) -> float:
         if not a.strip() or not b.strip():
@@ -276,6 +292,16 @@ class SemanticSimilarity:
         # Clamped because the aligner's weights assume a score in [0, 1].
         return max(0.0, min(1.0, dot / (norm_a * norm_b)))
 
+    @property
+    def degraded(self) -> bool:
+        """Whether scoring is currently falling back to the surface measure.
+
+        Falling back is right; falling back quietly is not. A mapping placed by
+        spelling is a materially different product from one placed by meaning, and
+        the teacher reading it is the person who needs to be told.
+        """
+        return self._retry_after is not None and self._now() < self._retry_after
+
     def warm(self, texts: list[str]) -> None:
         """Embed a set of texts in as few requests as possible.
 
@@ -293,14 +319,21 @@ class SemanticSimilarity:
     def _fetch(self, texts: list[str]) -> None:
         if not texts:
             return
-        if self._unavailable:
-            for text in texts:
-                self._cache[text] = None
-            return
+        if self._retry_after is not None:
+            if self._now() < self._retry_after:
+                for text in texts:
+                    self._cache[text] = None
+                return
+            # The wait is over. Anything cached as unavailable was cached during
+            # the outage, not because it cannot be embedded, so it is asked again.
+            self._retry_after = None
+            self._cache = {
+                text: vector for text, vector in self._cache.items() if vector is not None
+            }
         try:
             vectors = self._embed(texts)
         except Exception:  # noqa: BLE001 - any provider failure degrades the same way
-            self._unavailable = True
+            self._retry_after = self._now() + _OUTAGE_COOLDOWN
             for text in texts:
                 self._cache[text] = None
             return

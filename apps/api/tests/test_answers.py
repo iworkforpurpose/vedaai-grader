@@ -450,6 +450,50 @@ class TestSemanticSimilarity:
         )
         assert score > 0.0, "must fall back to the surface measure, not return zero"
 
+    def test_one_outage_does_not_follow_every_later_submission(self) -> None:
+        """A provider blip must not silently downgrade the rest of the process.
+
+        The scorer is built once, at import, and shared by every submission the
+        task handles. The flag it set on a failed call had no expiry, so a single
+        timeout meant every script uploaded afterwards — for hours, until the task
+        recycled — was placed by word overlap instead of by meaning, with nothing
+        said to anybody. It is the most likely explanation for the same script
+        mapping differently on two runs.
+        """
+        from grader.answers.similarity import SemanticSimilarity
+
+        clock = [0.0]
+        attempts: list[int] = []
+
+        def flaky(texts: list[str]) -> list[list[float]]:
+            attempts.append(len(attempts))
+            if len(attempts) == 1:
+                raise RuntimeError("no network")
+            return [[1.0, 0.0] for _ in texts]
+
+        similarity = SemanticSimilarity(embed=flaky, now=lambda: clock[0])
+        similarity.score("Define refraction.", "Refraction bends light.")
+        assert similarity.degraded is True
+
+        clock[0] += 3600.0
+        similarity.score("Name the process.", "It is transpiration.")
+        assert len(attempts) == 2, "the provider must be tried again once the wait is over"
+        assert similarity.degraded is False
+
+    def test_a_failure_is_reported_rather_than_absorbed(self) -> None:
+        # Falling back is right; falling back quietly is not. A mapping placed by
+        # spelling is a materially different product from one placed by meaning,
+        # and the teacher looking at it is the person who needs to know.
+        from grader.answers.similarity import SemanticSimilarity
+
+        def broken(texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("no network")
+
+        similarity = SemanticSimilarity(embed=broken)
+        assert similarity.degraded is False
+        similarity.score("Define refraction.", "Refraction bends light.")
+        assert similarity.degraded is True
+
     def test_an_empty_text_scores_zero_without_calling_out(self) -> None:
         from grader.answers.similarity import SemanticSimilarity
 
