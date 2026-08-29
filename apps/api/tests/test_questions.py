@@ -106,6 +106,57 @@ class TestLabelParsing:
         assert numbering.parse_label("(h) x").tokens == ("h",)
 
 
+class TestLabelPrefixes:
+    """Notations beyond a bare number, taken from real papers."""
+
+    @pytest.mark.parametrize(
+        ("text", "tokens"),
+        [
+            ("Question 4", ("4",)),
+            ("Question 12. Describe the carbon cycle.", ("12",)),
+            ("Q.8 Explain osmosis.", ("8",)),
+            ("13 [4 marks]", ("13",)),
+        ],
+    )
+    def test_parses_prefixes_real_papers_use(self, text, tokens) -> None:
+        parsed = numbering.parse_label(text)
+        assert parsed is not None, f"{text!r} should parse"
+        assert parsed.tokens == tokens
+
+    def test_a_word_beginning_with_q_is_not_a_question_label(self) -> None:
+        # "Quote the formula" must not become question "uote", and the guard has
+        # to survive spelling out "Question".
+        for text in ("Quote the source.", "Questions like this are common."):
+            assert numbering.parse_label(text) is None
+
+    def test_learns_a_section_letter_the_paper_uses_consistently(self) -> None:
+        """`T1`..`T5` alongside `Q1`..`Q4`, from a real mathematics paper.
+
+        Hardcoding a list of letters would be guessing at what a school prints.
+        What can be observed instead is repetition: a paper that labels with `T`
+        does it several times and counts upward, and one stray "A4 paper" in a
+        sentence does not.
+        """
+        lines = [
+            "Q1 (5 Marks)", "Q2 (5 Marks)",
+            "T1 (5 Marks)", "T2 (5 Marks)", "T3 (5 Marks)",
+        ]
+        prefixes = numbering.detect_section_prefixes(lines)
+        assert "T" in prefixes
+
+        parsed = numbering.parse_label("T2 (5 Marks)", prefixes=prefixes)
+        assert parsed is not None
+        assert parsed.tokens == ("2",)
+
+    def test_does_not_invent_a_prefix_from_one_mention(self) -> None:
+        lines = [
+            "1. Fold the A4 sheet in half.",
+            "2. Describe the reaction.",
+            "3. State the law.",
+        ]
+        assert numbering.detect_section_prefixes(lines) == frozenset()
+
+
 class TestMarks:
     @pytest.mark.parametrize(
         ("text", "expected"),
@@ -153,6 +204,39 @@ class TestFurniture:
             line(1, text, y0=0.1), repeated=set(), previous_role=None
         )
         assert role is LineRole.INSTRUCTION
+
+    def test_a_label_alone_on_its_line_still_opens_a_question(self) -> None:
+        """The heading layout, which is most of a real paper's ways of numbering.
+
+        `Q1 (5 Marks)` on its own line with the question below it is how the paper
+        that extracted one question out of nine was set. Eight of the eleven
+        real-world label styles this extractor dropped were dropped for this one
+        reason: the body is empty once the mark allocation is taken off it, and an
+        empty body was read as "a stray number, not a question".
+        """
+        lines = [
+            line(1, "Q1 (5 Marks)", y0=0.05),
+            line(2, "Two taps A and B fill a tank. Find the time each takes alone.", y0=0.09),
+            line(3, "Q2 (5 Marks)", y0=0.15),
+            line(4, "A father and son have x and y coins. Find x and y.", y0=0.19),
+        ]
+        roles = furniture.classify_all(lines)
+        assert roles["qp:0001"] is LineRole.QUESTION_START
+        assert roles["qp:0002"] is LineRole.QUESTION_CONTINUATION
+        assert roles["qp:0003"] is LineRole.QUESTION_START
+
+    def test_a_bare_label_with_nothing_after_it_is_still_not_a_question(self) -> None:
+        """The rule the heading layout must not undo.
+
+        A number alone at the foot of a page, with nothing following it, is a page
+        number or a stray. Only a label followed by actual question text counts.
+        """
+        lines = [
+            line(1, "1. Define refraction of light.", y0=0.05),
+            line(2, "7", y0=0.95),
+        ]
+        roles = furniture.classify_all(lines)
+        assert roles["qp:0002"] is not LineRole.QUESTION_START
 
     def test_an_enumerated_instruction_block_is_not_a_list_of_questions(self) -> None:
         """Lettered instructions under a heading, before any question exists.

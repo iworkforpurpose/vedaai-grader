@@ -46,11 +46,50 @@ class LabelStyle(StrEnum):
 #: roman numeral. Deliberately not distinguishing the two.
 _TOKEN_RE = re.compile(r"\d{1,3}|[ivxlcdmIVXLCDM]{1,5}|[a-zA-Z]")
 
-#: A leading Q prefix: ``Q1``, ``Q.1``, ``Q 1``. Requires a digit after it, so a
-#: sentence beginning "Quote the formula" is not mistaken for question ``uote``.
-_Q_PREFIX = re.compile(r"^\s*[Qq]\s*\.?\s*(?=\d)")
+#: A leading Q prefix: ``Q1``, ``Q.1``, ``Q 1``, ``Question 4``. Requires a digit
+#: after it, so a sentence beginning "Quote the formula" is not mistaken for
+#: question ``uote`` — and the optional "uestion" is anchored the same way, so
+#: "Questions like this" is not question "like".
+_Q_PREFIX = re.compile(r"^\s*[Qq](?:uestion|UESTION)?\s*\.?\s*(?=\d)")
 
 _BARE_NUMBER = re.compile(r"\d{1,3}")
+
+#: A section letter the paper itself uses: ``T1``, ``A1``, ``B2``.
+_SECTION_PREFIX = re.compile(r"^\s*([A-Z])\s?(\d{1,3})\b")
+
+#: How many times a letter must open a numbered line before it is believed to be
+#: that paper's own scheme rather than a coincidence.
+#:
+#: Three, because two is "A4 paper" mentioned twice and a paper that numbers with
+#: a letter always does it more than twice. The alternative — a fixed list of
+#: allowed letters — is guessing at what a school prints.
+_MIN_PREFIX_USES = 3
+
+
+def detect_section_prefixes(texts: list[str]) -> frozenset[str]:
+    """Letters this paper uses to open numbered questions, learned from the paper.
+
+    A real mathematics paper numbered its second half ``T1``..``T5``. No grammar
+    written in advance would have known that ``T`` was a question prefix, and
+    treating every capital-then-digit as one would make a question out of "A4
+    sheet". Repetition separates them: a scheme is used repeatedly and counts
+    upward, a coincidence does not.
+    """
+    seen: dict[str, set[int]] = {}
+    for text in texts:
+        match = _SECTION_PREFIX.match(text.strip())
+        if match is None:
+            continue
+        letter, number = match.group(1), int(match.group(2))
+        seen.setdefault(letter, set()).add(number)
+
+    return frozenset(
+        letter
+        for letter, numbers in seen.items()
+        # Distinct numbers, so a repeated running header "B1" on every page is not
+        # mistaken for five questions.
+        if len(numbers) >= _MIN_PREFIX_USES
+    )
 
 
 @dataclass(frozen=True)
@@ -70,6 +109,16 @@ class ParsedLabel:
     style: LabelStyle
     remainder: str
     """The question text following the label."""
+
+    section_hint: str | None = None
+    """A section letter carried by the label itself, as in ``T1``.
+
+    Kept rather than discarded, because the letter is the only thing separating
+    ``T1`` from ``Q1``. Stripping it and keeping the number made both of them
+    question ``1``, and a paper with four Q questions and five T questions
+    produced four questions and five duplicates of them.
+
+    ``Q`` never sets this. It abbreviates "question", not a section."""
 
     @property
     def depth_hint(self) -> int:
@@ -120,7 +169,7 @@ def _scan_punctuated(text: str, i: int) -> tuple[str, int] | None:
     return None
 
 
-def parse_label(text: str) -> ParsedLabel | None:
+def parse_label(text: str, *, prefixes: frozenset[str] = frozenset()) -> ParsedLabel | None:
     """Extract a leading question label, or None if the line does not start with one.
 
     Hand-scanned rather than matched by one regular expression. The notations a
@@ -139,8 +188,21 @@ def parse_label(text: str) -> ParsedLabel | None:
     * Tokens are never interpreted.
     """
     prefix = _Q_PREFIX.match(text)
+    if prefix is None and prefixes:
+        # A letter this paper has been observed to number with, treated exactly
+        # like a Q: it introduces the number rather than being part of it, so
+        # "T2" is question 2 of section T and not question "T".
+        section = _SECTION_PREFIX.match(text)
+        if section is not None and section.group(1) in prefixes:
+            prefix = section
+
+    section_hint: str | None = None
     if prefix is not None:
-        start = prefix.end()
+        if prefix.re is _Q_PREFIX:
+            start = prefix.end()
+        else:
+            start = prefix.start(2)
+            section_hint = prefix.group(1)
         had_q = True
     else:
         start = 0
@@ -190,7 +252,9 @@ def parse_label(text: str) -> ParsedLabel | None:
                 # a bracket following it as in "11 (a)", a punctuated token as in
                 # "2 a)" — which is what a student writing a margin label
                 # actually produces — or a Q introducing it.
-                follows_bracket = lookahead < len(text) and text[lookahead] == "("
+                # Either bracket. AQA prints "13 [4 marks]", and only round
+                # brackets were corroborating, so the whole style was dropped.
+                follows_bracket = lookahead < len(text) and text[lookahead] in "(["
                 follows_token = _scan_punctuated(text, lookahead) is not None
                 if had_q or follows_bracket or follows_token:
                     tokens.append(bare.group(0))
@@ -207,7 +271,13 @@ def parse_label(text: str) -> ParsedLabel | None:
 
     remainder = text[position:].strip()
     raw = " ".join(text[:position].split())
-    return ParsedLabel(raw=raw, tokens=tuple(tokens), style=style, remainder=remainder)
+    return ParsedLabel(
+        raw=raw,
+        tokens=tuple(tokens),
+        style=style,
+        remainder=remainder,
+        section_hint=section_hint,
+    )
 
 
 def looks_like_a_question(label: ParsedLabel, remainder: str) -> bool:

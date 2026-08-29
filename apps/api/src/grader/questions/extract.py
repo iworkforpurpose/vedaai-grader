@@ -32,7 +32,13 @@ from vedaai_contracts import (
 )
 
 from . import furniture, optionality
-from .numbering import ParsedLabel, canonical_qid, extract_marks, parse_label
+from .numbering import (
+    ParsedLabel,
+    canonical_qid,
+    detect_section_prefixes,
+    extract_marks,
+    parse_label,
+)
 from .validate import find_gaps
 
 #: Two labels within this horizontal distance are at the same indent level.
@@ -130,6 +136,9 @@ def extract(index: LineIndex) -> QuestionPaper:
     section_instructions: dict[str, list[str]] = {}
 
     current_section: str | None = None
+    # Learned from the whole paper, because one line cannot tell a section
+    # letter from a coincidence.
+    prefixes = detect_section_prefixes([ln.text for ln in index.lines])
     building: _Building | None = None
     # One entry per open ancestor: (indent level, absolute path, was the label
     # multi-token). The last flag is what distinguishes a sibling from a child —
@@ -170,9 +179,23 @@ def extract(index: LineIndex) -> QuestionPaper:
             if building is not None:
                 questions.append(building.finish())
 
-            parsed = parse_label(line.text)
+            parsed = parse_label(line.text, prefixes=prefixes)
             if parsed is None:  # pragma: no cover - classify already checked
                 continue
+
+            # A label carrying its own section letter, as `T1` does. Without this
+            # the letter was dropped and `T1` became question `1`, colliding with
+            # `Q1`: a paper with four Q questions and five T questions extracted
+            # four questions and five duplicates of them.
+            if parsed.section_hint and parsed.section_hint != current_section:
+                current_section = parsed.section_hint
+                if all(s.section_id != current_section for s in sections):
+                    sections.append(
+                        Section(section_id=current_section, label_raw=current_section)
+                    )
+                # Numbering restarts with the section, so nothing above it can be
+                # an ancestor of what follows.
+                stack = []
 
             level = _level_of(line.box.x0, levels)
             path = _resolve_path(parsed, level, stack)

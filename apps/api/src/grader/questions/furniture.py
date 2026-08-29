@@ -20,7 +20,12 @@ from collections import defaultdict
 
 from vedaai_contracts import Line, LineRole
 
-from .numbering import extract_marks, looks_like_a_question, parse_label
+from .numbering import (
+    detect_section_prefixes,
+    extract_marks,
+    looks_like_a_question,
+    parse_label,
+)
 
 #: A section or part heading. Papers divide themselves this way and questions
 #: often renumber across the boundary, so these are structural rather than noise.
@@ -150,12 +155,57 @@ def _at_page_edge(line: Line) -> bool:
     return line.box.y0 <= _EDGE_BAND or line.box.y1 >= (1.0 - _EDGE_BAND)
 
 
+#: How far below a heading the question text may sit.
+#:
+#: A geometry paper puts its figure between the heading and the question, and the
+#: figure's labels transcribe as single letters and digits — "E", "D", "A", "B",
+#: "P". Looking only at the very next line found "E", concluded the heading was a
+#: stray, and left five questions of a real paper invisible.
+#:
+#: Twelve rather than eight because one figure on that paper carried exactly eight
+#: labels — "D C 3 2 4 1 A B" — and a limit of eight stopped one line short of the
+#: question, losing T4 while finding T3 and T5 either side of it. Reaching too far
+#: is safe: the scan stops at the next label or section header regardless, so it
+#: cannot walk into another question's text.
+_HEADING_LOOKAHEAD = 12
+
+#: Below this many characters a line is a fragment — a figure label, a stray mark —
+#: rather than the question.
+_FRAGMENT_MAX_CHARS = 4
+
+
+def _body_from_following(
+    body: str, following: tuple[str, ...], *, prefixes: frozenset[str]
+) -> str:
+    """The question text for a label that has none on its own line.
+
+    Skips fragments on the way down, because a diagram sits between the heading
+    and the question more often than not. Stops at anything that starts something
+    else — another label, a section header — so a bare number at the foot of a
+    page cannot reach forward and adopt the next question's text as its own.
+    """
+    for text in following[:_HEADING_LOOKAHEAD]:
+        candidate = text.strip()
+        if not candidate or len(candidate) <= _FRAGMENT_MAX_CHARS:
+            continue
+        if parse_label(candidate, prefixes=prefixes) is not None:
+            break
+        if _SECTION_HEADER.match(candidate):
+            break
+        if len(candidate) >= 12:
+            return candidate
+        break
+    return body
+
+
 def classify(
     line: Line,
     *,
     repeated: set[str],
     previous_role: LineRole | None,
     started: bool = True,
+    following: tuple[str, ...] = (),
+    prefixes: frozenset[str] = frozenset(),
 ) -> LineRole:
     """Decide what one line is.
 
@@ -201,9 +251,23 @@ def classify(
     if _BRACKETED_ASIDE.match(text):
         return LineRole.FURNITURE
 
-    label = parse_label(text)
+    label = parse_label(text, prefixes=prefixes)
     if label is not None:
         body, _marks = extract_marks(label.remainder)
+
+        # The heading layout: the label on its own line, the question below it.
+        #
+        # `Q1 (5 Marks)` leaves an empty body once the allocation is taken off,
+        # and an empty body used to mean "a stray number". Eight of the eleven
+        # real-world label styles this extractor dropped were dropped for that one
+        # reason, including every question of the paper that started this work.
+        #
+        # What makes it a heading rather than a stray is the line underneath: real
+        # question text, and not itself a label. A number alone at the foot of a
+        # page has nothing following it and stays furniture.
+        if not looks_like_a_question(label, body):
+            body = _body_from_following(body, following, prefixes=prefixes)
+
         if looks_like_a_question(label, body):
             # Nothing has opened the paper yet, so this line either opens it or is
             # still preamble. A paper opens at a number — 1, Q1, 11 (a). An
@@ -239,6 +303,10 @@ def classify(
 def classify_all(lines: list[Line]) -> dict[str, LineRole]:
     """Classify every line in reading order."""
     repeated = find_repeated_lines(lines)
+    # Learned once from the whole document, because a single line cannot tell a
+    # section letter from a coincidence — `T1` is only a label because `T2` and
+    # `T3` are there too.
+    prefixes = detect_section_prefixes([line.text for line in lines])
     roles: dict[str, LineRole] = {}
     previous: LineRole | None = None
 
@@ -247,8 +315,18 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
     # papers exist that head straight into question 1 with no section at all.
     started = False
 
-    for line in lines:
-        role = classify(line, repeated=repeated, previous_role=previous, started=started)
+    for position, line in enumerate(lines):
+        upcoming = tuple(
+            ln.text for ln in lines[position + 1 : position + 1 + _HEADING_LOOKAHEAD]
+        )
+        role = classify(
+            line,
+            repeated=repeated,
+            previous_role=previous,
+            started=started,
+            following=upcoming,
+            prefixes=prefixes,
+        )
         if role in {LineRole.QUESTION_START, LineRole.SECTION_HEADER}:
             started = True
         roles[line.line_id] = role
