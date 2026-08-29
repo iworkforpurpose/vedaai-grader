@@ -48,8 +48,16 @@ class GoldenAnswer(BaseModel):
 
     complete_answer_box: list[PageBox] = Field(
         default_factory=list,
-        description="Where the answer is. A list rather than one box, because an "
-        "answer spanning a page boundary has no single meaningful rectangle.",
+        description="Where the answer is, as one box per page. A list rather than one "
+        "box, because an answer spanning a page boundary has no single meaningful "
+        "rectangle. This is HG-Bench's shape, kept so its baselines stay comparable.",
+    )
+    written_lines: list[PageBox] = Field(
+        default_factory=list,
+        description="The individual lines the answer occupies, before they are "
+        "collapsed into a region. This is what the product actually has to highlight, "
+        "and scoring against the region instead rewards a highlight for covering the "
+        "blank paper between the lines.",
     )
     steps: list[GoldenStep] = Field(default_factory=list)
     text: str | None = Field(

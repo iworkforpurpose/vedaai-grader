@@ -163,6 +163,36 @@ class TestKendallTau:
 
 
 class TestMultiBoxIou:
+    def test_a_loose_box_cannot_outscore_a_tight_one_against_the_writing(self) -> None:
+        """The measurement fault that let a bad highlight look perfect.
+
+        Four lines of an answer spread down a page. The old ground truth stored
+        their bounding rectangle and the old highlight drew the same rectangle, so
+        the pair scored 1.000 — while sixty per cent of what was drawn was blank
+        paper, which is the thing a teacher complained about.
+
+        Scored against the lines instead, the loose box is penalised for the gaps
+        it covers and the tight one is not. Without that, tightening the highlight
+        would have *lowered* the published number and looked like a regression.
+        """
+        lines = [page_box(0, 0.11, 0.10 + i * 0.08, 0.55, 0.12 + i * 0.08) for i in range(4)]
+        loose = [page_box(0, 0.11, 0.10, 0.55, 0.36)]
+
+        tight_score = metrics.multi_box_iou(lines, lines)
+        loose_score = metrics.multi_box_iou(lines, loose)
+
+        assert tight_score == pytest.approx(1.0)
+        assert loose_score < 0.45, (
+            f"a box covering the gaps scored {loose_score:.3f} against the writing"
+        )
+        assert tight_score > loose_score
+
+    def test_the_region_shape_still_scores_the_way_hg_bench_defines_it(self) -> None:
+        # Kept deliberately: the region comparison is the only thing that makes the
+        # published baselines comparable, so it must keep meaning what it meant.
+        region = [page_box(0, 0.11, 0.10, 0.55, 0.36)]
+        assert metrics.multi_box_iou(region, region) == pytest.approx(1.0)
+
     def test_identical_regions(self) -> None:
         boxes = [page_box(0, 0.1, 0.1, 0.5, 0.5)]
         assert metrics.multi_box_iou(boxes, boxes) == pytest.approx(1.0)
@@ -217,7 +247,7 @@ def case(
 class TestMappingScores:
     def test_a_correct_mapping(self) -> None:
         boxes = [page_box(0, 0.1, 0.1, 0.9, 0.2)]
-        report, ious = metrics.mapping_scores(
+        report, ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "A/1",
@@ -235,7 +265,7 @@ class TestMappingScores:
     def test_right_question_wrong_region(self) -> None:
         # An alignment success with a geometry failure. Counted apart from a
         # wrong question, because the two have different fixes.
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "A/1",
@@ -252,7 +282,7 @@ class TestMappingScores:
     def test_a_false_unanswered_is_reported_separately(self) -> None:
         # The headline safety number. A teacher acts on "unanswered" without
         # re-reading the script, so this error reaches a grade uncorrected.
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "A/1",
@@ -269,7 +299,7 @@ class TestMappingScores:
         # Hedging is not the same as claiming a question was skipped, and
         # scoring it as absence would credit the system for uncertainty.
         boxes = [page_box(0, 0.1, 0.1, 0.9, 0.2)]
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "A/1",
@@ -284,7 +314,7 @@ class TestMappingScores:
         assert report.correct == 1
 
     def test_claiming_an_answer_where_there_is_none(self) -> None:
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "A/1",
@@ -297,7 +327,7 @@ class TestMappingScores:
         assert report.false_answer == ["A/1"]
 
     def test_correctly_identifying_a_blank(self) -> None:
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [case("A/1", AnswerStatus.UNANSWERED, AnswerStatus.UNANSWERED)]
         )
         assert report.correctly_unanswered == 1
@@ -307,14 +337,14 @@ class TestMappingScores:
     def test_an_optional_question_may_be_skipped(self) -> None:
         # "Attempt any four of seven" — skipping is correct, and reporting it as
         # an omission is a product error rather than a mapping one.
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [case("B/6", AnswerStatus.NOT_REQUIRED, AnswerStatus.NOT_REQUIRED)]
         )
         assert report.not_required_respected == 1
         assert report.not_required_violated == []
 
     def test_reporting_an_optional_question_as_answered_is_a_violation(self) -> None:
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case(
                     "B/6",
@@ -330,7 +360,7 @@ class TestMappingScores:
         # Denominator is answered questions only. Including blanks would dilute
         # the rate on a mostly-empty script, which is when it matters most.
         boxes = [page_box(0, 0.1, 0.1, 0.9, 0.2)]
-        report, _ = metrics.mapping_scores(
+        report, _ious, _line_ious = metrics.mapping_scores(
             [
                 case("A/1", AnswerStatus.ANSWERED, AnswerStatus.UNANSWERED, truth_boxes=boxes),
                 case(

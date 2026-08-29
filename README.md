@@ -78,10 +78,30 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer mapping accuracy | 92.7% |
-| Highlight IoU, mean | 0.744 |
-| Highlight IoU@0.5 hit rate | 95% |
+| Answer mapping accuracy | 81.2% |
+| Highlight IoU vs the writing, mean | 0.608 |
+| Highlight IoU@0.5 hit rate | 83% |
 | **False "unanswered" rate** | **0.0%** |
+
+**These figures replace earlier ones, and two of them are lower.** Mapping accuracy
+was quoted at 92.7% and highlight IoU at 0.744. Neither was measured against what
+the product does.
+
+Ground truth stored an answer as one rectangle per page, and the highlight was
+drawn the same way, so a box around four spread-out lines scored a perfect 1.000
+while covering sixty per cent blank paper. The metric was rewarding the fault a
+teacher would complain about, and a highlight tightened onto the ink would have
+scored *worse* — which is the shape of measurement error that hides a defect
+instead of finding it. Truth now records the lines as well as the region, and both
+are reported: against the writing because that is what a teacher sees, against the
+region because HG-Bench is defined that way and its baselines are the only external
+comparison there is.
+
+The published numbers were also produced against real papers rather than only
+generated ones. A user's Class 9 mathematics paper extracted one question of nine
+while the harness reported 100% extraction F1, because the golden set is generated
+by the same code that parses it and therefore only ever contained label styles the
+parser already handled.
 
 Transcription engines, on five real handwritten pages with ground-truth
 transcriptions:
@@ -99,7 +119,16 @@ Recall on real pages is the binding ceiling on everything downstream and needs
 ground-truth boxes that nobody has drawn; that work is not done, and no figure here
 should be read as if it were.
 
-Tests: 384 on the API, 56 on the web app.
+A second set of numbers is kept precisely because the synthetic ones could not see
+what went wrong. Seven documents that have been through the pipeline — including
+the ones that failed — are re-run after every change and inspected in a browser
+(`tooling/scripts/rerun_corpus.py`, `inspect_corpus.py`, `score_mapping.py`). On the
+three whose correct mapping is unambiguous, blocks landing on the question they
+actually answer went from 3/8 to 7/8. Label binding across the scripts that write
+question numbers went from 32% to 100%, and the share of a highlight that is
+actually ink from 56% to 84%.
+
+Tests: 448 on the API, 60 on the web app, 94 on the eval harness.
 
 ## Running it
 

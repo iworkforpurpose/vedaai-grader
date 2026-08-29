@@ -58,6 +58,7 @@ class SampleScore:
     extraction: metrics.ExtractionReport | None = None
     mapping: metrics.MappingReport | None = None
     ious: list[float] | None = None
+    line_ious: list[float] | None = None
     recall: metrics.RecallReport | None = None
     agreement: metrics.AgreementReport | None = None
 
@@ -157,11 +158,12 @@ def score_sample(sample: GoldenSample, submission: Submission) -> SampleScore:
                     qid=answer.qid,
                     truth_status=answer.status,
                     truth_boxes=list(answer.complete_answer_box),
+                    truth_lines=list(answer.written_lines),
                     predicted_status=predicted_status,
                     predicted_boxes=predicted_boxes,
                 )
             )
-        score.mapping, score.ious = metrics.mapping_scores(cases)
+        score.mapping, score.ious, score.line_ious = metrics.mapping_scores(cases)
 
     # Needs a human-labelled real sample. Synthetic pages cannot measure this:
     # they are rendered from fonts, so recognition on them says nothing about
@@ -290,12 +292,16 @@ def report(
         # false-unanswered rate was on screen, false *answers* stayed invisible —
         # and quoting a clean safety figure beside an unreported error in the
         # opposite direction is worse than reporting neither.
+        # Named for what it counts. `wrong_region` is an answer whose highlight did
+        # not land on the writing — which may be the wrong question, or the right
+        # question highlighted badly, and the two are different failures. Calling it
+        # "wrong question" claimed the first and measured both.
         wrong = [q for m in mappings for q in m.wrong_region]
         invented = [q for m in mappings for q in m.false_answer]
         out(
             f"    correct {total_correct}"
-            f" · wrong question {len(wrong)}"
-            f" · missed {len(all_missed)}"
+            f" · highlight missed the writing {len(wrong)}"
+            f" · not found {len(all_missed)}"
             f" · invented {len(invented)}"
             f"  of {total_scored}\n"
         )
@@ -319,11 +325,30 @@ def report(
         if violated:
             out(f"    optional questions wrongly reported missing: {len(violated)}\n")
 
+        # Two numbers, because they answer different questions and the difference
+        # is the point. Against the writing is what a teacher sees: did the
+        # highlight land on the ink? Against the region is HG-Bench's definition,
+        # kept only so its published baselines remain comparable.
+        #
+        # They diverged sharply once highlights stopped being one rectangle per
+        # page. A box drawn around four spread-out lines scores a perfect 1.0
+        # against a region stored the same way while covering 60 per cent blank
+        # paper — so for as long as only the region was reported, the metric
+        # rewarded the loose highlight and a tight one scored worse.
+        line_ious = [i for s in scores if s.line_ious for i in s.line_ious]
+        if line_ious:
+            tight = metrics.summarize_iou(line_ious)
+            out(
+                f"  highlight vs writing     mean {tight['mean']:.3f}  "
+                f"@0.5 {tight['at_50'] * 100:.0f}%  @0.75 {tight['at_75'] * 100:.0f}%\n"
+            )
+
         ious = [i for s in scores if s.ious for i in s.ious]
         summary = metrics.summarize_iou(ious)
         out(
-            f"  highlight IoU            mean {summary['mean']:.3f}  "
-            f"@0.5 {summary['at_50'] * 100:.0f}%  @0.75 {summary['at_75'] * 100:.0f}%\n"
+            f"  highlight vs region      mean {summary['mean']:.3f}  "
+            f"@0.5 {summary['at_50'] * 100:.0f}%  @0.75 {summary['at_75'] * 100:.0f}%"
+            f"   (HG-Bench shape)\n"
         )
     else:
         out("  answer mapping           pending — Phase 6\n")

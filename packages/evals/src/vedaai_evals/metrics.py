@@ -293,13 +293,23 @@ class MappingCase:
     truth_boxes: list[PageBox]
     predicted_status: AnswerStatus
     predicted_boxes: list[PageBox]
+    #: The lines the answer occupies, where truth records them.
+    #:
+    #: Scored separately from the region because they measure different things and
+    #: the difference is not small. A highlight drawn as one rectangle around four
+    #: spread-out lines scored a perfect 1.0 against a region stored the same way,
+    #: while covering 60 per cent blank paper — so the metric was rewarding exactly
+    #: the fault a teacher complained about, and a tight highlight would have
+    #: scored *worse*. The region stays because HG-Bench is defined on it and its
+    #: baselines are the only external comparison available.
+    truth_lines: list[PageBox] = field(default_factory=list)
 
 
 def mapping_scores(
     cases: list[MappingCase],
     *,
     iou_threshold: float = HIGHLIGHT_IOU,
-) -> tuple[MappingReport, list[float]]:
+) -> tuple[MappingReport, list[float], list[float]]:
     """Score mapping outcomes, and collect the IoU of every correct-ish mapping.
 
     Returns the report plus per-question IoU values for the questions that were
@@ -310,6 +320,7 @@ def mapping_scores(
     """
     report = MappingReport()
     ious: list[float] = []
+    line_ious: list[float] = []
 
     for case in cases:
         truth_answered = case.truth_status is AnswerStatus.ANSWERED
@@ -333,7 +344,25 @@ def mapping_scores(
         if truth_answered and predicted_answered:
             iou = multi_box_iou(case.truth_boxes, case.predicted_boxes)
             ious.append(iou)
-            if iou >= iou_threshold:
+
+            # Correctness is judged against the writing where truth records it.
+            #
+            # Comparing a per-line highlight to a region drawn around those same
+            # lines scores about 0.4 — the gaps between the lines count against it
+            # — so gating on the region marked a highlight sitting exactly on the
+            # ink as the wrong region, and mapping accuracy read 46.9% for a set
+            # where nothing had been mapped to the wrong question at all.
+            #
+            # The region number is still computed and still reported, because
+            # HG-Bench is defined on it. It is simply not the thing that decides
+            # whether a highlight found the answer.
+            judged = iou
+            if case.truth_lines:
+                against_writing = multi_box_iou(case.truth_lines, case.predicted_boxes)
+                line_ious.append(against_writing)
+                judged = against_writing
+
+            if judged >= iou_threshold:
                 report.correct += 1
             else:
                 report.wrong_region.append(case.qid)
@@ -344,7 +373,7 @@ def mapping_scores(
         else:
             report.correctly_unanswered += 1
 
-    return report, ious
+    return report, ious, line_ious
 
 
 def summarize_iou(ious: list[float]) -> dict[str, float]:

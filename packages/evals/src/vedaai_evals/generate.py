@@ -456,7 +456,8 @@ def build_answer_sheet(config: CaseConfig) -> tuple[bytes, list[GoldenAnswer]]:
             if group in written_groups:
                 continue
             written_groups.add(group)
-            boxes = _write_merged(sheet, group, by_qid, config, mislabels)
+            lines = _write_merged(sheet, group, by_qid, config, mislabels)
+            boxes = _boxes_union_per_page(lines)
             # Every sub-part in the group shares the block, which is the property
             # the mapper has to notice and then split.
             for member in group:
@@ -464,15 +465,17 @@ def build_answer_sheet(config: CaseConfig) -> tuple[bytes, list[GoldenAnswer]]:
                     qid=member,
                     status=AnswerStatus.ANSWERED,
                     complete_answer_box=boxes,
+                    written_lines=lines,
                     text=by_qid[member].answer,
                 )
             continue
 
-        boxes = _write_single(sheet, by_qid[qid], config, mislabels)
+        lines = _write_single(sheet, by_qid[qid], config, mislabels)
         answers[qid] = GoldenAnswer(
             qid=qid,
             status=AnswerStatus.ANSWERED,
-            complete_answer_box=boxes,
+            complete_answer_box=_boxes_union_per_page(lines),
+            written_lines=lines,
             text=by_qid[qid].answer,
         )
 
@@ -525,7 +528,9 @@ def _write_single(
             sheet.page_break()
         boxes.append(sheet.line(f"{prefix}{text}", handwritten=True))
 
-    return _boxes_union_per_page(boxes)
+    # Per line. The caller collapses these for the region field; the lines
+    # themselves are what a highlight is actually judged against.
+    return boxes
 
 
 def _write_merged(
@@ -551,7 +556,9 @@ def _write_merged(
         prefix = f"{label} " if (i == 0 and label) else ""
         boxes.append(sheet.line(f"{prefix}{text}", handwritten=True))
 
-    return _boxes_union_per_page(boxes)
+    # Per line. The caller collapses these for the region field; the lines
+    # themselves are what a highlight is actually judged against.
+    return boxes
 
 
 def generate_case(config: CaseConfig, root: Path) -> GoldenSample:
