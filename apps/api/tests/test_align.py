@@ -144,27 +144,27 @@ class TestConfirmedAnchors:
         assert mapping.evidence.label_agreement < 3.0
 
 
-class TestAnAnswerMustFitWhatTheQuestionAsked:
-    """A one-mark question is not answered in five lines, and a diagram is not prose.
+class TestMeaningPlacesTheAnswerWithoutHelpFromScale:
+    """Recorded because a whole day was spent fixing this against the wrong scorer.
 
-    From four pages of genuine handwriting. The student's answer to question 1 —
-    "Explain how pandas in China are similar to koalas in Australia, and how both
-    are different from the python", worth 5 — runs five lines and thirty-one words:
+    A teacher reported that clicking question 3(ii) — "State whether a python is a
+    specialist or a generalist", worth one mark — lit up the five-line paragraph
+    that answers question 1. Measured with word overlap the complaint reproduces
+    exactly: 3(ii) scores 0.396 against that paragraph and question 1 scores
+    0.238, so the wrong question wins.
 
-        As described in the article, pandas eat an abundance of bamboo and
-        therefore are specialist to China, while the koala eats eucalyptus leaves
-        almost exclusively. Both these animals are specialists to one habitat
-        while the python, a generalist is able to live in a wider range of
-        habitats virtually anywhere.
+    Measured with embeddings, which is what the service scores with, it does not
+    reproduce at all: question 1 scores 0.615 and 3(ii) scores 0.411. Meaning
+    already knows.
 
-    Because it names a python and a generalist, it scored higher against 3(ii) —
-    "State whether a python is a specialist or a generalist", worth ONE mark —
-    than against the question it plainly answers. Clicking question 3(ii) lit up
-    the whole pandas paragraph.
+    A rule was built to break the tie on scale — one mark buys a phrase, not five
+    lines — and it cost three points of mapping accuracy on the golden set under
+    the real scorer while fixing nothing that was broken. What made the complaint
+    real is a different fault entirely: one failed call to the embedding provider
+    used to disable it for the life of the process, so the service really was
+    scoring by word overlap when the teacher looked.
 
-    Meaning alone cannot separate these: 3(ii) really is a topic of the paragraph.
-    What separates them is scale. One mark buys a phrase, and a question asking
-    for a labelled diagram is not answered in thirty-one words of prose at all.
+    This pins the measurement, so the tie-break is not reinvented.
     """
 
     ANSWER = (
@@ -193,40 +193,29 @@ class TestAnAnswerMustFitWhatTheQuestionAsked:
         2, ["4"], marks=3,
     )
 
-    def _where_it_landed(self) -> str | None:
+    #: Measured against `text-embedding-3-small`, the deployed scorer.
+    MEASURED = {"A/1": 0.615, "A/3/ii": 0.411, "A/4": 0.284}
+
+    def test_the_paragraph_goes_to_the_question_it_answers(self) -> None:
+        by_text = {question.text: question.qid
+                   for question in (self.COMPARE, self.STATE, self.DRAW)}
+        measured = self.MEASURED
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, _block_text: str) -> float:
+                return measured.get(by_text.get(question_text, ""), 0.0)
+
         result = resolve(
             paper([self.COMPARE, self.STATE, self.DRAW]),
             [block("blk:000", self.ANSWER, y0=0.10, line_ids=["as:0001"])],
             [],
             [],
+            similarity=Measured(),
         )
-        for mapping in result.mappings:
-            if mapping.status is AnswerStatus.ANSWERED:
-                return mapping.qid
-        return None
-
-    def test_the_paragraph_goes_to_the_question_it_answers(self) -> None:
-        assert self._where_it_landed() == "A/1"
-
-    def test_a_one_mark_question_does_not_claim_five_lines(self) -> None:
-        assert self._where_it_landed() != "A/3/ii"
-
-    def test_a_drawing_question_is_not_answered_in_prose(self) -> None:
-        assert self._where_it_landed() != "A/4"
-
-    def test_a_terse_answer_to_a_big_question_is_still_its_answer(self) -> None:
-        # The mirror case, and the reason under-length costs nothing. Students are
-        # not paid by the word: a correct one-line answer to a five-mark question
-        # loses marks, not its place on the paper.
-        result = resolve(
-            paper([MOTOR, REFRACTION]),
-            [block("blk:000", "The motor spins because the current turns the coil.",
-                   y0=0.10, line_ids=["as:0001"])],
-            [],
-            [],
-        )
-        landed = {m.qid: m.status for m in result.mappings}
-        assert landed["A/3"] is AnswerStatus.ANSWERED
+        answered = [m.qid for m in result.mappings if m.status is AnswerStatus.ANSWERED]
+        assert answered == ["A/1"]
 
 
 class TestGapsAndOrphans:
@@ -329,13 +318,17 @@ class TestATailCarriesOnFromTheAnswerAboveIt:
 
     The second block opens mid-sentence and quotes the passage, and that quoting
     is what undid it: question 6 asks the student to describe a tone "quoting one
-    phrase in support", so the tail landed there instead.
+    phrase in support", and it scores 0.348 against the tail.
 
-    Question 2 had already been claimed by the block above, and a claimed question
-    leaves the alignment entirely — so the move that exists for exactly this,
-    carrying an answer across a block boundary, had nothing left to carry it to.
-    A tail whose own preference is no better than settling therefore joins the
-    answer directly above it before the rest of the alignment runs.
+    Not that question 6 wins. Question 2 scores 0.444 against the same tail and
+    would have taken it — but question 2 had already been claimed by the block
+    above, and a claimed question leaves the alignment entirely, so what was left
+    to compete was 0.350 and 0.348 with the right answer not among them.
+
+    The move that exists for exactly this, carrying an answer across a block
+    boundary, had nothing left to carry it to. So a tail whose own preference is
+    no better than settling joins the answer directly above it, before the rest of
+    the alignment runs.
     """
 
     QUESTIONS = [
@@ -367,13 +360,13 @@ class TestATailCarriesOnFromTheAnswerAboveIt:
     #: overlap does not reproduce the fault at all, and a test that cannot fail
     #: before the fix demonstrates nothing, so the real numbers are pinned here.
     MEASURED = {
-        ("A/1", "head"): 0.083, ("A/1", "tail"): 0.115,
-        ("A/2", "head"): 0.369, ("A/2", "tail"): 0.176,
-        ("A/3/i", "head"): 0.043, ("A/3/i", "tail"): 0.064,
-        ("A/3/ii", "head"): 0.081, ("A/3/ii", "tail"): 0.122,
-        ("A/4", "head"): 0.048, ("A/4", "tail"): 0.107,
-        ("B/5", "head"): 0.186, ("B/5", "tail"): 0.215,
-        ("B/6", "head"): 0.143, ("B/6", "tail"): 0.115,
+        ("A/1", "head"): 0.226, ("A/1", "tail"): 0.172,
+        ("A/2", "head"): 0.753, ("A/2", "tail"): 0.444,
+        ("A/3/i", "head"): 0.187, ("A/3/i", "tail"): 0.251,
+        ("A/3/ii", "head"): 0.156, ("A/3/ii", "tail"): 0.184,
+        ("A/4", "head"): 0.166, ("A/4", "tail"): 0.203,
+        ("B/5", "head"): 0.376, ("B/5", "tail"): 0.350,
+        ("B/6", "head"): 0.340, ("B/6", "tail"): 0.348,
     }
 
     def _similarity(self):
@@ -409,6 +402,41 @@ class TestATailCarriesOnFromTheAnswerAboveIt:
 
     def test_the_tail_does_not_answer_a_question_of_its_own(self) -> None:
         assert self._mapping()["B/6"].status is not AnswerStatus.ANSWERED
+
+    def test_stray_writing_below_an_answer_is_not_swallowed_by_it(self) -> None:
+        """A tail has to be about the question it joins, not merely underneath it.
+
+        The rule first asked only whether the block would rather be somewhere
+        else, which is a question with no answer for writing that answers nothing:
+        its best score is noise, and the noise says no. Two golden cases lost
+        their highlights to it — "Rough work: 12 x 4 = 48, then divide by 6 to get
+        8." and "Sir, I have attempted question 5 on the last page." were both
+        taken into the answer above them.
+
+        The real tail clears the relatedness line comfortably, at 0.444 where 0.30
+        is the line. What the check does cost is a four-word fragment that scores
+        zero against its own answer and stays an orphan, and that is the better
+        trade: a highlight four words short is a smaller error than stray writing
+        shown to a teacher as part of an answer.
+        """
+        answer = block("blk:007", "5 (b) R = V / I = 10 / 2 = 5 ohm.",
+                       y0=0.10, line_ids=["as:0007"])
+        rough = block("blk:008", "Rough work: 12 x 4 = 48, then divide by 6 to get 8.",
+                      y0=0.20, line_ids=["as:0008"])
+
+        law = q("B/5/b", "5 (b)", "A conductor carries 2 A under 10 V. Find its "
+                "resistance.", 0, ["5", "b"], marks=2)
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, _question_text: str, block_text: str) -> float:
+                return 0.62 if block_text == answer.text else 0.11
+
+        result = resolve(paper([law]), [answer, rough], [], [], similarity=Measured())
+        placed = {m.qid: m.block_ids for m in result.mappings}
+        assert placed["B/5/b"] == ["blk:007"]
+        assert [o.block_id for o in result.orphans] == ["blk:008"]
 
     def test_an_unreadable_region_below_an_answer_is_not_swallowed_by_it(self) -> None:
         """A region with no readable text has nothing to be the rest of.

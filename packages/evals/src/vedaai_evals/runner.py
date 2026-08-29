@@ -258,6 +258,22 @@ def report(
 
     out("\n=== SCORED ===\n")
 
+    # Which scorer produced the mapping figures below.
+    #
+    # Named because for a long time it was not, and it mattered: this package's
+    # environment does not install the embedding client, so `semantic_available()`
+    # was False and every mapping number here was measured by word overlap while
+    # the deployed service scored by meaning. Two different products, one set of
+    # figures. Install the `semantic` extra and set OPENAI_API_KEY to score the
+    # way the service does.
+    from grader.answers.similarity import default_similarity
+
+    scorer = type(default_similarity).__name__
+    matches_production = scorer == "SemanticSimilarity"
+    out(f"  answer scorer            {scorer}")
+    out("" if matches_production else "   <- NOT what the service uses")
+    out("\n")
+
     extractions = [s.extraction for s in scores if s.extraction is not None]
     if extractions:
         f1 = sum(e.f1 for e in extractions) / len(extractions)

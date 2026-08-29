@@ -16,6 +16,11 @@ dev = ["pytest>=8.3", "ruff>=0.8"]
 # ink come from independent mechanisms, which is what makes the agreement metric
 # mean anything. Synthetic samples do not need it.
 ocr-local = ["paddlepaddle>=3.3", "paddleocr>=3.7"]
+# Needed to score with the same scorer the deployed service uses. Without it
+# `semantic_available()` is False and mapping is scored by word overlap, which is
+# a different product: every published mapping figure was measured that way
+# before this was noticed, and the report now says which one ran.
+semantic = ["openai>=1.50"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../contracts", editable = true }

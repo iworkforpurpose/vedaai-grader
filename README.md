@@ -78,11 +78,20 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer mapping accuracy | 82.6% |
-| Highlight IoU vs the writing, mean | 0.612 |
-| Highlight IoU@0.5 hit rate | 84% |
+| Answer mapping accuracy | 85.6% |
+| Highlight IoU vs the writing, mean | 0.641 |
+| Highlight IoU@0.5 hit rate | 88% |
 | Written labels reaching their own line | 100% |
+| Blanks not called blank | 2.3% |
 | **False "unanswered" rate** | **0.0%** |
+
+Measured with the scorer the deployed service uses, which the harness now names in
+its own output. It did not always: this package's environment does not install the
+embedding client, so every mapping figure published before this line was written
+was measured by word overlap while the service scored by meaning. The two disagree
+by three points and in opposite directions on individual cases — a fix built and
+verified against the wrong one cost three points of accuracy and was reverted. Run
+`pnpm turbo eval` and read the `answer scorer` line before believing any of this.
 
 **These figures replace earlier ones, and two of them are lower.** Mapping accuracy
 was quoted at 92.7% and highlight IoU at 0.744. Neither was measured against what
