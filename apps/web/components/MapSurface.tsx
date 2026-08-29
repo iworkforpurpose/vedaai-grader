@@ -9,7 +9,6 @@ import {
   buildRows,
   isTeacherPlaced,
   movableBlocks,
-  orphanHighlightByPage,
   citationHighlight,
   gradeFor,
   highlightByPage,
@@ -21,7 +20,6 @@ import {
 import { useNarrow } from "@/lib/breakpoints";
 import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
-import { OrphanCard } from "./OrphanCard";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
 
@@ -117,8 +115,6 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const marks = useMemo(() => summarizeMarks(submission), [submission]);
   const selected = rows.find((r) => r.question.qid === selectedQid) ?? null;
   const ink = useMemo(() => untranscribedInkByPage(submission), [submission]);
-  const orphanInk = useMemo(() => orphanHighlightByPage(submission.mapping ?? undefined), [submission]);
-  const orphans = submission.mapping?.orphans ?? [];
   const [showInk, setShowInk] = useState(false);
 
   // A cited rubric point narrows the highlight to the lines behind that one mark.
@@ -394,50 +390,6 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
           {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
 
           <div className="q-list">
-            {/*
-              * Unplaced writing sits at the top, above the questions.
-              *
-              * It is the only thing in this list that needs a decision rather than a
-              * reading, and burying it under twenty questions is how it gets missed —
-              * which for an orphan means either a student's answer going unmarked or
-              * our own missed question going unnoticed.
-              */}
-            {orphans.length > 0 && (
-              <>
-                <p className="q-section">
-                  {orphans.length === 1
-                    ? "1 piece of writing matched no question"
-                    : `${orphans.length} pieces of writing matched no question`}
-                </p>
-                {orphans.map((orphan) => (
-                  <OrphanCard
-                    key={orphan.block_id}
-                    orphan={orphan}
-                    suggestion={
-                      orphan.best_guess_qid && orphan.best_guess_score !== null
-                        ? {
-                            qid: orphan.best_guess_qid,
-                            label:
-                              rows.find((r) => r.question.qid === orphan.best_guess_qid)
-                                ?.question.label_raw ?? orphan.best_guess_qid,
-                            score: orphan.best_guess_score,
-                          }
-                        : null
-                    }
-                    selected={false}
-                    placing={placing?.blockId === orphan.block_id}
-                    onShow={() =>
-                      revealOnSheet(orphan.highlight?.boxes ?? [])
-                    }
-                    onStartPlacing={() =>
-                      setPlacing({ blockId: orphan.block_id, from: null })
-                    }
-                  />
-                ))}
-                <p className="q-section">Questions</p>
-              </>
-            )}
-
             {rows.map((row, index) => (
               <QuestionCard
                 key={row.question.qid}
@@ -488,7 +440,6 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
               highlights={highlights}
               highlightLabel={selected ? selected.question.label_raw.replace(/[.)]\s*$/, "") : null}
               untranscribedInk={ink}
-              orphanRegions={orphanInk}
               showUntranscribed={showInk}
               onToggleUntranscribed={() => setShowInk((on) => !on)}
               onPointerPick={pickAtPoint}

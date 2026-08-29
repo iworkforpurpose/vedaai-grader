@@ -32,7 +32,6 @@ export function SheetView({
   highlights,
   highlightLabel,
   untranscribedInk,
-  orphanRegions,
   showUntranscribed,
   onToggleUntranscribed,
   onPointerPick,
@@ -43,7 +42,6 @@ export function SheetView({
   highlightLabel: string | null;
   untranscribedInk: Map<number, InkRegion[]>;
   /** Writing that matched no question, always shown — it needs a decision. */
-  orphanRegions: Map<number, PageBox[]>;
   showUntranscribed: boolean;
   onToggleUntranscribed: () => void;
   onPointerPick: (page: number, x: number, y: number) => void;
@@ -244,26 +242,6 @@ export function SheetView({
               // A broken image must not stay hidden, or the alt text goes with it.
               onError={() => mark(page.image_key, false)}
             />
-
-            {/*
-              * Unplaced writing, outlined amber and always visible.
-              *
-              * Not behind a toggle like the unread-ink overlay. Unread ink is a
-              * diagnostic a teacher consults when something looks wrong; an orphan is
-              * a decision waiting to be made, and one hidden behind a checkbox is one
-              * that does not get made.
-              */}
-            {(orphanRegions.get(index) ?? []).map((pageBox, i) => (
-              <span
-                key={`orphan-${index}-${i}`}
-                className="hl"
-                data-kind="orphan"
-                style={boxToStyle(pageBox.box)}
-                title="This writing matched no question. Place it from the list."
-              >
-                {i === 0 && <span className="hl-tab" data-kind="orphan">?</span>}
-              </span>
-            ))}
 
             {showUntranscribed &&
               (untranscribedInk.get(index) ?? []).map((region) => (
