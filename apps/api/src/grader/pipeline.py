@@ -11,6 +11,7 @@ branches, retries and conditional re-reads to express — around Phase 4.
 from __future__ import annotations
 
 from vedaai_contracts import (
+    AnswerStatus,
     DocumentKind,
     InkRegion,
     LineIndex,
@@ -418,6 +419,27 @@ def map_answers(submission: Submission) -> list[str]:
     submission.mapping = result
 
     warnings: list[str] = []
+
+    # The sheet-does-not-match-the-paper case, said plainly and first.
+    #
+    # A comprehension paper was uploaded against a script of handwritten C, and
+    # every symptom the system produced was a symptom of something else: five of
+    # seven questions "answered", C code highlighted under a question about pandas,
+    # feedback explaining that the student had not addressed the passage. None of
+    # that is wrong about the writing; it is wrong about the situation, and no
+    # amount of reading the per-question output tells a teacher what actually
+    # happened. Nothing matching at all is the diagnosis, so it is worth stating as
+    # one.
+    substantive = [b for b in submission.blocks if len(b.text.strip()) >= 30]
+    if substantive and not any(
+        m.status is AnswerStatus.ANSWERED for m in result.mappings
+    ):
+        warnings.append(
+            "None of the writing on this answer sheet matches any question on this "
+            "question paper. They may be from different exams — check that the right "
+            "two files were uploaded."
+        )
+
     if result.absence_claims_suppressed:
         warnings.append(
             f"{result.unassigned_ink_ratio:.0%} of the writing on this sheet could not be "

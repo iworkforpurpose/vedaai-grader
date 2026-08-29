@@ -48,6 +48,19 @@ _WORD = re.compile(r"[a-z0-9]+")
 class Similarity(Protocol):
     """Scores how related two pieces of text are, in ``[0, 1]``."""
 
+    #: Below this score a pair is unrelated, on this measure's own scale.
+    #:
+    #: Each implementation states its own, because the scales are nothing like each
+    #: other: trigram overlap between two unrelated English texts sits around 0.1
+    #: and embeddings around 0.15, but embeddings put a genuine match near 0.7
+    #: while trigrams may only reach 0.3. A single constant in the aligner would be
+    #: wrong for one of them, so the measure that knows the scale supplies it.
+    #:
+    #: Zero means "no opinion", which is the honest answer for a measure whose
+    #: absolute value carries no meaning, and leaves the aligner's behaviour
+    #: unchanged.
+    unrelated_below: float
+
     def score(self, a: str, b: str) -> float: ...
 
 
@@ -68,6 +81,12 @@ class LexicalOverlap:
     likely about reflection than one that mentions it once. Term frequency keeps
     that; set overlap discards it.
     """
+
+    #: Word overlap between a question and its own answer is
+    #: routinely zero — that is the limitation this class is documented as having —
+    #: so its absolute value cannot say whether a pair is unrelated.
+    unrelated_below = 0.0
+
 
     def score(self, a: str, b: str) -> float:
         first = Counter(tokenize(a))
@@ -129,6 +148,12 @@ class CharacterTrigrams:
     survive.
     """
 
+    #: Any two English texts share runs like "the" and "ing",
+    #: so the floor is high and uninformative; the aligner's centring is what makes
+    #: this measure usable, and it discards the absolute value anyway.
+    unrelated_below = 0.0
+
+
     def score(self, a: str, b: str) -> float:
         first = character_ngrams(a)
         second = character_ngrams(b)
@@ -161,6 +186,8 @@ class StrongerOf:
     word overlap already found, so the precision of an exact match is never traded
     away — and where exactness is unavailable, something still answers.
     """
+
+    unrelated_below = 0.0
 
     def __init__(self) -> None:
         self._word = LexicalOverlap()
@@ -213,6 +240,12 @@ class SemanticSimilarity:
       the others, so it is swapped in by configuration and out again by removing a
       key.
     """
+
+    #: Measured on the deployed service. A comprehension paper against a script of
+    #: handwritten C scored 0.148 to 0.154 on every block; the same paper against
+    #: its own answers scored 0.536 to 0.779. The gap is wide enough that a
+    #: threshold in the middle separates them without touching a real match.
+    unrelated_below = 0.30
 
     def __init__(self, *, embed: Callable[[list[str]], list[list[float]]] | None = None,
                  fallback: Similarity | None = None) -> None:

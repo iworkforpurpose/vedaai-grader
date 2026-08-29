@@ -374,6 +374,61 @@ class TestCitationValidation:
         assert graded.needs_review is True
 
 
+class TestSatisfiedMeansTheMarksAreEarned:
+    """A criterion the marker itself calls satisfied must award its marks.
+
+    Seen on a real script. Question 11(a), "Define atomic number and mass number",
+    worth 2. The student defined both. The marker returned one criterion, marked it
+    satisfied, wrote "You provided clear definitions for both atomic number and mass
+    number. Great job!" — and awarded 1 of 2.
+
+    Nothing in the grade disagreed with the student; the two fields the model
+    returns simply contradicted each other and nothing reconciled them. A teacher
+    reading "great job, one mark of two" has no way to tell whether the mark or the
+    praise is the mistake, which makes the whole grade unusable.
+
+    Partial credit is still expressible, and is what `satisfied: false` with a
+    positive mark means: partly there, not met.
+    """
+
+    QUESTION = q("B/11/a", "11 (a)", "Define atomic number and mass number.", 0, marks=2)
+
+    def _graded(self, *, satisfied: bool, awarded: float):
+        answer = line(1, "Atomic number is the protons and mass number is protons plus neutrons", y0=0.1)
+        index = index_of(answer)
+        return engine.assemble(
+            question=self.QUESTION,
+            rubric=rubric.derive(self.QUESTION),
+            index=index,
+            line_ids=[answer.line_id],
+            judgement={
+                "points": [
+                    {
+                        "index": 1,
+                        "marks_awarded": awarded,
+                        "satisfied": satisfied,
+                        "cited_line_ids": [answer.line_id],
+                    }
+                ],
+                "uncertain": False,
+            },
+        )
+
+    def test_a_satisfied_criterion_is_worth_its_full_marks(self) -> None:
+        graded = self._graded(satisfied=True, awarded=1.0)
+        assert graded.marks_awarded == 2.0, (
+            "the criterion was declared satisfied, so it earned both marks"
+        )
+
+    def test_partial_credit_still_works_when_the_point_is_not_met(self) -> None:
+        graded = self._graded(satisfied=False, awarded=1.0)
+        assert graded.marks_awarded == 1.0
+
+    def test_a_satisfied_criterion_is_never_scaled_up_beyond_its_marks(self) -> None:
+        graded = self._graded(satisfied=True, awarded=9.0)
+        assert graded.marks_awarded == 2.0
+
+
 class TestWholeSubmission:
     PAPER = QuestionPaper(
         questions=[

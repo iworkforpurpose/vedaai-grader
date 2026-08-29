@@ -229,6 +229,87 @@ class TestMultiBlockAnswers:
         )
 
 
+class TestWritingThatAnswersNothing:
+    """Refusing to place writing that does not answer the question it is offered.
+
+    Both cases below were found by looking at review pages, not by a metric, and
+    both come from the same omission: the aligner scored on each block's deviation
+    from its own mean and never asked how similar the pair actually was. A block
+    always has a best question, even when the answer is about something else
+    entirely, so there was always something to place.
+    """
+
+    def test_a_sheet_that_answers_a_different_paper_places_nothing(self) -> None:
+        """A comprehension paper against a script of handwritten C.
+
+        Measured on the deployed service: every block's best question scored 0.148
+        to 0.154, where a genuine match scores 0.54 to 0.78. It reported five of
+        seven questions answered and highlighted C code as an essay about pandas.
+        Nothing on that sheet answers anything on that paper, and saying so is the
+        only useful thing the system can do with it.
+        """
+
+        class Unrelated:
+            unrelated_below = 0.30
+
+            def score(self, a: str, b: str) -> float:
+                return 0.15
+
+        blocks = [
+            block("blk:000", "for (i = 0; i < n; i++) { scanf(\"%d\", &a[i]); }", y0=0.10,
+                  line_ids=["as:0001"]),
+            block("blk:001", "printf(\"Enter the sorted array\"); temp = diff[i];", y0=0.40,
+                  line_ids=["as:0002"]),
+        ]
+        result = resolve(paper([REFRACTION, REFLECTION]), blocks, [], [], similarity=Unrelated())
+
+        for mapping in result.mappings:
+            assert mapping.status is not AnswerStatus.ANSWERED, (
+                f"{mapping.qid} was reported answered by writing that answers nothing"
+            )
+            assert not mapping.highlight or not mapping.highlight.boxes, (
+                f"{mapping.qid} highlighted writing that does not answer it"
+            )
+
+    def test_a_block_is_not_settled_onto_a_much_worse_question(self) -> None:
+        """The second answer to a question already taken.
+
+        A real script answered question 2 across two pages. The first page took
+        question 2; the second scored 0.689 for question 2 and 0.439 for question 5,
+        and was placed on question 5 — where it was highlighted under a question it
+        plainly does not answer. Half as good is not good enough to accept.
+        """
+
+        class Fixed:
+            unrelated_below = 0.30
+
+            def __init__(self, table: dict) -> None:
+                self._table = table
+
+            def score(self, a: str, b: str) -> float:
+                return self._table.get((a[:20], b[:20]), 0.10)
+
+        first = "Invasive is a significant word in the article because of the damage."
+        second = "The word invasive is very important to the rest of the article too."
+        table = {
+            (REFLECTION.text[:20], first[:20]): 0.693,
+            (REFLECTION.text[:20], second[:20]): 0.689,
+            (MOTOR.text[:20], first[:20]): 0.413,
+            (MOTOR.text[:20], second[:20]): 0.439,
+        }
+        blocks = [
+            block("blk:000", first, y0=0.10, line_ids=["as:0001"]),
+            block("blk:001", second, y0=0.50, line_ids=["as:0002"]),
+        ]
+        result = resolve(
+            paper([REFLECTION, MOTOR]), blocks, [], [], similarity=Fixed(table)
+        )
+        motor = result.by_qid()["A/3"]
+        assert motor.status is not AnswerStatus.ANSWERED, (
+            "a block scoring 0.439 was accepted by a question whose own best is 0.689"
+        )
+
+
 class TestFourStateStatus:
     def test_a_genuinely_blank_question_is_unanswered(self) -> None:
         # The only status that asserts absence, and the only one a teacher acts on

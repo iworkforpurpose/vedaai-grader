@@ -28,7 +28,11 @@ TRUTH: dict[str, dict[int, str]] = {
     # Four ASAP pages: two answer the pandas/koalas question, two the "invasive"
     # question.
     "real-ink": {0: "A/1", 1: "A/1", 2: "A/2", 3: "A/2"},
-    "comprehension-user": {0: "A/1", 1: "A/2"},
+    # Answered out of order — the "invasive" answer is on page one and the
+    # pandas answer on page two. Written down the wrong way round at first, which
+    # scored a correct mapping as a failure and made a fix look like a regression;
+    # ground truth is only ground truth if you read the pages.
+    "comprehension-user": {0: "A/2", 1: "A/1"},
     "prose-matched": {0: "A/1", 1: "A/2"},
 }
 

@@ -144,6 +144,21 @@ SHARE_LENGTH_PENALTY = -0.9
 #: questions, which is the ordinary case for a real answer sheet.
 MATCH_MINIMUM = -0.35
 
+#: How much worse than a block's own best a question may score and still be
+#: allowed to claim it.
+#:
+#: A ratio rather than a difference, so it means the same thing whatever scale the
+#: measure works on. Seventy per cent: a question scoring less than seven tenths of
+#: what the block's best question scores is not a plausible home for it.
+#:
+#: Found by looking at a review page. A real script answered question 2 across two
+#: pages; the first page took question 2, and the second — scoring 0.689 for
+#: question 2 and 0.439 for question 5 — was placed on question 5 and highlighted
+#: there, under a question it plainly does not answer. The aligner had no notion of
+#: "too much worse", only of "best available", and once the right question was
+#: taken it settled for half as good.
+SETTLE_RATIO = 0.70
+
 #: Share of substantive ink left unassigned that suppresses absence claims.
 #:
 #: When this much writing belongs to no block, some answer went unmapped and the
@@ -272,6 +287,17 @@ def align(
     if not questions or not blocks:
         return []
 
+    # How well each block does against the best question on the whole paper.
+    # Fixed before anything is claimed, so that what counts as "settling" does not
+    # change as questions are taken.
+    block_best = {
+        block.block_id: max(
+            (similarity.score(question.text, block.text) for question in questions),
+            default=0.0,
+        )
+        for block in blocks
+    }
+
     assignments: list[Assignment] = []
     claimed_qids: set[str] = set()
     claimed_blocks: set[str] = set()
@@ -307,6 +333,65 @@ def align(
             )
         )
 
+    # Blocks whose own content names one question, honoured the same way.
+    #
+    # This module already holds that "monotonicity is a convenience of the
+    # recurrence, and it must not override direct evidence" — the lesson of the
+    # reversed golden case, where treating confirmed anchors as pins turned eight
+    # correctly-labelled answers into orphans. A block narrowed by its own meaning
+    # to exactly one question is the same kind of evidence as a label the student
+    # wrote, and was being subjected to the same constraint.
+    #
+    # A real script showed it. Two answers, written in the order 2 then 1. Both were
+    # narrowed correctly and unambiguously, and the DP placed the first and dropped
+    # the second, because taking question 2 first left no monotone path back to
+    # question 1. Answering out of order is something the brief requires handling,
+    # and it is ordinary student behaviour.
+    open_questions = [q for q in questions if q.qid not in claimed_qids]
+    open_blocks = [b for b in blocks if b.block_id not in claimed_blocks]
+    decided_by_qid: dict[str, Assignment] = {}
+    for qid, block_id, agreement in _decided_pairs(
+        open_questions, open_blocks, similarity, block_best
+    ):
+        if block_id in claimed_blocks:
+            continue
+
+        # A second block decided on the same question is the rest of that answer,
+        # not a competitor for it. Dropping it was what a page-spanning answer
+        # looked like from here: a real script answered two questions across four
+        # pages, two pages each, and claiming the strongest block per question left
+        # the other two placed nowhere.
+        existing = decided_by_qid.get(qid)
+        if existing is not None:
+            existing.block_ids.append(block_id)
+            claimed_blocks.add(block_id)
+            continue
+
+        if qid in claimed_qids:
+            continue
+
+        claimed_qids.add(qid)
+        claimed_blocks.add(block_id)
+        assignment = Assignment(
+            qid=qid,
+            block_ids=[block_id],
+            evidence=MatchEvidence(
+                semantic_agreement=agreement,
+                total_score=agreement,
+                signals=[MatchSignal.SEMANTIC],
+            ),
+            shared_with=[],
+        )
+        decided_by_qid[qid] = assignment
+        assignments.append(assignment)
+
+    # Document order within each answer, so `start_line_id` and `end_line_id` still
+    # name the span a reader would follow. The pairs arrive strongest-first, which
+    # is right for deciding and wrong for reading.
+    order = {block.block_id: i for i, block in enumerate(blocks)}
+    for assignment in decided_by_qid.values():
+        assignment.block_ids.sort(key=lambda bid: order.get(bid, 0))
+
     remaining_questions = [q for q in questions if q.qid not in claimed_qids]
     remaining_blocks = [b for b in blocks if b.block_id not in claimed_blocks]
 
@@ -316,9 +401,45 @@ def align(
             remaining_blocks,
             similarity=similarity,
             label_hints=_label_hints(anchors, block_of_line, known_qids),
+            block_best=block_best,
         )
     )
     return assignments
+
+
+def _decided_pairs(
+    questions: list[Question],
+    blocks: list[AnswerBlock],
+    similarity: Similarity,
+    block_best: dict[str, float] | None = None,
+) -> list[tuple[str, str, float]]:
+    """Block-question pairs the evidence has already settled.
+
+    A pair qualifies when the block's own content leaves exactly one question
+    standing after the score matrix has applied its floors — unrelated pairs and
+    pairs the block would be settling for are already gone by then, so what remains
+    single is a statement rather than a preference.
+
+    Strongest first, so that when two blocks are both settled on one question the
+    better one takes it and the other falls to the DP, where `continue` can attach
+    it to the same question as a second block of the same answer.
+    """
+    if not questions or not blocks:
+        return []
+
+    matrix = _score_matrix(questions, blocks, similarity, {}, block_best)
+    pairs: list[tuple[str, str, float]] = []
+    for j, block in enumerate(blocks):
+        live = [i for i in range(len(questions)) if matrix[i][j] != -inf]
+        if len(live) != 1:
+            continue
+        i = live[0]
+        pairs.append((questions[i].qid, block.block_id, similarity.score(
+            questions[i].text, block.text
+        )))
+
+    pairs.sort(key=lambda pair: pair[2], reverse=True)
+    return pairs
 
 
 #: Weight of a label that was written but not confirmed.
@@ -365,13 +486,14 @@ def _align_segment(
     *,
     similarity: Similarity,
     label_hints: dict[tuple[str, str], float] | None = None,
+    block_best: dict[str, float] | None = None,
 ) -> list[Assignment]:
     """Monotone DP over the questions and blocks no anchor claimed."""
     if not questions or not blocks:
         return []
 
     n, m = len(questions), len(blocks)
-    scores = _score_matrix(questions, blocks, similarity, label_hints)
+    scores = _score_matrix(questions, blocks, similarity, label_hints, block_best)
 
     table: dict[tuple[int, int, _State], _Cell] = {
         (0, 0, _State.FRESH): _Cell(score=0.0, move=None, previous=None)
@@ -507,6 +629,7 @@ def _score_matrix(
     blocks: list[AnswerBlock],
     similarity: Similarity,
     label_hints: dict[tuple[str, str], float] | None = None,
+    block_best: dict[str, float] | None = None,
 ) -> list[list[float]]:
     """Score every question-block pairing.
 
@@ -566,6 +689,30 @@ def _score_matrix(
             # and clamping would instead make it beat one.
             row.append(score if score > MATCH_MINIMUM else -inf)
         matrix.append(row)
+
+    # Two rules on the raw similarities, before anything is centred.
+    #
+    # Centring answers "which question does this block prefer?", which always has
+    # an answer even when the block prefers all of them equally little. Neither of
+    # the faults below is visible in a deviation, and both were found by opening a
+    # review page rather than by reading a number.
+    floor = float(getattr(similarity, "unrelated_below", 0.0) or 0.0)
+    for j, block in enumerate(blocks):
+        # The best across *every* question on the paper, not merely the ones still
+        # unclaimed. Recomputing it here would mean that removing the right answer
+        # from the pool makes a wrong one look acceptable — a block scoring 0.689
+        # for the question it answers and 0.439 for another would settle for 0.439
+        # the moment the first was taken, which is the exact fault this rule exists
+        # to prevent.
+        column = [raw[i][j] for i in range(len(questions))]
+        best = (block_best or {}).get(block.block_id) or (max(column) if column else 0.0)
+        for i in range(len(questions)):
+            # Unrelated to this question outright. An answer sheet belonging to a
+            # different paper scored 0.15 against every question while reporting
+            # five of seven answered, and highlighted handwritten C as an essay
+            # about pandas.
+            if floor > 0.0 and raw[i][j] < floor or best > 0.0 and raw[i][j] < best * SETTLE_RATIO:
+                matrix[i][j] = -inf
 
     # Judged on the semantic deviations alone, not on the assembled score.
     #

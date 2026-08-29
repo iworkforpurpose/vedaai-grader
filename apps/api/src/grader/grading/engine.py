@@ -487,14 +487,29 @@ def assemble(
             )
             continue
 
+        satisfied = bool(raw.get("satisfied", False))
         awarded = max(0.0, min(float(raw.get("marks_awarded", 0.0)), criterion.marks))
+
+        # A point the marker calls satisfied is worth what the paper allotted it.
+        #
+        # The two fields are returned independently and could disagree, and on a
+        # real script they did: question 11(a), "Define atomic number and mass
+        # number", worth 2. The student defined both. The marker set satisfied,
+        # wrote "You provided clear definitions for both... Great job!" and awarded
+        # 1 of 2. A teacher reading praise beside half marks cannot tell which half
+        # of the grade to believe, which makes the whole grade useless.
+        #
+        # Partial credit is still expressible and is what an unsatisfied point with
+        # a positive mark means: partly there, not met.
+        if satisfied:
+            awarded = criterion.marks
         points.append(
             RubricPoint(
                 point_id=f"{rubric.qid}#{i + 1}",
                 criterion=criterion.criterion,
                 marks_available=criterion.marks,
                 marks_awarded=awarded,
-                satisfied=bool(raw.get("satisfied", False)),
+                satisfied=satisfied,
                 cited_line_ids=[str(lid) for lid in raw.get("cited_line_ids", [])],
                 comment=raw.get("comment"),
             )
