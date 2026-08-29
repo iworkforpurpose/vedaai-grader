@@ -501,7 +501,26 @@ def assemble(
         #
         # Partial credit is still expressible and is what an unsatisfied point with
         # a positive mark means: partly there, not met.
-        if satisfied:
+        #
+        # Only for a point that cited its evidence, though. Question 16 of a real
+        # script, worth 5: two points cited four lines each and a third came back
+        # satisfied with an empty citation list. Promoting that third point to its
+        # marks produced "marks awarded with no line cited", and the citation check
+        # refuses a question whole rather than in part — so a correct, evidenced
+        # 3.5 became 0 and unjudged. The rule was meant to reconcile two fields
+        # that disagreed; applied without evidence it destroys the grade instead.
+        cited = [str(lid) for lid in raw.get("cited_line_ids", [])]
+        comment = raw.get("comment")
+        if satisfied and not cited:
+            # Nor is it shown as met. "Satisfied, nought marks" recreates in the
+            # other direction the contradiction the promotion exists to remove.
+            satisfied = False
+            awarded = 0.0
+            comment = (
+                "The marker called this point met but cited no line for it, "
+                "so it could not be credited."
+            )
+        elif satisfied:
             awarded = criterion.marks
         points.append(
             RubricPoint(
@@ -510,8 +529,8 @@ def assemble(
                 marks_available=criterion.marks,
                 marks_awarded=awarded,
                 satisfied=satisfied,
-                cited_line_ids=[str(lid) for lid in raw.get("cited_line_ids", [])],
-                comment=raw.get("comment"),
+                cited_line_ids=cited,
+                comment=comment,
             )
         )
 

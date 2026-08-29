@@ -431,6 +431,100 @@ class TestSatisfiedMeansTheMarksAreEarned:
         assert graded.marks_awarded == 2.0
 
 
+class TestASatisfiedClaimStillNeedsEvidence:
+    """A point the marker calls satisfied but cites nothing for cannot be promoted.
+
+    The rule above — satisfied means full marks — was written for a point that
+    cited its evidence, and applied to one that did not it destroys the grade
+    rather than repairing it. Question 16 of a real science script, worth 5: the
+    model judged three points, cited four lines for each of the first two, and
+    returned the third satisfied with an empty citation list. Promoting that third
+    point to its full marks produced "marks awarded with no line cited", and the
+    citation check refuses a question as a whole — so a 3.5 out of 5 that was
+    correct and fully evidenced became 0 out of 5, unjudged.
+
+    So the promotion is conditional on evidence. An uncited claim is not shown as
+    satisfied either: "met" beside no marks recreates, in the other direction,
+    exactly the contradiction the promotion exists to remove.
+    """
+
+    QUESTION = q("C/16", "16.", "Calculate the mass of the product formed.", 0, marks=5)
+
+    def _graded(self, *, cited_third: bool):
+        first = line(1, "Mass of reactant A is six grams", y0=0.10)
+        second = line(2, "Mass of reactant B is sixteen grams", y0=0.14)
+        index = index_of(first, second)
+        third_cites = [first.line_id] if cited_third else []
+        return engine.assemble(
+            question=self.QUESTION,
+            rubric=rubric.Rubric(
+                qid="C/16",
+                criteria=[
+                    rubric.Criterion(
+                        criterion="States the first mass",
+                        marks=2.0,
+                        evidence=rubric.EvidenceKind.RECALL,
+                    ),
+                    rubric.Criterion(
+                        criterion="States the second mass",
+                        marks=1.5,
+                        evidence=rubric.EvidenceKind.RECALL,
+                    ),
+                    rubric.Criterion(
+                        criterion="Adds them",
+                        marks=1.5,
+                        evidence=rubric.EvidenceKind.RECALL,
+                    ),
+                ],
+                marks_available=5.0,
+                marks_split_inferred=True,
+            ),
+            index=index,
+            line_ids=[first.line_id, second.line_id],
+            judgement={
+                "points": [
+                    {
+                        "index": 1,
+                        "marks_awarded": 2.0,
+                        "satisfied": True,
+                        "cited_line_ids": [first.line_id],
+                    },
+                    {
+                        "index": 2,
+                        "marks_awarded": 1.5,
+                        "satisfied": True,
+                        "cited_line_ids": [second.line_id],
+                    },
+                    {
+                        "index": 3,
+                        "marks_awarded": 0.0,
+                        "satisfied": True,
+                        "cited_line_ids": third_cites,
+                    },
+                ],
+                "uncertain": False,
+            },
+        )
+
+    def test_an_uncited_claim_does_not_destroy_the_rest_of_the_grade(self) -> None:
+        graded = self._graded(cited_third=False)
+        assert graded.marks_awarded == 3.5, (
+            "the two evidenced points still stand; only the uncited one earns nothing"
+        )
+
+    def test_an_uncited_claim_is_not_displayed_as_met(self) -> None:
+        # Asserted alongside `judged`, because a refused grade also reports every
+        # point unsatisfied and would pass this on its own.
+        graded = self._graded(cited_third=False)
+        assert graded.judged is True
+        third = graded.rubric_points[2]
+        assert third.satisfied is False
+        assert third.marks_awarded == 0.0
+
+    def test_a_cited_claim_is_still_promoted(self) -> None:
+        assert self._graded(cited_third=True).marks_awarded == 5.0
+
+
 class TestWholeSubmission:
     PAPER = QuestionPaper(
         questions=[
