@@ -155,12 +155,26 @@ def classify(
     *,
     repeated: set[str],
     previous_role: LineRole | None,
+    started: bool = True,
 ) -> LineRole:
     """Decide what one line is.
 
     ``previous_role`` resolves the case no single line can: an unlabelled line is
     a continuation when it follows a question and furniture when it follows
     nothing.
+
+    ``started`` says whether the paper has begun — whether any question or section
+    header has appeared yet. Everything above the first one is the preamble, and a
+    lettered line in the preamble is an instruction however much it looks like a
+    question. A real paper opened a teacher's review screen with "(a) All questions
+    are compulsory" and "(c) Draw neat diagrams" listed as questions and marked
+    answered; "(b)" escaped only because it happened to contain the words "attempt
+    any". Matching on vocabulary catches the instructions somebody thought of.
+    Position catches the rest.
+
+    Defaults to ``True`` so a caller classifying one line in isolation — which the
+    tests do, and which is a reasonable thing to want — gets the judgement of the
+    line itself rather than a silent assumption about where it sits.
     """
     text = line.text.strip()
     if not text:
@@ -191,6 +205,14 @@ def classify(
     if label is not None:
         body, _marks = extract_marks(label.remainder)
         if looks_like_a_question(label, body):
+            # Nothing has opened the paper yet, so this line either opens it or is
+            # still preamble. A paper opens at a number — 1, Q1, 11 (a). An
+            # enumerated instruction block opens at a letter, which is exactly the
+            # shape that produced "(a) All questions are compulsory" as question
+            # one. So a lettered label with no question above it is preamble, and
+            # a numeric one is the paper starting.
+            if not started and not label.tokens[0].isdigit():
+                return LineRole.INSTRUCTION
             return LineRole.QUESTION_START
         # A label with nothing usable after it — a stray number, or a
         # continuation marker. Not a question, and not worth discarding either.
@@ -220,8 +242,15 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
     roles: dict[str, LineRole] = {}
     previous: LineRole | None = None
 
+    # Whether the paper proper has begun. A section header opens it as surely as a
+    # question does — "SECTION A" means everything above it was preamble — and
+    # papers exist that head straight into question 1 with no section at all.
+    started = False
+
     for line in lines:
-        role = classify(line, repeated=repeated, previous_role=previous)
+        role = classify(line, repeated=repeated, previous_role=previous, started=started)
+        if role in {LineRole.QUESTION_START, LineRole.SECTION_HEADER}:
+            started = True
         roles[line.line_id] = role
         # Instructions and section headers interrupt a question's text, so they
         # must not leave a following unlabelled line looking like a continuation

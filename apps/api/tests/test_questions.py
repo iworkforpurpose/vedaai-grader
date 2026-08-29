@@ -154,6 +154,55 @@ class TestFurniture:
         )
         assert role is LineRole.INSTRUCTION
 
+    def test_an_enumerated_instruction_block_is_not_a_list_of_questions(self) -> None:
+        """Lettered instructions under a heading, before any question exists.
+
+        Taken verbatim from a paper that produced two phantom questions: the
+        teacher's review screen opened with "(a) All questions are compulsory" and
+        "(c) Draw neat diagrams", both shown as *answered*, because a lettered line
+        parses as a label and nothing said we were still in the preamble. Only
+        "(b)" escaped, and only because it happened to contain the words "attempt
+        any" — which is matching on vocabulary and hoping.
+
+        Position is the reliable signal: nothing before the first question or
+        section header can be a question.
+        """
+        lines = [
+            line(1, "Greenfield Public School", y0=0.04),
+            line(2, "General Instructions:", y0=0.09),
+            line(3, "(a) All questions are compulsory except where stated otherwise.", y0=0.13),
+            line(4, "(b) In Section C, attempt any three of the four questions.", y0=0.17),
+            line(5, "(c) Draw neat diagrams wherever necessary.", y0=0.21),
+            line(6, "SECTION A", y0=0.27),
+            line(7, "1. Define refraction of light.", y0=0.32),
+            line(8, "2. State the SI unit of pressure.", y0=0.37),
+        ]
+        roles = furniture.classify_all(lines)
+
+        for preamble in ("qp:0003", "qp:0004", "qp:0005"):
+            assert roles[preamble] is not LineRole.QUESTION_START, (
+                f"{preamble} is an instruction, not a question"
+            )
+        assert roles["qp:0007"] is LineRole.QUESTION_START
+        assert roles["qp:0008"] is LineRole.QUESTION_START
+
+    def test_a_lettered_sub_part_after_a_question_is_still_a_question(self) -> None:
+        """The rule must not swallow real sub-parts.
+
+        "(a)" and "(b)" under question 11 look identical to the instruction case
+        character for character. What separates them is that a question has already
+        been seen by the time they appear.
+        """
+        lines = [
+            line(1, "SECTION B", y0=0.05),
+            line(2, "11. Answer both parts.", y0=0.10),
+            line(3, "(a) Define atomic number and mass number.", y0=0.15),
+            line(4, "(b) An atom has 11 protons and 12 neutrons. Give its mass number.", y0=0.20),
+        ]
+        roles = furniture.classify_all(lines)
+        assert roles["qp:0003"] is LineRole.QUESTION_START
+        assert roles["qp:0004"] is LineRole.QUESTION_START
+
     def test_classifies_a_competency_tag_as_furniture(self) -> None:
         # ICSE prints these against questions; they are metadata, not content.
         role = furniture.classify(
