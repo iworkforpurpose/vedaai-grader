@@ -13,6 +13,9 @@ test: a failing row here is a known gap, and the list of gaps is the fix plan.
     uv run python tooling/scripts/label_matrix.py
 """
 
+# ruff: noqa: E501 - the long lines are verbatim exam text and label strings;
+# wrapping them would make it harder to compare against a real paper.
+
 from __future__ import annotations
 
 import sys

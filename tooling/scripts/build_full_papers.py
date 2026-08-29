@@ -27,6 +27,9 @@ Writes into data/, which is not tracked — the ASAP corpus is licensed for
 non-commercial research use and its images stay out of the repository.
 """
 
+# ruff: noqa: E501 - the long lines are verbatim exam text and label strings;
+# wrapping them would make it harder to compare against a real paper.
+
 from __future__ import annotations
 
 import random
