@@ -188,7 +188,23 @@ python tooling/scripts/audit_ui.py <submission-id>   # layout faults across 6 vi
 
 ## Deployment
 
-**Live: https://wvqyfdkpl1.execute-api.ap-south-1.amazonaws.com**
+**Live: https://wvqyfdkpl1.execute-api.ap-south-1.amazonaws.com** — behind an access
+code. Ask for it, or read `ACCESS_CODE` from `.env`.
+
+The gate is a shared passcode in Next middleware, which is the one place both the
+pages and the proxied API sit behind. It is not accounts and does not tell testers
+apart; it stops a stored script being readable by anyone who finds the address,
+which matters because those scripts are real handwriting. The cookie holds an HMAC
+keyed by the code rather than the code, so changing the code revokes every session.
+`deploy/deploy.sh` refuses to release without one — a gate that silently fails to
+engage is worse than none, because it is believed.
+
+Separately, ingest and re-marking are rate limited per caller. One submission
+renders every page, recognises all of them, embeds both documents and calls a
+marking model once per question, so the limit is what decides what a stranger with
+the URL can cost. It is held in memory: with more than one task a caller would get
+the allowance once per task, which is stated rather than solved because the
+deployment runs one.
 
 One Fargate task in `ap-south-1` running both processes behind one origin: Next
 serves the browser and proxies `/api/*` to the FastAPI worker on loopback. No CORS
