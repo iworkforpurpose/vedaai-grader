@@ -26,8 +26,29 @@ import type { NextRequest } from "next/server";
 
 const COOKIE = "vedaai_access";
 
-/** Paths that have to work before anyone can unlock anything. */
-const ALWAYS_OPEN = ["/unlock", "/access", "/api/health", "/_next", "/favicon.ico", "/icon.png"];
+/**
+ * Paths that have to work before anyone can unlock anything.
+ *
+ * `/brand` is here for a reason worth remembering. Those files are a logo, a
+ * crest and an avatar — public brand furniture, nothing anybody needs a password
+ * to see — but that is not why gating them broke the page.
+ *
+ * Next's image optimizer fetches the source itself, server-side, from its own
+ * origin, and that request carries no cookie. Behind the gate it got a redirect
+ * to the unlock screen, could not read an image out of it, and answered 400. So
+ * every `<Image>` on the site went blank while the answer-sheet pages — plain
+ * `<img>` fetched by the browser, which does send the cookie — kept working. The
+ * symptom pointed at image handling and the cause was authentication.
+ */
+const ALWAYS_OPEN = [
+  "/unlock",
+  "/access",
+  "/api/health",
+  "/_next",
+  "/brand",
+  "/favicon.ico",
+  "/icon.png",
+];
 
 /**
  * The cookie value that proves knowledge of the passcode.
