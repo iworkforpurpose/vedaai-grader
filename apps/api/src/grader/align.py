@@ -1394,34 +1394,46 @@ def _unassigned_ink_share(
     return min(1.0, unassigned / total)
 
 
-#: How much two lines must share horizontally before they may sit under one
-#: rectangle, and how small the gap between them must be.
+#: How far apart two lines may be, and how little they may share horizontally,
+#: before they stop being one band of writing.
 #:
-#: Both conditions are needed, which took two attempts to establish. Merging on the
-#: vertical gap alone chained all 43 lines of a page of handwritten code into a
-#: single run — code is written tightly, so every gap qualifies — and the union of
-#: that run spanned the whole page width because a few lines were long and the rest
-#: indented. It painted 0.77 of a page to cover 0.28 of writing.
+#: The gap is measured in line heights, and a full one is allowed because ruled
+#: paper is written on every other line: on a real script the gap between lines was
+#: 0.82 of a line height, and at the old threshold of 0.35 every line of every
+#: answer became a rectangle of its own. Question 16 came out as ten stripes down
+#: the page, each cut to the ragged end of its line.
 #:
-#: Requiring similar horizontal extent as well means a run is a stack of lines that
-#: genuinely look like one block of text. Everything else gets its own rectangle,
-#: which is what a highlighter pen does anyway.
-_MERGE_GAP_SHARE = 0.35
-_MERGE_OVERLAP_SHARE = 0.8
+#: The horizontal condition is what stops a band reaching across the page. It is
+#: kept, loosely: writing down the left of a sheet and more down the right are two
+#: regions, and one rectangle over both paints the empty middle. Measured on a page
+#: of handwritten code, a single page-wide box covered 0.77 of the sheet to mark
+#: 0.28 of writing.
+_MERGE_GAP_SHARE = 1.2
+_MERGE_OVERLAP_SHARE = 0.15
 
 
 def _highlight(blocks: list[AnswerBlock]) -> Highlight | None:
-    """Where the writing is, drawn tightly enough to mean something.
+    """Where the writing is: one band per region of it.
 
-    One box per page was the earlier shape, and on a multi-line answer it was
-    mostly paper: measured across real submissions, 60 to 74 per cent of the
-    rectangle covered no writing at all. A bounding box around four lines spread
-    down a page includes the gaps between them and the ragged right-hand edge, and
-    a teacher reading it cannot tell which part the answer actually occupies.
+    Two shapes were tried before this one and both were wrong in opposite
+    directions.
 
-    `Highlight.boxes` has always been a list, and the page already renders every
-    box in it, so there was never a reason to pay for the gaps. Lines close enough
-    to be one paragraph are merged; lines with space between them are not.
+    One box per page reads cleanly and covers far too much. On a multi-line answer
+    60 to 74 per cent of the rectangle was blank paper, and on a page of
+    handwritten code it painted 0.77 of the sheet to mark 0.28 of writing —
+    including, on a page where a student answers one question at the top and
+    another at the bottom, the answer in between.
+
+    One box per line is tight and unreadable. Question 16 of a real script came out
+    as ten separate rectangles down a page of ruled paper, each cut to the ragged
+    end of its own line, and a teacher said so. Worse, each was drawn round the
+    recognised text, so the first started after the "I" of "In" and clipped the
+    letter it was meant to mark.
+
+    So lines that sit under one another and overlap horizontally become one band,
+    and writing elsewhere on the page gets a band of its own. On ruled prose that is
+    a single rectangle. On the code page it stays several, because there the
+    separation is real.
     """
     boxes: list[PageBox] = [pb for block in blocks for pb in block.geometry]
     if not boxes:
@@ -1441,24 +1453,35 @@ def _highlight(blocks: list[AnswerBlock]) -> Highlight | None:
 
 
 def _runs(boxes: list[BBox]) -> list[list[BBox]]:
-    """Group boxes on one page into vertically contiguous runs."""
-    ordered = sorted(boxes, key=lambda b: (b.y0, b.x0))
+    """Group boxes on one page into bands of writing.
+
+    Every open run is offered the line, not merely the most recent one. Two columns
+    of writing interleave when sorted by height — left, right, left, right — so
+    comparing against the last run only meant each line started a run of its own and
+    a two-column page came out as one rectangle per line.
+    """
     runs: list[list[BBox]] = []
 
-    for box in ordered:
-        if runs:
-            previous = runs[-1]
-            bottom = max(b.y1 for b in previous)
-            # Measured against the taller of the two lines, so a short line does
-            # not make an ordinary paragraph gap look enormous.
-            height = max(box.y1 - box.y0, max(b.y1 - b.y0 for b in previous))
-            close = box.y0 - bottom <= height * _MERGE_GAP_SHARE
-            if close and _shares_width(box, previous):
-                previous.append(box)
-                continue
-        runs.append([box])
+    for box in sorted(boxes, key=lambda b: (b.y0, b.x0)):
+        for run in runs:
+            if _joins(box, run):
+                run.append(box)
+                break
+        else:
+            runs.append([box])
 
     return runs
+
+
+def _joins(box: BBox, run: list[BBox]) -> bool:
+    """Whether this line continues that band."""
+    bottom = max(b.y1 for b in run)
+    # Measured against the taller of the two lines, so a short line does not make
+    # an ordinary gap look enormous.
+    height = max(box.y1 - box.y0, max(b.y1 - b.y0 for b in run))
+    if box.y0 - bottom > height * _MERGE_GAP_SHARE:
+        return False
+    return _shares_width(box, run)
 
 
 def _shares_width(box: BBox, run: list[BBox]) -> bool:

@@ -269,6 +269,22 @@ class MappingReport:
         return (self.correct + self.correctly_unanswered) / self.scored if self.scored else 1.0
 
     @property
+    def placement_accuracy(self) -> float:
+        """Share of questions whose answer reached the right question at all.
+
+        `accuracy` above requires the highlight to be tight as well, and the two
+        move independently: changing the shape of a highlight cannot move an
+        answer to a different question, but it moves `accuracy` by twenty-five
+        points. Reported separately so a change to one is never read as a change
+        to the other — this file already records that confusion happening once,
+        when gating on the region marked highlights sitting exactly on the ink as
+        the wrong region and mapping accuracy read 46.9% for a set where nothing
+        was mapped wrongly at all.
+        """
+        placed = self.correct + len(self.wrong_region) + self.correctly_unanswered
+        return placed / self.scored if self.scored else 1.0
+
+    @property
     def false_unanswered_rate(self) -> float:
         """Share of genuinely answered questions reported as unanswered.
 

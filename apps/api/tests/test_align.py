@@ -218,6 +218,82 @@ class TestMeaningPlacesTheAnswerWithoutHelpFromScale:
         assert answered == ["A/1"]
 
 
+class TestHighlightShape:
+    """A highlight should read as one region of writing, not a stack of stripes.
+
+    The first version drew one rectangle per line, which is tight but looks like a
+    barcode: question 16 of the science script came out as ten separate rectangles
+    down a page of ruled paper, each cut to the ragged end of its own line. A
+    teacher reported it as unreadable, and looking at it they are right — worse,
+    each rectangle is drawn round the recognised text, so the first one started
+    after the "I" of "In" and clipped the letter it was meant to mark.
+
+    The version before that was one rectangle per page, which reads cleanly and
+    covers far too much: on a page of handwritten code it painted the whole sheet,
+    including the empty half, to mark writing down one side.
+
+    So lines that sit under one another and overlap at all become one band, and
+    writing somewhere else on the page gets a band of its own. On ruled prose that
+    is a single rectangle; on the code page it stays as separate regions, because
+    there the separation is real.
+    """
+
+    def _boxes(self, lines: list[tuple[float, float, float, float]]) -> list[BBox]:
+        from grader.align import _highlight
+
+        block = AnswerBlock(
+            block_id="blk:000",
+            line_ids=[f"as:{i:04d}" for i in range(len(lines))],
+            ink_region_ids=[],
+            text="an answer",
+            geometry=[
+                PageBox(page=0, box=BBox(x0=x0, y0=y0, x1=x1, y1=y1))
+                for x0, y0, x1, y1 in lines
+            ],
+            pages_spanned=[0],
+        )
+        highlight = _highlight([block])
+        assert highlight is not None
+        return [pb.box for pb in highlight.boxes]
+
+    def test_ruled_prose_becomes_one_band(self) -> None:
+        # Five lines of ordinary handwriting: a wide gap between them, because
+        # ruled paper is written on every other line, and a ragged right edge.
+        ruled = [
+            (0.12, 0.20, 0.78, 0.222),
+            (0.12, 0.24, 0.74, 0.262),
+            (0.12, 0.28, 0.81, 0.302),
+            (0.12, 0.32, 0.69, 0.342),
+            (0.12, 0.36, 0.55, 0.382),
+        ]
+        assert len(self._boxes(ruled)) == 1
+
+    def test_writing_elsewhere_on_the_page_keeps_its_own_band(self) -> None:
+        # Two runs with half a page between them. One rectangle covering both would
+        # paint everything in between, including another question's answer.
+        split = [
+            (0.12, 0.10, 0.78, 0.122),
+            (0.12, 0.14, 0.74, 0.162),
+            (0.12, 0.70, 0.78, 0.722),
+            (0.12, 0.74, 0.74, 0.762),
+        ]
+        boxes = self._boxes(split)
+        assert len(boxes) == 2
+        assert max(b.y1 for b in boxes) - min(b.y0 for b in boxes) > 0.6
+        assert all(b.y1 - b.y0 < 0.1 for b in boxes), "neither band spans the gap"
+
+    def test_a_column_beside_another_is_not_swallowed(self) -> None:
+        # The code page: writing down the left of the sheet and more down the
+        # right. Merging them paints the empty middle.
+        columns = [
+            (0.10, 0.20, 0.40, 0.222),
+            (0.10, 0.24, 0.38, 0.262),
+            (0.60, 0.20, 0.90, 0.222),
+            (0.60, 0.24, 0.88, 0.262),
+        ]
+        assert len(self._boxes(columns)) == 2
+
+
 class TestGapsAndOrphans:
     def test_an_unanswered_question_is_a_gap_on_the_question_axis(self) -> None:
         questions = [REFRACTION, MOTOR]

@@ -78,12 +78,19 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer mapping accuracy | 85.6% |
-| Highlight IoU vs the writing, mean | 0.648 |
-| Highlight IoU@0.5 hit rate | 88% |
+| Answer placement accuracy | 97.7% |
+| Highlight covers the answer region (IoU) | 0.730 |
+| Highlight is ink rather than paper (IoU) | 0.524 |
 | Written labels reaching their own line | 100% |
 | Blanks not called blank | 2.3% |
 | **False "unanswered" rate** | **0.0%** |
+
+Placement and highlight quality are reported apart because they move for unrelated
+reasons: redrawing a highlight cannot send an answer to a different question, and
+it swings the combined figure by twenty-five points. The two highlight numbers pull
+against each other by construction — a band that reads as one region necessarily
+includes the space between its lines, so covering the region better means covering
+less ink. This project has now been misled by each of them in turn.
 
 Measured with the scorer the deployed service uses, which the harness now names in
 its own output. It did not always: this package's environment does not install the

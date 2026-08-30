@@ -297,8 +297,20 @@ def report(
         answered = sum(
             m.correct + len(m.wrong_region) + len(m.missed) for m in mappings
         )
+        # Two numbers, because they move independently and the second one moves
+        # for reasons that have nothing to do with mapping. Redrawing a highlight
+        # cannot send an answer to a different question, and it swings the
+        # combined figure by twenty-five points.
+        placed = sum(m.correct + len(m.wrong_region) for m in mappings) + sum(
+            m.correctly_unanswered for m in mappings
+        )
         out(
-            f"  mapping accuracy         "
+            f"  answer placement         "
+            f"{_fmt_pct(placed / total_scored if total_scored else None)}"
+            "   <- reached the right question\n"
+        )
+        out(
+            f"  ... with a tight highlight "
             f"{_fmt_pct(total_correct / total_scored if total_scored else None)}\n"
         )
         out(
