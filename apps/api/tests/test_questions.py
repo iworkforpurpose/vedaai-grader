@@ -106,6 +106,49 @@ class TestLabelParsing:
         assert numbering.parse_label("(h) x").tokens == ("h",)
 
 
+class TestLabelsRecognitionMangled:
+    """A question number the recognizer put an accent on is still a question number.
+
+    From a geography script. The student wrote "2 (ii)" in the margin and it came
+    back as "2 (íi)". The label did not parse, so no anchor was created, and the
+    answer beside it had nothing but meaning to place it — against three questions
+    it could not tell apart, scoring 0.406, 0.396 and 0.381. It went to the wrong
+    one by twenty-five thousandths.
+
+    Exam labels never carry accents. Every accent on one is recognition noise, and
+    stripping it costs nothing while recovering the student's own statement of
+    which question they were answering — which outranks anything inferred.
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "tokens"),
+        [
+            ("2 (íi) At B the river is slower so it drops its load.", ("2", "ii")),
+            ("2 (ìi) At B the river is slower.", ("2", "ii")),
+            ("Q.3 (à) What is meant by the balance of power?", ("3", "a")),
+        ],
+    )
+    def test_an_accented_label_still_parses(self, text, tokens) -> None:
+        parsed = numbering.parse_label(text)
+        assert parsed is not None, "the accent is recognition noise, not a label"
+        assert parsed.tokens == tokens
+
+    def test_an_accent_inside_the_number_is_left_alone(self) -> None:
+        # Stripping tells us "1í." is "1i.", which is a token and not the number
+        # one. Guessing that recognition meant "11." would be inventing a label
+        # rather than reading one, so it is not done.
+        parsed = numbering.parse_label("1í. Define refraction of light.")
+        assert parsed is None or parsed.tokens != ("1",)
+
+    def test_the_answer_text_keeps_its_own_spelling(self) -> None:
+        # Only the label is normalised. What the student wrote is evidence and is
+        # passed on exactly as recognised, accents and all — the transcription is
+        # what a teacher checks the mark against.
+        parsed = numbering.parse_label("2 (íi) The sílt is dropped at the river mouth.")
+        assert parsed is not None
+        assert parsed.remainder == "The sílt is dropped at the river mouth."
+
+
 class TestLabelPrefixes:
     """Notations beyond a bare number, taken from real papers."""
 

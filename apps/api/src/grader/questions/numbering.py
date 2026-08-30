@@ -20,6 +20,7 @@ this one only has to find where the label ends and the question begins.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -169,6 +170,25 @@ def _scan_punctuated(text: str, i: int) -> tuple[str, int] | None:
     return None
 
 
+def _deaccent(text: str) -> str:
+    """The same text with accents taken off Latin letters, character for character.
+
+    Length-preserving on purpose, so a caller can find an index in the result and
+    slice the original with it — which is how the label is normalised for matching
+    while the student's own words are passed on exactly as recognised.
+
+    Recognition puts accents on letters that never carry them in a question
+    number. A geography script's "2 (ii)" came back as "2 (íi)", the label did not
+    parse, and the answer beside it lost the one piece of evidence that outranks
+    everything inferred: the student saying which question they were answering.
+    """
+    out: list[str] = []
+    for char in text:
+        base = unicodedata.normalize("NFKD", char)[0]
+        out.append(base if base.isascii() and base.isalnum() else char)
+    return "".join(out)
+
+
 def parse_label(text: str, *, prefixes: frozenset[str] = frozenset()) -> ParsedLabel | None:
     """Extract a leading question label, or None if the line does not start with one.
 
@@ -186,7 +206,13 @@ def parse_label(text: str, *, prefixes: frozenset[str] = frozenset()) -> ParsedL
     * The label must end at whitespace or end of line, which is what stops
       ``1.5 kg of copper`` parsing as question 1 answered by "5 kg of copper".
     * Tokens are never interpreted.
+
+    Matching runs over an accent-stripped copy and the remainder is sliced from
+    the original, so recognition noise on the number does not lose the label while
+    the answer's own spelling survives untouched.
     """
+    original = text
+    text = _deaccent(text)
     prefix = _Q_PREFIX.match(text)
     if prefix is None and prefixes:
         # A letter this paper has been observed to number with, treated exactly
@@ -269,8 +295,8 @@ def parse_label(text: str, *, prefixes: frozenset[str] = frozenset()) -> ParsedL
     if position < len(text) and not text[position].isspace():
         return None
 
-    remainder = text[position:].strip()
-    raw = " ".join(text[:position].split())
+    remainder = original[position:].strip()
+    raw = " ".join(original[:position].split())
     return ParsedLabel(
         raw=raw,
         tokens=tuple(tokens),
