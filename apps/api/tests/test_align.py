@@ -866,6 +866,47 @@ class TestSubPartsAnsweredInOneRun:
             "an unrelated question must not pick the run up as well"
         )
 
+    def test_a_sub_part_of_nothing_is_not_exempt(self) -> None:
+        """The exemption needs a question the block plainly answers.
+
+        It was written as "a part of the question this block answers is not a
+        rival", and applied without checking that there *is* such a question it
+        let a sub-part through the floor on evidence of nothing at all. An answer
+        sheet of handwritten C, uploaded against a comprehension paper, scores
+        about 0.15 against every question on it — so which question is "preferred"
+        is noise, and 3(ii) was made its sibling and handed the code. The floor
+        exists to stop precisely that; this is the second time this project has
+        highlighted handwritten C under a question about pandas.
+
+        A one-word fragment does the same thing more quietly: "there." relates to
+        nothing, and was given to 3(ii) on the same reasoning.
+        """
+        code = block(
+            "blk:000",
+            "#include <stdio.h> void main() { int i, j, n, arr[30]; printf(\"enter\"); }",
+            y0=0.10, line_ids=["as:0001"],
+        )
+        stem = q("A/3", "3.", "Answer the following about the animals named in the "
+                 "passage:", 0, ["3"], marks=None)
+        part_i = q("A/3/i", "(i)", "Name the single food source each specialist "
+                   "depends on.", 1, ["3", "i"], marks=2)
+        part_ii = q("A/3/ii", "(ii)", "State whether a python is a specialist or a "
+                    "generalist.", 2, ["3", "ii"], marks=1)
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, _block_text: str) -> float:
+                # What a mismatched pair actually produces: flat and low.
+                return {stem.text: 0.152, part_i.text: 0.148, part_ii.text: 0.151}.get(
+                    question_text, 0.0
+                )
+
+        result = resolve(paper([stem, part_i, part_ii]), [code], [], [],
+                         similarity=Measured())
+        answered = [m.qid for m in result.mappings if m.status is AnswerStatus.ANSWERED]
+        assert answered == [], "nothing on this sheet answers anything on this paper"
+
     def test_two_whole_questions_are_not_parts_of_one(self) -> None:
         """The exemption is for parts of a question, not for questions.
 

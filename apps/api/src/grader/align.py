@@ -844,9 +844,20 @@ def _score_matrix(
         # to prevent.
         column = [raw[i][j] for i in range(len(questions))]
         best = (block_best or {}).get(block.block_id) or (max(column) if column else 0.0)
-        # The question this block prefers among those on offer here. Its own parts
-        # are exempt from both rules below — see the note on them.
+        # The question this block prefers among those on offer here, but only when
+        # it prefers it enough to count as related at all. Its own parts are exempt
+        # from both rules below, and the exemption reads "a part of the question
+        # this block *plainly answers*" — so where there is no such question there
+        # is nothing to be a part of.
+        #
+        # Without that condition the exemption fires on noise. An answer sheet of
+        # handwritten C uploaded against a comprehension paper scores about 0.15
+        # against every question, which makes the preference arbitrary, and 3(ii)
+        # was made a sibling of whatever won and handed the code. The floor exists
+        # to stop exactly that.
         preferred = max(range(len(questions)), key=lambda i: column[i]) if column else None
+        if preferred is not None and floor > 0.0 and column[preferred] < floor:
+            preferred = None
         for i in range(len(questions)):
             # Unrelated to this question outright. An answer sheet belonging to a
             # different paper scored 0.15 against every question while reporting
@@ -935,7 +946,9 @@ def _withhold_decided_blocks(
             # A part of the winning question is not a rival for the block; it is
             # the other half of the same answer, and a block leading decisively
             # towards 3(a) is not evidence against 3(b).
-            if _is_part_of_the_same_question(questions[winner], questions[i], blocks[j]):
+            if evidence[winner][j] > 0.0 and _is_part_of_the_same_question(
+                questions[winner], questions[i], blocks[j]
+            ):
                 continue
             matrix[i][j] = -inf
 
