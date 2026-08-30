@@ -169,6 +169,11 @@ jobs:
           # Checked separately, because "the gate is on" is its own claim and the
           # cost of it being quietly off is every stored script.
           gate="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
+          if [ "${gate}" = "307" ]; then
+            gate_note="(behind the access code)"
+          else
+            gate_note="(OPEN — anyone with the address can read every script)"
+          fi
 
           {
             echo "### Deployed"
@@ -180,7 +185,7 @@ jobs:
             echo "| image | \`${image##*/}\` |"
             echo "| revision | \`${rev##*/}\` |"
             echo "| via gateway | HTTP ${scode} |"
-  echo "| front page | HTTP ${gate} $([ "${gate}" = "307" ] && echo "(behind the access code)" || echo "(OPEN)") |"
+            echo "| front page | HTTP ${gate} ${gate_note} |"
             echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
