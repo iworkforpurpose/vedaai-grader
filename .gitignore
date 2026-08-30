@@ -34,8 +34,17 @@ packages/contracts/schema/
 # them, which do not belong in version control at all.
 packages/generated/
 
-# design reference exports — large rasters, and the Figma file is the source
+# design reference exports — large rasters, and the Figma file is the source.
+#
+# Nested as well as top level. `design/*.png` does not match a subdirectory, and
+# a folder of rendered comparison pages went in under `design/highlight-shapes/`
+# holding real handwriting from the ASAP corpus — which is licensed for
+# non-commercial research and must not be in a repository. Nothing was committed;
+# the pattern is widened so nothing can be.
 design/*.png
+design/**/*.png
+design/**/*.jpg
+design/**/*.jpeg
 apps/web/design/
 
 # tooling scratch
