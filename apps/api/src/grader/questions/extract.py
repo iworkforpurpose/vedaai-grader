@@ -181,6 +181,7 @@ def extract(index: LineIndex) -> QuestionPaper:
         if role is LineRole.QUESTION_START:
             if building is not None:
                 questions.append(building.finish())
+                building = None
 
             parsed = parse_label(line.text, prefixes=prefixes)
             if parsed is None:  # pragma: no cover - classify already checked
@@ -211,6 +212,33 @@ def extract(index: LineIndex) -> QuestionPaper:
             )
 
             body, marks = extract_marks(parsed.remainder)
+
+            # A number is a name, and seeing it twice in one section means the
+            # paper is still talking about the same question.
+            #
+            # An economics paper puts a table inside question 3 and repeats "Q3."
+            # underneath it, so a reader picking up below the table knows where
+            # they are. Both halves parsed as questions, both took the id A/3, and
+            # the answer could not be placed on a question that existed twice.
+            # Reopening the first is what the repetition means.
+            qid = canonical_qid(current_section, path)
+            existing = next((i for i, q in enumerate(questions) if q.qid == qid), None)
+            if existing is not None:
+                reopened = questions.pop(existing)
+                building = _Building(
+                    qid=reopened.qid,
+                    label=parsed,
+                    path=list(reopened.path),
+                    section=current_section,
+                    indent=reopened.geometry[0].box.x0 if reopened.geometry else line.box.x0,
+                    print_order=reopened.print_order,
+                    text_parts=[reopened.text, body],
+                    line_ids=list(reopened.line_ids) + [line.line_id],
+                    boxes=list(reopened.geometry) + [PageBox(page=line.page, box=line.box)],
+                    marks=reopened.marks if reopened.marks is not None else marks,
+                )
+                continue
+
             building = _Building(
                 qid=canonical_qid(current_section, path),
                 label=parsed,

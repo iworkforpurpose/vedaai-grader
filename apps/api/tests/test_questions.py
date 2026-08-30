@@ -295,6 +295,66 @@ class TestAFigureBetweenTheHeadingAndTheQuestion:
         assert paper.questions[0].text.endswith("MN.")
 
 
+class TestALabelPrintedTwice:
+    """A question number that appears again after a table is the same question.
+
+    From an economics paper. A table sits between the question's opening and the
+    part that asks for something, and the paper repeats the number after it so a
+    reader picking up below the table knows where they are:
+
+        Q3.  The table below shows the price and quantity demanded of wheat.
+        [ the table ]
+        Q3.  Calculate the price elasticity of demand between the first two rows.
+
+    Both parsed as questions, both got the id A/3, and the submission carried a
+    warning that two questions shared an identity. Neither was marked: the answer
+    could not be placed on a question that existed twice.
+
+    A number is a name. Seeing it twice in one section means the paper is still
+    talking about the same question, so the second occurrence continues the first
+    rather than declaring a rival with the same name.
+    """
+
+    def _paper(self):
+        return extract(
+            index_of(
+                ("SECTION A", 0.09),
+                ("Q1. Define opportunity cost.", 0.09),
+                ("Q3. The table below shows the price and quantity of wheat.", 0.09),
+                ("Price 10 12 14", 0.14),
+                ("Quantity 100 80 65", 0.14),
+                ("Q3. Calculate the price elasticity between the first two rows.", 0.09),
+                ("Q5. Explain why the supply curve slopes upward.", 0.09),
+            )
+        )
+
+    def test_the_repeat_does_not_become_a_second_question(self) -> None:
+        assert [q.label_raw for q in self._paper().questions] == ["Q1.", "Q3.", "Q5."]
+
+    def test_no_two_questions_share_an_identity(self) -> None:
+        qids = [q.qid for q in self._paper().questions]
+        assert len(qids) == len(set(qids))
+
+    def test_both_halves_of_the_question_are_kept(self) -> None:
+        # The half that says what to do is the half a rubric is derived from, so
+        # dropping either one would be worse than the duplicate.
+        text = next(q.text for q in self._paper().questions if q.label_raw == "Q3.")
+        assert "table below shows" in text
+        assert "Calculate the price elasticity" in text
+
+    def test_a_number_reused_in_another_section_is_still_its_own(self) -> None:
+        # Papers restart numbering per section, and A/3 and B/3 are two questions.
+        paper = extract(
+            index_of(
+                ("SECTION A", 0.09),
+                ("3. Define opportunity cost.", 0.09),
+                ("SECTION B", 0.09),
+                ("3. Explain why the supply curve slopes upward.", 0.09),
+            )
+        )
+        assert [q.qid for q in paper.questions] == ["A/3", "B/3"]
+
+
 class TestSectionLevelMarks:
     """Marks stated once for a whole section belong to every question in it.
 

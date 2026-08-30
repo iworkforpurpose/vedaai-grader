@@ -1157,6 +1157,99 @@ class TestAbsenceGuards:
         assert result.by_qid()["B/5/b"].status is AnswerStatus.UNCERTAIN
 
 
+class TestAnOptionalQuestionTheStudentSkipped:
+    """A section offering a choice, and a question the student declined.
+
+    Section B of an English paper: "answer any two of the three". The student
+    answered 3 and 5, so 4 is not an omission — the paper invited them to skip
+    it, and "not required" is what a teacher needs to read.
+
+    It reported "uncertain" instead. Absence is decided by asking, in order,
+    whether any writing on the sheet plausibly answers this question, and only
+    then whether the section's quota was already met. Question 4 asks about a
+    story told through a child's eyes; the answer about two brothers scored
+    0.305 against it, where 0.30 is the line at which a pair counts as related
+    at all. One thousandth over, and the paper's own rule never got asked.
+
+    The order is not the mistake. Evidence about what the student actually wrote
+    has to outrank inference from the paper's rules, and getting that backwards
+    once reported an answered sub-part as optional. What was missing is that a
+    block already placed on a question it matches twice as well is not loose
+    writing that might belong here. It has a home.
+    """
+
+    QUESTIONS = [
+        q("A/1", "1.", "How does the poet use the weather to reflect the "
+          "speaker's state of mind?", 0, ["1"], marks=5, section="A"),
+        q("B/3", "3.", "Discuss the writer's attitude to the village, quoting one "
+          "phrase in support.", 1, ["3"], marks=5, section="B"),
+        q("B/4", "4.", "What is the effect of telling the story through a child's "
+          "eyes?", 2, ["4"], marks=5, section="B"),
+        q("B/5", "5.", "Comment on the ending. Is it hopeful or bleak?", 3, ["5"],
+          marks=5, section="B"),
+    ]
+
+    #: Measured on the deployed service. The 0.305 is the whole story.
+    MEASURED = {
+        ("A/1", "poem"): 0.688, ("B/3", "poem"): 0.201,
+        ("B/4", "poem"): 0.305, ("B/5", "poem"): 0.180,
+        ("A/1", "village"): 0.212, ("B/3", "village"): 0.640,
+        ("B/4", "village"): 0.244, ("B/5", "village"): 0.233,
+        ("A/1", "ending"): 0.190, ("B/3", "ending"): 0.248,
+        ("B/4", "ending"): 0.239, ("B/5", "ending"): 0.612,
+    }
+
+    def _mapping(self):
+        texts = {
+            "poem": "The poet keeps returning to the rain. At the start it is a "
+                    "thin grey drizzle which matches how flat the speaker feels.",
+            "village": "The writer is fond of the village but sees it clearly, "
+                       "calling it a place that had learned to expect very little.",
+            "ending": "I think the ending is hopeful but only just. He chooses to "
+                      "walk back through the village instead of taking the road.",
+        }
+        by_text = {v: k for k, v in texts.items()}
+        by_question = {question.text: question.qid for question in self.QUESTIONS}
+        measured = self.MEASURED
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, block_text: str) -> float:
+                return measured.get(
+                    (by_question.get(question_text, ""), by_text.get(block_text, "")), 0.0
+                )
+
+        result = resolve(
+            paper(
+                self.QUESTIONS,
+                sections=[
+                    Section(section_id="A", label_raw="SECTION A",
+                            requirement=Requirement()),
+                    Section(section_id="B", label_raw="SECTION B",
+                            requirement=Requirement(answer_any=2, is_optional=True)),
+                ],
+            ),
+            [
+                block("blk:000", texts["poem"], y0=0.10, line_ids=["as:0001"]),
+                block("blk:001", texts["village"], y0=0.40, line_ids=["as:0002"]),
+                block("blk:002", texts["ending"], y0=0.70, line_ids=["as:0003"]),
+            ],
+            [],
+            [],
+            similarity=Measured(),
+        )
+        return {m.qid: m.status for m in result.mappings}
+
+    def test_the_two_that_were_answered_are_answered(self) -> None:
+        status = self._mapping()
+        assert status["B/3"] is AnswerStatus.ANSWERED
+        assert status["B/5"] is AnswerStatus.ANSWERED
+
+    def test_the_one_they_were_allowed_to_skip_says_so(self) -> None:
+        assert self._mapping()["B/4"] is AnswerStatus.NOT_REQUIRED
+
+
 class TestReportShape:
     def test_every_question_gets_a_mapping(self) -> None:
         # The teacher's list must be complete, or a question silently vanishes.

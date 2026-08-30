@@ -1305,7 +1305,7 @@ def resolve(
                     pages_missing=pages_missing,
                     suppress=suppress,
                     plausible_answer_exists=(
-                        _plausible_answer_exists(question, blocks, resolver)
+                        _plausible_answer_exists(question, blocks, resolver, paper, by_qid)
                         or _sibling_was_answered(question, paper, set(by_qid))
                     ),
                 ),
@@ -1331,22 +1331,68 @@ def resolve(
     )
 
 
+#: How much better a block must fit the question it was placed on before it stops
+#: counting as writing that might belong somewhere else.
+#:
+#: Not a large margin, because the claim it guards is modest: this block has a
+#: home, so its faint resemblance to another question is not evidence that
+#: question was answered.
+_SETTLED_ELSEWHERE = 1.5
+
+
 def _plausible_answer_exists(
     question: Question,
     blocks: list[AnswerBlock],
     similarity: Similarity,
+    paper: QuestionPaper | None = None,
+    assignments: dict[str, Assignment] | None = None,
 ) -> bool:
-    """Whether any block on the sheet plausibly answers this question.
+    """Whether any *loose* writing on the sheet plausibly answers this question.
 
-    Checked before claiming a question was left blank. The block may already
-    belong to another question — that is precisely the case the unassigned-ink
-    check cannot see, and the case where a false "unanswered" is most likely.
+    Checked before claiming a question was left blank. A block may already belong
+    to another question and still be this one's answer — that is precisely the
+    case the unassigned-ink check cannot see, and where a false "unanswered" is
+    most likely.
+
+    But a block placed on a question it fits half again as well is not loose. It
+    has a home, and its faint resemblance to this one says nothing about whether
+    this one was answered. An English paper offering "any two of three" showed
+    what the difference costs: the student answered two and skipped the third,
+    and their answer about two brothers scored 0.305 against "the effect of
+    telling the story through a child's eyes" — one thousandth over the line at
+    which a pair counts as related at all. That was enough to stop the paper's own
+    rule ever being asked, and a question the student was invited to skip came
+    back "uncertain" rather than "not required".
+
+    The order of the tests around this is not the mistake and is not changed:
+    evidence about what the student wrote outranks inference from the paper's
+    rules, and getting that backwards once reported an answered sub-part as
+    optional.
     """
+    owner_of: dict[str, str] = {
+        block_id: qid
+        for qid, assignment in (assignments or {}).items()
+        for block_id in assignment.block_ids
+    }
+    text_of: dict[str, str] = {q.qid: q.text for q in (paper.questions if paper else [])}
+
     for block in blocks:
         if not block.text.strip():
             continue
-        if similarity.score(question.text, block.text) >= PLAUSIBLE_ANSWER_EXISTS:
-            return True
+        score = similarity.score(question.text, block.text)
+        if score < PLAUSIBLE_ANSWER_EXISTS:
+            continue
+
+        owner = owner_of.get(block.block_id)
+        settled = text_of.get(owner or "")
+        if (
+            owner is not None
+            and owner != question.qid
+            and settled
+            and similarity.score(settled, block.text) >= score * _SETTLED_ELSEWHERE
+        ):
+            continue
+        return True
     return False
 
 
