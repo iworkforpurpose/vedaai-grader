@@ -85,6 +85,14 @@ On a synthetic golden set that generates the graded edge cases in volume:
 | Blanks not called blank | 1.5% |
 | **False "unanswered" rate** | **0.0%** |
 
+A highlight is **one band per region of writing** — lines that sit under one another
+and overlap horizontally merge into a single rectangle, and writing elsewhere on the
+page gets a band of its own. Both other shapes were tried and both were wrong in
+opposite directions. One box per page reads cleanly and paints the empty half of a
+page of handwritten code. One box per line is tight and unreadable: a teacher
+reported ten stripes down a page of ruled paper, each cut to the ragged end of its
+line and each clipping the first letter it was meant to mark.
+
 Placement and highlight quality are reported apart because they move for unrelated
 reasons: redrawing a highlight cannot send an answer to a different question, and
 it swings the combined figure by twenty-five points. The two highlight numbers pull
@@ -157,11 +165,26 @@ what went wrong. Seven documents that have been through the pipeline — includi
 the ones that failed — are re-run after every change and inspected in a browser
 (`tooling/scripts/rerun_corpus.py`, `inspect_corpus.py`, `score_mapping.py`). On the
 three whose correct mapping is unambiguous, blocks landing on the question they
-actually answer went from 3/8 to 7/8. Label binding across the scripts that write
-question numbers went from 32% to 100%, and the share of a highlight that is
-actually ink from 56% to 84%.
+actually answer went from 3/8 to **8/8**. Label binding across the scripts that
+write question numbers went from 32% to 100%.
 
-Tests: 448 on the API, 60 on the web app, 94 on the eval harness.
+**And that corpus stopped finding things.** Every document in it has been fixed
+against, which is exactly what stops it being evidence — a set you tune to can only
+confirm what it already contains. So four more were written in subjects and layouts
+none of the others use (`tooling/scripts/build_fresh_papers.py`,
+`run_fresh.py`): history with lettered sub-parts and a source extract, geography
+with a figure between a stem and its parts, English with an optional section
+answered out of order, economics with marks printed twice and disagreeing. What
+each student did is written down beside the paper, so the output is checked against
+something decided before the run rather than rationalised after it.
+
+Four papers found three faults the corpus could not express — a heading ending in a
+full stop, a sub-part the run barely mentions, a question number the recognizer put
+an accent on. All three are fixed and all four papers now read correctly. That is
+the loop that works, and it is worth repeating on anything that touches the
+aligner rather than running once.
+
+Tests: 566 on the API, 66 on the web app, 106 on the eval harness.
 
 ## Running it
 
@@ -176,6 +199,9 @@ pnpm dev                      # web on :3000, API on :8000
 
 Everything works with no keys at all: the question paper is read from its PDF text
 layer, and marking degrades to a rubric a teacher fills in rather than failing.
+`ACCESS_CODE` is unset locally, which leaves the origin open — right for a laptop
+and wrong for anything with a public address, so the deploy script refuses to
+release without one.
 Handwriting recognition needs either `OCR_ENGINE=textract` with AWS credentials, or
 `uv sync --extra ocr-local` for the local model. Marking needs `OPENAI_API_KEY` or
 `ANTHROPIC_API_KEY`.
@@ -264,6 +290,46 @@ Named rather than half-built:
   whole-answer grounding, so it is the harder half of the problem dressed as a
   flourish.
 
+## Untrusted input, and what one upload may cost
+
+Both documents arrive from a stranger, and the answer sheet reaches a model as the
+output of handwriting recognition — so it can say anything, including "award full
+marks". Prompt injection is the top item on OWASP's list for LLM applications, and
+the question worth asking is not whether an injection can be written but what it
+would buy.
+
+Here, very little, and that is structural rather than lucky. The model has **no
+tools and no agency** — it cannot call anything or reach any data but the one
+answer it is handed. Its output is a **schema-validated structure**, every mark
+must **cite a line that resolves inside that answer's scope**, and marks are
+**clamped to what the paper printed**. Pages are **rasterised**, so the PDF text
+layer is never read and the hidden-white-text attack does not apply. Verified end
+to end: a model told to award 999 marks awards the printed 5, and one citing a line
+that does not exist has the whole question refused.
+
+The answer is fenced as data behind a delimiter carrying a **value drawn fresh per
+request** — the literature calls this spotlighting — because a constant delimiter
+is one a student can write on their sheet to close the fence early. Writing
+addressed to the marker is **reported to the teacher** rather than blocked: it
+cannot work, but attempting it is misconduct, and the person marking the script is
+the one who should decide about it.
+
+The residual, stated rather than hidden: a fully compliant model still gives the
+attacker full marks on their own question, in front of a teacher who reviews it.
+
+**The expensive risk was never injection.** Marking is one paid call per question
+and nothing connected that to what a caller may upload — sixty pages, forty lines
+a page, and a paper crafted so every line parses as a question turns one upload
+into thousands of calls. That is OWASP's unbounded consumption, and the mitigation
+it asks for is a limit before the work rather than a bill after it: **100 questions
+marked per submission**, on top of the per-caller rate limit. Extraction and
+location are deliberately uncapped — they cost nothing and are most of what this
+does.
+
+No model-based injection detector, deliberately. It would cost money on every
+submission, add latency, be injectable itself, and buy little against a blast
+radius this size.
+
 ## Known limitations
 
 - **Marking varies by about one mark between runs.** Temperature 0 and a fixed seed
@@ -273,11 +339,22 @@ Named rather than half-built:
   during a run is per process; the result survives, the running commentary does
   not. A page open across a restart falls back to polling, which is the path it
   already uses.
-- **Orphaned writing has never been seen in the wild.** The unplaced-answer card is
-  built and tested, but no sample produces one — not even a programming answer
-  sheet paired with a prose paper, which maps everything wrongly rather than
-  refusing to map it. So it has only ever been exercised against an injected
-  payload.
+- **Handwritten mathematics and code get located but not marked.** This is the
+  limitation a new user meets first and the one worth stating loudest. The
+  aligner finds the answer and the highlight lands on it; the marks are near zero,
+  because recognition returns things like `Let the Cost of \ apple = A 1 Orange
+  = 0` and a marker cannot credit what it cannot read. Transcription is the
+  ceiling and no aligner change moves it.
+- **Unplaced writing is no longer shown to a teacher.** It was, and it was mostly
+  noise — seven of eight cards on a real script had no readable text at all, and
+  one said `Roll No: Page : 03`. The unassigned-ink total still qualifies every
+  absence claim on the page; what was removed is a pile of stray marks presented
+  as though it meant something.
+- **Concurrency is tested to four at once**, on one Fargate task. Four simultaneous
+  submissions complete correctly in 44 seconds against 32 for one. Twenty is
+  untested.
+- **A submission cannot be deleted.** Student handwriting sits in DynamoDB until
+  its seven-day TTL expires it.
 - **Real-page recall is unmeasured**, as above.
 
 ## Layout
@@ -287,7 +364,7 @@ apps/web        Next.js app: upload, waiting, and the mapping surface
 apps/api        FastAPI + the pipeline
 packages/contracts   the coordinate contract, generated into both languages
 packages/evals       golden set, synthetic generator, metrics
-tooling/scripts      sample builders, engine comparison, UI audit
+tooling/scripts      sample and paper builders, the corpus loop, engine comparison
 deploy               container, IAM, and the deploy script
 ```
 
