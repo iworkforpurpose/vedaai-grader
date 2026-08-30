@@ -15,6 +15,7 @@ structurally impossible rather than guarded against downstream:
 from __future__ import annotations
 
 import asyncio
+import os
 
 from vedaai_contracts import (
     AnswerStatus,
@@ -34,6 +35,24 @@ from .engine import Grader
 #: script is small, so a modest fan-out keeps a full script well inside the
 #: patience of someone watching a progress bar.
 CONCURRENCY = 4
+
+#: The most questions one submission will pay to mark.
+#:
+#: Marking is one call per question and nothing connected that to what a caller
+#: is allowed to upload. A document is accepted up to sixty pages, a page holds
+#: around forty lines, and a paper crafted so every line parses as a question
+#: turns one upload into thousands of paid calls — inside the rate limit, which
+#: counts submissions, and outside any budget anybody had chosen. OWASP files
+#: this as unbounded consumption, and asks for a limit applied before the work
+#: rather than a bill noticed after it.
+#:
+#: Set well above any real paper. The largest in the corpus has eighteen entries;
+#: a dense board paper might reach forty. A hundred is not a paper somebody sat.
+#:
+#: What it does not cap is extraction or location. Those cost nothing, they are
+#: most of what this product does, and a teacher whose paper is unusual should
+#: still get every question found and every answer placed.
+MAX_MARKED_QUESTIONS = int(os.getenv("MAX_MARKED_QUESTIONS", "").strip() or 100)
 
 
 def _ungraded(
@@ -153,7 +172,27 @@ async def grade_submission(
 
     failures: list[str] = []
     ordered = sorted(paper.questions, key=lambda q: q.print_order)
-    grades = await asyncio.gather(*(one(q) for q in ordered))
+
+    # Beyond the cap, questions are still returned — found, located, and reported
+    # as unmarked with the reason. Silently marking fewer would read as the model
+    # declining to judge them, which is a different and more alarming thing than
+    # a stated limit.
+    payable, beyond = ordered[:MAX_MARKED_QUESTIONS], ordered[MAX_MARKED_QUESTIONS:]
+    grades = list(await asyncio.gather(*(one(q) for q in payable)))
+    for question in beyond:
+        spec = rubric_mod.derive(question)
+        grades.append(
+            _ungraded(
+                question.qid,
+                spec.marks_available,
+                spec.criteria,
+                reason=(
+                    f"This paper has more questions than the service marks in one "
+                    f"submission ({MAX_MARKED_QUESTIONS}). The answer is located and "
+                    f"the rubric is ready; mark this one yourself, or split the paper."
+                ),
+            )
+        )
     result = GradeResult(grades=list(grades), weak_topics=_weak_topics(list(grades), paper))
 
     # Deduplicated, because a bad key fails identically on every question and a

@@ -29,6 +29,7 @@ from . import ink as ink_module
 from . import questions as questions_module
 from . import regions as regions_module
 from . import render
+from .answers import addressed_to_the_marker
 from .ocr import (
     EngineUnavailable,
     PageInput,
@@ -431,6 +432,17 @@ def map_answers(submission: Submission) -> list[str]:
             "Placements may be less reliable than usual; re-running in a few "
             "minutes should restore it."
         )
+
+    # Writing addressed to the marker rather than to the question.
+    #
+    # Reported, never acted on. The attempt cannot work — the answer is fenced as
+    # data behind a delimiter it cannot guess, marks come from the rubric and each
+    # one has to cite a line inside that answer — but attempting it is misconduct,
+    # and the teacher marking the script is the person who should decide what to
+    # do about it.
+    addressed = addressed_to_the_marker.warn_about(submission.blocks)
+    if addressed is not None:
+        warnings.append(addressed)
 
     # The sheet-does-not-match-the-paper case, said plainly and first.
     #
