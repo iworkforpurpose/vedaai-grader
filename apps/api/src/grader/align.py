@@ -844,13 +844,43 @@ def _score_matrix(
         # to prevent.
         column = [raw[i][j] for i in range(len(questions))]
         best = (block_best or {}).get(block.block_id) or (max(column) if column else 0.0)
+        # The question this block prefers among those on offer here. Its own parts
+        # are exempt from both rules below — see the note on them.
+        preferred = max(range(len(questions)), key=lambda i: column[i]) if column else None
         for i in range(len(questions)):
             # Unrelated to this question outright. An answer sheet belonging to a
             # different paper scored 0.15 against every question while reporting
             # five of seven answered, and highlighted handwritten C as an essay
             # about pandas.
-            if floor > 0.0 and raw[i][j] < floor or best > 0.0 and raw[i][j] < best * SETTLE_RATIO:
-                matrix[i][j] = -inf
+            unrelated = floor > 0.0 and raw[i][j] < floor
+            # Or related, but not as well as somewhere else — settling for this
+            # question because the one it answers has been taken.
+            settling = best > 0.0 and raw[i][j] < best * SETTLE_RATIO
+            if not (unrelated or settling):
+                continue
+
+            # A part of the question this block plainly answers is neither
+            # unrelated to it nor somewhere to settle for. It is the other half of
+            # the same answer, and the evidence tying the two together is the
+            # paper's own numbering rather than anything the scorer can see.
+            #
+            # A history script answered Q.3(a) and Q.3(b) in one forty-four-word
+            # run. Most of it is (a)'s answer, so the block scores 0.195 against
+            # (b) — under the 0.30 that marks a pair as unrelated — and (b) was
+            # discarded here, on a question the student had answered. The science
+            # script's 11(a) and 11(b) survive only because that run happens to
+            # score 0.752 against (b).
+            #
+            # Whether the run really covers both parts stays `share`'s decision,
+            # with the length evidence behind it.
+            if (
+                preferred is not None
+                and preferred != i
+                and _is_part_of_the_same_question(questions[preferred], questions[i], block)
+            ):
+                continue
+
+            matrix[i][j] = -inf
 
     # Judged on the semantic deviations alone, not on the assembled score.
     #
@@ -864,11 +894,14 @@ def _score_matrix(
         [raw[i][j] - baselines[j] if matrix[i][j] != -inf else -inf for j in range(len(blocks))]
         for i in range(len(questions))
     ]
-    return _withhold_decided_blocks(matrix, deviations)
+    return _withhold_decided_blocks(matrix, deviations, questions, blocks)
 
 
 def _withhold_decided_blocks(
-    matrix: list[list[float]], evidence: list[list[float]]
+    matrix: list[list[float]],
+    evidence: list[list[float]],
+    questions: list[Question],
+    blocks: list[AnswerBlock],
 ) -> list[list[float]]:
     """Take away the pairings a block's own content has already ruled out.
 
@@ -897,8 +930,14 @@ def _withhold_decided_blocks(
             continue
 
         for _score, i in finite:
-            if i != winner:
-                matrix[i][j] = -inf
+            if i == winner:
+                continue
+            # A part of the winning question is not a rival for the block; it is
+            # the other half of the same answer, and a block leading decisively
+            # towards 3(a) is not evidence against 3(b).
+            if _is_part_of_the_same_question(questions[winner], questions[i], blocks[j]):
+                continue
+            matrix[i][j] = -inf
 
     return matrix
 
@@ -1023,6 +1062,38 @@ def _semantic(question: Question, block: AnswerBlock, similarity: Similarity) ->
         # against a gap — leaving a question answered by a drawing unanswered.
         return 0.25
     return similarity.score(question.text, block.text)
+
+
+def _is_part_of_the_same_question(
+    owner: Question, candidate: Question, block: AnswerBlock
+) -> bool:
+    """Whether these two are parts of one numbered question — 11 (a) and 11 (b).
+
+    Stricter than `_may_share`, deliberately. That one calls two questions
+    siblings when their labels have the same parent, and the parent of every
+    top-level question is the same empty root, so under it question 1, question 4
+    and question 6 are all siblings. In the alignment proper that is held in check
+    by what sharing costs and by the length evidence supporting it. Used to excuse
+    a question from a rule it is not held in check by anything, and an earlier
+    version of this let a block about refraction through to "the chemical formula
+    of washing soda" and "the tissue that transports water in a plant".
+
+    So this asks the narrower question: are they parts of one question, rather
+    than merely two questions at the same level.
+    """
+    if block.is_text_free or not block.text.strip():
+        return False
+
+    owner_path, candidate_path = tuple(owner.path), tuple(candidate.path)
+    if len(owner_path) < 2 and len(candidate_path) < 2:
+        # Two whole questions. Answering both in one run is possible and is what
+        # `share` is for; it is not a reason to exempt either from a floor.
+        return False
+    if owner_path[:-1] and owner_path[:-1] == candidate_path[:-1]:
+        return True
+    # A part and the question it belongs to.
+    shorter, longer = sorted((owner_path, candidate_path), key=len)
+    return len(longer) > len(shorter) and longer[: len(shorter)] == shorter
 
 
 def _may_share(owner: Question, candidate: Question, block: AnswerBlock) -> bool:

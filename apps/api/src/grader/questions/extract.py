@@ -263,22 +263,40 @@ def extract(index: LineIndex) -> QuestionPaper:
 #: question 1:" is a heading, and the difference between them is not structural: it
 #: is that one is self-contained and the other is meaningless without its parts.
 _POINTS_AT_ITS_PARTS = re.compile(
-    r"\b(?:the following|both parts?|all parts?|each part|the parts? below|"
-    r"these questions?|the questions? below)\b",
+    r"\b(?:the following"
+    r"|both parts?|all parts?|each part"
+    r"|the (?:parts?|questions?)\s+(?:below|that follow|which follow|given below)"
+    r"|these questions?"
+    r")\b",
     re.IGNORECASE,
 )
+
+#: A heading tells the student to answer what comes next. A task merely mentions
+#: it. This is what stands in for the colon when a paper does not use one.
+_INVITES_ANSWERS = re.compile(r"\b(?:answer|attempt|respond to)\b", re.IGNORECASE)
 
 
 def reads_as_a_heading(text: str) -> bool:
     """Whether a question's text introduces other questions rather than asking one.
 
-    Both conditions are needed. The colon alone would catch "Balance the following
-    equation:", which is a question. The phrase alone would catch "Answer any two
-    of the following questions", which is rubric handled elsewhere and never a
-    question in the first place.
+    Pointing at the parts is necessary but never sufficient. "Balance the following
+    equation" points at something and is still a question, so a second signal has
+    to say that the parts are what gets answered.
+
+    A colon is one such signal. Requiring it was the whole rule, and a geography
+    paper ended the sentence instead: "Study the sketch of the river below and
+    answer the parts that follow." stayed an answerable question, sat in the
+    candidate list beside its own (i) and (ii), and took the answer to (ii) — which
+    was then reported uncertain on a question the student had answered in full.
+
+    The invitation is the other signal, and the more direct one: a heading asks the
+    student to *answer* what follows. "Balance the following equation." does not,
+    and stays a question whichever mark ends it.
     """
     stripped = text.strip()
-    return stripped.endswith(":") and _POINTS_AT_ITS_PARTS.search(stripped) is not None
+    if _POINTS_AT_ITS_PARTS.search(stripped) is None:
+        return False
+    return stripped.endswith(":") or _INVITES_ANSWERS.search(stripped) is not None
 
 
 def mark_stems(questions: list[Question]) -> list[Question]:

@@ -813,6 +813,59 @@ class TestSubPartsAnsweredInOneRun:
             "the student answered it in the same breath as (a)"
         )
 
+    def test_a_part_barely_touched_by_the_run_is_still_shared(self) -> None:
+        """The second half of a merged answer can be a small part of the block.
+
+        The science script's 11(a) and 11(b) share because the run scores 0.752
+        against (b) — high enough to clear every gate on the way. A history script
+        does the same thing and does not: the student answers Q.3(a) and Q.3(b) in
+        one forty-four-word run, and because most of it is (a)'s answer the whole
+        block scores only 0.195 against (b), under the 0.30 that marks a pair as
+        unrelated. So (b) was thrown out before sharing could be considered, and a
+        question the student had answered came back uncertain.
+
+        The floor is there to reject writing from somebody else's paper. A sub-part
+        of the question this block plainly answers is not that, and the evidence
+        that they belong together is the paper's own numbering rather than
+        anything the scorer can see. What decides whether the run really covers
+        both is `share` and the length behind it, as before.
+        """
+        run = (
+            "Balance of power means no single country in Europe is strong enough "
+            "to dominate the others, so they keep each other in check. It broke "
+            "down when Germany built a large navy and the countries formed into "
+            "two alliance blocks instead of many."
+        )
+        part_a = q("3/a", "Q.3 (a)", "What is meant by the term 'balance of power'?",
+                   0, ["3", "a"], marks=2)
+        part_b = q("3/b", "Q.3 (b)", "Give one example of it breaking down before 1914.",
+                   1, ["3", "b"], marks=2)
+        other = q("5", "Q.5", "Assess how far the Treaty of Versailles was "
+                  "responsible for later instability in Europe.", 2, ["5"], marks=4)
+
+        #: Measured on the deployed service.
+        measured = {part_a.text: 0.527, part_b.text: 0.195, other.text: 0.313}
+
+        class Measured:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, _block_text: str) -> float:
+                return measured.get(question_text, 0.0)
+
+        result = resolve(
+            paper([part_a, part_b, other]),
+            [block("blk:004", run, y0=0.10, line_ids=["as:0004"])],
+            [],
+            [],
+            similarity=Measured(),
+        )
+        status = {m.qid: m.status for m in result.mappings}
+        assert status["3/a"] is AnswerStatus.ANSWERED
+        assert status["3/b"] is AnswerStatus.ANSWERED, "answered in the same run as (a)"
+        assert status["5"] is not AnswerStatus.ANSWERED, (
+            "an unrelated question must not pick the run up as well"
+        )
+
     def test_two_whole_questions_are_not_parts_of_one(self) -> None:
         """The exemption is for parts of a question, not for questions.
 

@@ -975,6 +975,32 @@ class TestStems:
     @pytest.mark.parametrize(
         "text",
         [
+            # Verbatim from a geography paper. No colon — the sentence simply ends
+            # — and it introduces (i) and (ii) as plainly as any colon does.
+            "Study the sketch of the river below and answer the parts that follow.",
+            "Study the map below and answer the questions that follow.",
+            "Read the passage and answer the questions which follow.",
+            "Answer the parts given below.",
+        ],
+    )
+    def test_a_heading_may_end_in_a_full_stop(self, text) -> None:
+        """A stem does not have to announce itself with a colon.
+
+        The colon was required, and a real geography paper ended the sentence
+        instead. So "2. Study the sketch of the river below and answer the parts
+        that follow." stayed an answerable question, sat in the candidate list
+        beside its own sub-parts, and took the answer to 2(ii) — which was then
+        reported uncertain on a question the student had answered in full.
+
+        What replaces the colon is the invitation: a heading tells the student to
+        *answer* what follows. A task that merely mentions "the following" is
+        still a task.
+        """
+        assert reads_as_a_heading(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
             # The case that forced the wording check. No marks of its own — they
             # sit on its (a) and (b) — but it is the task the student answered.
             "Write a program that reads an array of 0s and 1s and prints the length "
@@ -982,6 +1008,12 @@ class TestStems:
             "Explain the working of an electric motor.",
             # A colon, but nothing pointing at parts below it.
             "State Ohm's law and write its formula:",
+            # No colon and no invitation to answer anything. The phrase alone must
+            # not be enough, or every task mentioning what comes next becomes a
+            # heading and the question it asks disappears.
+            "Balance the following equation.",
+            "Draw the circuit shown in the following diagram.",
+            "Compare the two accounts given below.",
         ],
     )
     def test_does_not_mistake_a_question_for_a_heading(self, text) -> None:
