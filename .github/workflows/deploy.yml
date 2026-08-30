@@ -112,6 +112,13 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
+          # The passcode in front of the origin. A secret rather than a var
+          # because vars are readable by anyone with access to the repository's
+          # settings, and this one is meant to be handed only to testers.
+          #
+          # `deploy.sh` refuses to release without it, so a missing secret is a
+          # red build rather than an origin quietly open to the internet.
+          ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
           # Present means the task gets a tunnel sidecar and a stable HTTPS
           # hostname; absent means it does not, and the task is unchanged.
           TAILSCALE_SECRET_ARN: ${{ vars.TAILSCALE_SECRET_ARN }}

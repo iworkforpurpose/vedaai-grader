@@ -386,6 +386,11 @@ register_task() {
     secrets=$(IFS=,; echo "${entries[*]}")
   fi
 
+  # ACCESS_CODE rides in the plain task environment rather than Secrets Manager.
+  # It is a door code for a test deployment — it spends nothing and reaches
+  # nothing on its own — and anybody who can read a task definition already has
+  # the account. Injecting it as a secret would add a grant and a rotation path
+  # for a string whose whole purpose is being handed to people.
   cat > /tmp/${APP}-task.json <<JSON
 {
   "family": "${APP}",
@@ -410,7 +415,10 @@ register_task() {
         { "name": "SUBMISSIONS_TABLE", "value": "${TABLE}" },
         { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
         { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
-        { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" }
+        { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" },
+        { "name": "ACCESS_CODE", "value": "${ACCESS_CODE:-}" },
+        { "name": "RATE_LIMIT_INGEST_PER_HOUR", "value": "${RATE_LIMIT_INGEST_PER_HOUR:-30}" },
+        { "name": "RATE_LIMIT_REMARK_PER_HOUR", "value": "${RATE_LIMIT_REMARK_PER_HOUR:-120}" }
       ],
       "secrets": [${secrets}],
       "logConfiguration": {
@@ -437,7 +445,39 @@ JSON
     --region "${REGION}" --query 'taskDefinition.taskDefinitionArn' --output text
 }
 
+# A deployment with no access code serves every stored script to anyone who finds
+# the address, and does it silently — which is the one way a gate is worse than no
+# gate, because it is believed. So this refuses rather than shipping an open
+# origin, and says what to do about it.
+#
+# ALLOW_OPEN_ORIGIN=1 is the deliberate way past, for a deployment that is meant
+# to be open. Typing it is the point.
+require_access_code() {
+  if [ -n "${ACCESS_CODE:-}" ] || [ "${ALLOW_OPEN_ORIGIN:-}" = "1" ]; then
+    return 0
+  fi
+  cat >&2 <<'MSG'
+
+  ACCESS_CODE is not set, so this would deploy an origin anyone can read.
+
+  Every submission holds a real student's handwriting. Set a code and try again:
+
+      # locally
+      echo "ACCESS_CODE=$(openssl rand -hex 8)" >> .env
+
+      # for CI, which is what actually deploys
+      gh secret set ACCESS_CODE
+
+  Or, if this deployment is meant to be public, say so explicitly:
+
+      ALLOW_OPEN_ORIGIN=1 bash deploy/deploy.sh release
+
+MSG
+  exit 1
+}
+
 release() {
+  require_access_code
   release_image
   local arn
   arn="$(register_task)"

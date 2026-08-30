@@ -2459,3 +2459,73 @@ body::before {
   white-space: nowrap;
 }
 
+
+/* ══ access gate ═══════════════════════════════════════════════════════════
+ *
+ * The one screen shown to somebody who is not in yet. Deliberately plain: it is
+ * a door, and a door that advertises what is behind it is worse than one that
+ * does not.
+ */
+.unlock {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background: var(--page);
+}
+
+.unlock-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: min(360px, 100%);
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(48 48 48 / 0.06), 0 12px 32px rgb(48 48 48 / 0.08);
+}
+
+.unlock-title {
+  margin: 0;
+  color: var(--title);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.unlock-note {
+  margin: 0 0 var(--sp-2);
+  color: var(--body);
+  font-size: var(--fs-sm);
+}
+
+.unlock-input {
+  min-height: 44px;
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--title);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+
+.unlock-input[aria-invalid="true"] {
+  border-color: var(--accent);
+}
+
+/*
+ * Height held whether or not there is a message, so the button does not jump
+ * up the card the moment a code is refused.
+ */
+.unlock-error {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+
+.unlock-submit {
+  justify-content: center;
+  padding-left: 20px;
+}

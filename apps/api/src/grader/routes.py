@@ -15,7 +15,7 @@ import os
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from vedaai_contracts import (
     DocumentKind,
@@ -30,11 +30,61 @@ from .persistence import ConcurrentUpdate
 from .render import UnsupportedDocument
 from .storage import AnyPageStore, get_page_store
 from .store import SubmissionStore, get_store
+from .throttle import Throttle
 
 router = APIRouter()
 
 StoreDep = Annotated[SubmissionStore, Depends(get_store)]
 PageStoreDep = Annotated[AnyPageStore, Depends(get_page_store)]
+
+
+def _limit_from_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+#: Submissions one caller may start in an hour.
+#:
+#: Ingest is the expensive request — every page rendered and recognised, the paper
+#: and script embedded, a marking call per question — so this is the number that
+#: decides what a stranger with the URL can cost. Generous enough that a teacher
+#: working through a class does not meet it, low enough that a loop does.
+_INGEST = Throttle(limit=_limit_from_env("RATE_LIMIT_INGEST_PER_HOUR", 30), window=3600.0)
+
+#: Re-marks per hour. Higher, because it is what a teacher does after correcting
+#: a mapping and being stopped mid-review is worse than the cost it saves.
+_REMARK = Throttle(limit=_limit_from_env("RATE_LIMIT_REMARK_PER_HOUR", 120), window=3600.0)
+
+
+def _caller(request: Request) -> str:
+    """Who to count this request against.
+
+    The web layer is the only thing that can reach this service — it proxies to
+    loopback inside the same container — so the header it sets is as trustworthy
+    as the process itself. Falling back to the peer address would otherwise count
+    every caller as the proxy and make one person's loop everybody's refusal.
+    """
+    forwarded = request.headers.get("x-client-key") or request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    client = request.client
+    return client.host if client else "unknown"
+
+
+def _enforce(throttle: Throttle, request: Request, *, doing: str) -> None:
+    wait = throttle.check(_caller(request))
+    if wait is None:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail=(
+            f"Too many {doing} from this address. "
+            f"Try again in about {max(1, round(wait / 60))} minute(s)."
+        ),
+        headers={"Retry-After": str(max(1, int(wait)))},
+    )
 
 
 @router.post("/uploads", tags=["submissions"])
@@ -72,6 +122,7 @@ def start_upload(
 
 @router.post("/submissions", response_model=Submission, tags=["submissions"])
 async def create_submission(
+    request: Request,
     store: StoreDep,
     page_store: PageStoreDep,
     question_paper: Annotated[
@@ -107,6 +158,10 @@ async def create_submission(
     The upload is still validated synchronously, so a file that cannot be read is
     still a 422 on this request rather than a job that fails later.
     """
+    # Checked before anything is read, because the cost this guards against is
+    # incurred by accepting the work rather than by validating the request.
+    _enforce(_INGEST, request, doing="submissions")
+
     # Either the files themselves or the keys they were uploaded to, never both.
     #
     # Two ways in rather than one because they answer different situations: a
@@ -398,7 +453,9 @@ def reassign_answer(
     response_model=Submission,
     tags=["submissions"],
 )
-async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
+async def grade_submission(
+    request: Request, submission_id: str, store: StoreDep
+) -> Submission:
     """Propose marks for a submission, citing the lines behind each one.
 
     Ingest now marks on its own (see ``AUTO_MARK``), so this endpoint is the
@@ -417,6 +474,8 @@ async def grade_submission(submission_id: str, store: StoreDep) -> Submission:
     offering none: a plausible wrong mark is the error a teacher is least likely
     to catch.
     """
+    _enforce(_REMARK, request, doing="re-marks")
+
     submission = store.get(submission_id)
     if submission is None:
         raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")

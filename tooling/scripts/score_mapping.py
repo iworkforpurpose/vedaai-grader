@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from access import unlock  # noqa: E402  - same directory
 
 #: Which question the writing starting on each page answers.
 #:
@@ -50,6 +55,7 @@ def main() -> int:
     parser.add_argument("run", type=Path, help="A run file from rerun_corpus.py")
     parser.add_argument("--base", default="http://127.0.0.1:8000")
     args = parser.parse_args()
+    unlock(args.base)
 
     prefix = api_prefix(args.base)
     run = json.loads(args.run.read_text())

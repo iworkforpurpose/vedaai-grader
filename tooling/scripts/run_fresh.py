@@ -16,7 +16,8 @@ import json
 import urllib.request
 from pathlib import Path
 
-from build_corpus import LIVE  # noqa: E402  - same directory
+from access import unlock  # noqa: E402  - same directory
+from build_corpus import LIVE  # noqa: E402
 from rerun_corpus import api_prefix, submit, wait  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +71,7 @@ def main() -> int:
     parser.add_argument("--base", default=LIVE)
     parser.add_argument("--only", default=None)
     args = parser.parse_args()
+    unlock(args.base)
 
     names = [args.only] if args.only else sorted(p.name for p in FRESH.iterdir() if p.is_dir())
     for name in names:
