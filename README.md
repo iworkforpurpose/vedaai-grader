@@ -78,11 +78,11 @@ On a synthetic golden set that generates the graded edge cases in volume:
 |---|---|
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
-| Answer placement accuracy | 97.7% |
+| Answer placement accuracy | 98.5% |
 | Highlight covers the answer region (IoU) | 0.730 |
 | Highlight is ink rather than paper (IoU) | 0.524 |
 | Written labels reaching their own line | 100% |
-| Blanks not called blank | 2.3% |
+| Blanks not called blank | 1.5% |
 | **False "unanswered" rate** | **0.0%** |
 
 Placement and highlight quality are reported apart because they move for unrelated
