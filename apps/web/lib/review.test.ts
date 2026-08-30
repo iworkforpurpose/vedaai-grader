@@ -18,6 +18,7 @@ import {
   movableBlocks,
   orphanHighlightByPage,
   questionAtPoint,
+  splitLabel,
   scoreTone,
   STATUS,
   summarize,
@@ -804,5 +805,44 @@ describe("reassignment helpers", () => {
   it("reports a mapping the teacher set by hand", () => {
     expect(isTeacherPlaced(withOrphans(), "A/1")).toBe(true);
     expect(isTeacherPlaced(withOrphans(), "A/2")).toBe(false);
+  });
+});
+
+describe("splitLabel", () => {
+  it("puts a plain number in the circle", () => {
+    expect(splitLabel("4.", ["4"])).toEqual({ badge: "4", sub: null });
+  });
+
+  it("splits a printed sub-part into the circle and the column beside it", () => {
+    expect(splitLabel("11 (a)", ["11", "a"])).toEqual({ badge: "11", sub: "a." });
+  });
+
+  /*
+   * The case a comprehension paper produces and the one the earlier version got
+   * wrong. The paper prints "(i)" under a stem, so the label carries no number —
+   * and the circle showed a lone "i", which tells a teacher scanning the list
+   * nothing about which question it belongs to.
+   *
+   * The number is not invented: extraction already worked out that this is part
+   * of question 3 and recorded it in the path. The card is where that becomes
+   * visible.
+   */
+  it("recovers the parent number for a sub-part printed on its own", () => {
+    expect(splitLabel("(i)", ["3", "i"])).toEqual({ badge: "3", sub: "i." });
+  });
+
+  it("still shows the token when there is no parent to recover", () => {
+    expect(splitLabel("(i)", ["i"])).toEqual({ badge: "i", sub: null });
+  });
+
+  it("keeps the printed number when the two disagree", () => {
+    // What the paper printed wins for the number a teacher reads back to a
+    // student. The path only fills a gap; it never overrules.
+    expect(splitLabel("11 (a)", ["9", "a"])).toEqual({ badge: "11", sub: "a." });
+  });
+
+  it("does not clip a label it cannot parse", () => {
+    const { badge } = splitLabel("Question the First!!", ["1"]);
+    expect(badge.length).toBeLessThanOrEqual(3);
   });
 });

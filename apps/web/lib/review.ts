@@ -504,3 +504,51 @@ export function feedbackFor(grade: QuestionGrade | undefined): string | null {
   const comment = grade.rubric_points.find((point) => point.comment)?.comment;
   return comment ?? null;
 }
+
+
+/**
+ * Split a printed label into the badge and the sub-part column.
+ *
+ * The frame puts the question number in a circle and any sub-part letter in its
+ * own column beside it, so labels stay aligned down the list however deep they
+ * nest. Three shapes occur in real papers and all three appear in the data:
+ *
+ *   "4."        -> badge 4
+ *   "11 (a)"    -> badge 11, sub a
+ *   "(i)"       -> badge 3, sub i   — a sub-part printed on its own
+ *
+ * The third is why this takes a path as well as a label. A comprehension paper
+ * prints its sub-parts as a bare "(i)" under a stem, so the label carries no
+ * number and the circle showed a lone "i" — which tells a teacher scanning the
+ * list nothing about which question it belongs to. The number is not invented:
+ * extraction already worked out that this is part of question 3 and wrote it
+ * into the path. This is where that becomes visible.
+ *
+ * What the paper printed always wins for the number. The path fills a gap and
+ * never overrules, because the number a teacher reads back to a student has to
+ * be the one on the page in front of them.
+ */
+export function splitLabel(
+  labelRaw: string,
+  path: readonly string[] = [],
+): { badge: string; sub: string | null } {
+  const raw = labelRaw.trim();
+
+  const numbered = /^(\d+)\s*[.)]?\s*(?:\(\s*([A-Za-z]+)\s*\)|([A-Za-z]+)[.)])?\s*$/.exec(raw);
+  if (numbered) {
+    const letter = numbered[2] ?? numbered[3];
+    return { badge: numbered[1] ?? "?", sub: letter ? `${letter}.` : null };
+  }
+
+  // A bare sub-part: "(i)", "(a)", "ii." — nothing printed says which question
+  // it belongs to, so the path is asked.
+  const bare = /^\(?\s*([A-Za-z0-9]{1,4})\s*\)?\s*[.)]?$/.exec(raw);
+  if (bare) {
+    const token = bare[1] ?? "?";
+    const parent = path.length > 1 ? path[0] : undefined;
+    return parent ? { badge: parent, sub: `${token}.` } : { badge: token, sub: null };
+  }
+
+  // Anything else: keep it short enough to fit the circle rather than clip it.
+  return { badge: raw.replace(/[^A-Za-z0-9]/g, "").slice(0, 3) || "?", sub: null };
+}
