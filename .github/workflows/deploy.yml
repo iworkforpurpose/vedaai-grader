@@ -160,7 +160,15 @@ jobs:
           # The job summary, because "what exactly and when exactly did I deploy" is
           # the question this whole pipeline exists to answer.
           stable="$(bash deploy/gateway.sh url)"
-          scode="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
+          # Health rather than the front page. The origin is behind a passcode, so
+          # `/` answers 307 to the unlock screen — which is the gate working, and
+          # would fail a check for 200. Health is deliberately open (the container
+          # probe needs it) and proves the same two things this step is for: the
+          # task is serving, and the gateway points at it.
+          scode="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/api/health" || echo 000)"
+          # Checked separately, because "the gate is on" is its own claim and the
+          # cost of it being quietly off is every stored script.
+          gate="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
 
           {
             echo "### Deployed"
@@ -172,6 +180,7 @@ jobs:
             echo "| image | \`${image##*/}\` |"
             echo "| revision | \`${rev##*/}\` |"
             echo "| via gateway | HTTP ${scode} |"
+  echo "| front page | HTTP ${gate} $([ "${gate}" = "307" ] && echo "(behind the access code)" || echo "(OPEN)") |"
             echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
