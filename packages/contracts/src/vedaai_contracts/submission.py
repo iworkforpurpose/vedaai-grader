@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, computed_field
@@ -58,6 +59,17 @@ class Submission(BaseModel):
         "missing pages, suppressed absence claims, low transcription confidence.",
     )
     error: str | None = None
+
+    #: When this was last written. Stamped by the store on every save.
+    #:
+    #: Here rather than left to the persistence layer because it answers a
+    #: question about the submission and not about the row: how long it has been
+    #: since anything happened to it. Ingest runs in a background task, and the
+    #: code around it turns every exception it can catch into a stored failure —
+    #: but not the process going away. A deploy, an out-of-memory kill or a
+    #: replaced host leaves a submission at `processing` with nobody to move it,
+    #: and this is what lets a reader tell that apart from one still working.
+    updated_at: datetime | None = None
 
     @computed_field
     @property

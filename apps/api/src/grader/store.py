@@ -25,9 +25,11 @@ idle between stages instead of spinning.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
-from vedaai_contracts import ProgressEvent, Stage, Submission
+from vedaai_contracts import ProgressEvent, Stage, Submission, SubmissionStatus
 
 from .persistence import Persistence, default_persistence
 
@@ -44,6 +46,16 @@ class _Entry:
     #: hand: it is the answer to "what did I base this edit on?", which is the
     #: only question a conditional write asks.
     version: int | None = None
+
+
+#: How long a submission may sit at `processing` before it is treated as lost.
+#:
+#: Well past what ingest takes. The slowest document in the corpus — a five-page
+#: script through recognition, alignment and a marking call per question — runs
+#: around two minutes, so this is an order of magnitude of headroom. Calling a
+#: working submission abandoned would be the same bug pointed the other way, and
+#: the cost of waiting a little longer to say so is nothing.
+STALE_AFTER = timedelta(minutes=20)
 
 
 class SubmissionStore:
@@ -69,6 +81,10 @@ class SubmissionStore:
         no restart, will ever see — a difference that shows up much later as a
         submission that vanished, with nothing in the logs near the cause.
         """
+        # Stamped here because this is the one place every write passes through,
+        # so nothing can store a submission without saying when.
+        submission.updated_at = datetime.now(UTC)
+
         entry = self._entries.get(submission.submission_id)
         version = self._persistence.save(
             submission, expect_version=entry.version if entry else None
@@ -84,7 +100,7 @@ class SubmissionStore:
     def get(self, submission_id: str) -> Submission | None:
         entry = self._entries.get(submission_id)
         if entry is not None:
-            return entry.submission
+            return self._settled(entry.submission)
 
         # A miss is not necessarily absence any more: it is also every submission
         # made before the last restart.
@@ -94,7 +110,36 @@ class SubmissionStore:
         self._entries[submission_id] = _Entry(
             submission=stored.submission, version=stored.version
         )
-        return stored.submission
+        return self._settled(stored.submission)
+
+    def _settled(self, submission: Submission) -> Submission:
+        """The submission, with a lost one reported as lost.
+
+        Decided when somebody asks rather than by a sweeper on a schedule. The
+        screen waiting on this is the one a person is looking at, so the moment
+        the answer is wanted is the moment to work it out — and a scheduler is a
+        second thing to deploy, keep running and notice the failure of.
+
+        Written back, not merely reported. Otherwise every reader recomputes it,
+        and anything reading the table directly still finds a submission claiming
+        to be at work. The write is best-effort: losing the race to a worker that
+        turned out to be alive after all means it is not abandoned, which is the
+        outcome anybody would want.
+        """
+        if submission.status not in {SubmissionStatus.PENDING, SubmissionStatus.PROCESSING}:
+            return submission
+        stamped = submission.updated_at
+        if stamped is None or datetime.now(UTC) - stamped < STALE_AFTER:
+            return submission
+
+        submission.status = SubmissionStatus.FAILED
+        submission.error = (
+            "This submission did not finish. The service was interrupted while "
+            "reading it — most likely a restart. Upload the two documents again."
+        )
+        with contextlib.suppress(Exception):  # see the note above
+            self.put(submission)
+        return submission
 
     def require(self, submission_id: str) -> Submission:
         submission = self.get(submission_id)

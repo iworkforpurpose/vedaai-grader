@@ -265,11 +265,18 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   const allExpanded = expanded.size >= rows.length && rows.length > 0;
 
   if (submission.status === "failed") {
+    /*
+     * `error` before `warnings`, because it is the more specific field and the
+     * one a submission fills in when it knows exactly what went wrong. A
+     * submission the service was restarted mid-read says so there; without this
+     * it fell through to the generic card and a tester saw "could not be read"
+     * about a document that was perfectly readable.
+     */
     return (
       <LoadingStage
         title="This one could not be read"
         note="Nothing was kept — try uploading again."
-        detail={submission.warnings[0]}
+        detail={submission.error ?? submission.warnings[0]}
       />
     );
   }
