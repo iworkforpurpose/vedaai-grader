@@ -164,9 +164,18 @@ export function ShellSkeleton({
 export function UploadSkeleton(): React.JSX.Element {
   return (
     <div className="upload sk-screen">
+      {/*
+        * Viewport units, not percentages.
+        *
+        * `.upload` centres its children, so `.upload-heading` and `.actions` are
+        * shrink-to-fit: their width comes from their contents. A block asking for
+        * 90% of a parent that is measuring itself from the block is circular, and
+        * it resolves to zero -- the two lines above the hero were rendering at no
+        * width at all, while the hero itself, sized in vw, showed up fine.
+        */}
       <div className="upload-heading">
-        <Block w="min(560px, 90%)" h="var(--fs-title)" radius="var(--r-md)" />
-        <Block w="min(240px, 55%)" h="var(--fs-lg)" />
+        <Block w="min(560px, 74vw)" h="var(--fs-title)" radius="var(--r-md)" />
+        <Block w="min(240px, 44vw)" h="var(--fs-lg)" />
       </div>
 
       {/* The hero is a circle at the frame's size, so the drop zones below it land
@@ -182,9 +191,11 @@ export function UploadSkeleton(): React.JSX.Element {
         </div>
       </div>
 
+      {/* Same trap: `.actions` is shrink-to-fit too. The button was fine at a
+          fixed 161px; the caption beneath it was collapsing. */}
       <div className="actions">
         <Block w="161px" h="44px" radius="var(--r-pill)" />
-        <Block w="min(320px, 80%)" h="var(--fs-sm)" />
+        <Block w="min(320px, 62vw)" h="var(--fs-sm)" />
       </div>
     </div>
   );
