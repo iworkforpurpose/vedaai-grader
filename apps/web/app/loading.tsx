@@ -1,12 +1,18 @@
+import { AppShell } from "@/components/AppShell";
 import { UploadSkeleton } from "@/components/Skeleton";
 
 /**
- * Shown while the upload route is being rendered on the server.
+ * Shown while the upload route renders on the server.
  *
- * App Router serves this for both entrances: a hard refresh, and a client-side
- * navigation back from a review. The route pairs it with a floor in `pacing`, so
- * it is always on screen long enough to be read rather than seen.
+ * The shell is the real one. The rail and the top bar do not depend on anything
+ * being fetched, so drawing placeholder versions of them would invent a second
+ * layout to keep in step with the first — and the seam between the two is exactly
+ * the misalignment that makes a skeleton look fake. Only the content is blocks.
  */
 export default function Loading(): React.JSX.Element {
-  return <UploadSkeleton />;
+  return (
+    <AppShell crumb="Exams">
+      <UploadSkeleton />
+    </AppShell>
+  );
 }
