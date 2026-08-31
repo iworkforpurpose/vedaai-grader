@@ -103,7 +103,7 @@
   --font-ui: var(--font-display), -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --font-alt: var(--font-sans), var(--font-display), sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: var(--font-mono-face), ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Frame values are the upper bound; the lower is the phone frame. */
   --fs-xs: 0.75rem; /* 12 */
@@ -1643,7 +1643,7 @@ body::before {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
+  gap: var(--sp-2);
   /* Room for the focus ring and the selected card's 2px border. */
   padding: 2px;
 }
@@ -1651,8 +1651,8 @@ body::before {
 .q-card {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
-  padding: var(--sp-3);
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
   border: 2px solid transparent;
   border-left-width: 3px;
   border-radius: var(--r-lg);
@@ -1708,15 +1708,15 @@ body::before {
    which is how the frame marks the selection, alongside the card border. */
 .q-num {
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   border: 1px solid rgb(255 255 255 / 0.25);
   background: rgb(43 43 43 / 0.8);
   color: #fff;
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: 800;
   line-height: 1.2;
 }
@@ -2757,4 +2757,19 @@ body::before {
   .score {
     corner-shape: squircle;
   }
+}
+
+/* ══ numerals ══════════════════════════════════════════════════════════════
+ *
+ * Proportional figures give 1 a narrower advance than 8, so a counter ticking
+ * from 100% to 90% reflows the row it sits in and a count going from 9 to 10
+ * nudges everything after it. Every number on this screen changes while being
+ * read, which is the case tabular figures exist for.
+ */
+.tabular,
+.tool-value,
+.q-hint,
+.q-sub,
+.score {
+  font-variant-numeric: tabular-nums;
 }

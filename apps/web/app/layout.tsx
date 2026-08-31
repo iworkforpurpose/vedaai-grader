@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Inter } from "next/font/google";
+import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 /**
@@ -27,6 +27,24 @@ const inter = Inter({
   weight: ["400", "500", "600"],
 });
 
+/**
+ * The numerals.
+ *
+ * `--font-mono` used to resolve to a system stack, so the counts a teacher reads
+ * -- how many answered, the zoom level, which page of how many -- rendered in a
+ * different typeface on every machine, and on the ones without SF Mono in a
+ * proportional fallback whose digits changed width as they changed value.
+ *
+ * Loaded the same way as the other two, so it is still self-hosted at build time
+ * and still not a runtime dependency on anyone else's CDN.
+ */
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-mono-face",
+  weight: ["400", "500"],
+});
+
 export const metadata: Metadata = {
   title: "Exams · VedaAI",
   description:
@@ -37,7 +55,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
   return (
-    <html lang="en" className={`${bricolage.variable} ${inter.variable}`}>
+    <html lang="en" className={`${bricolage.variable} ${inter.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );
