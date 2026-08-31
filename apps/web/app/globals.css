@@ -3036,3 +3036,247 @@ button {
 .rail-scrim:focus-visible {
   outline: none;
 }
+
+/* ══ skeletons ═════════════════════════════════════════════════════════════
+ *
+ * The shapes a screen wears while it is arriving. Geometry mirrors the real
+ * layout -- rail width, card height, pane split -- because a skeleton whose boxes
+ * move when the content lands is worse than no skeleton at all.
+ */
+
+.sk {
+  display: block;
+  background: var(--row-active);
+  /* Not pure grey: a wash with a hint of the page's warmth reads as a surface
+     waiting to be filled rather than as a hole in the layout. */
+  background-image: linear-gradient(
+    90deg,
+    var(--row-active) 0%,
+    var(--chip) 40%,
+    var(--surface) 50%,
+    var(--chip) 60%,
+    var(--row-active) 100%
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  flex: none;
+}
+
+/*
+ * The sweep only runs where motion is welcome.
+ *
+ * Under `reduce` the blocks hold their flat wash, which still communicates the
+ * layout -- the shimmer is what says "working", and a reader who has asked for
+ * less motion is told that by the aria-busy on the region instead.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .sk {
+    animation: sk-sweep 1.6s var(--ease) infinite;
+  }
+}
+
+@keyframes sk-sweep {
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.sk-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-3);
+  min-height: 100dvh;
+  padding: var(--page-pad);
+}
+
+.sk-rail {
+  display: none;
+}
+
+.sk-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--topbar-h);
+  padding: 0 var(--sp-2) 0 var(--sp-5);
+  border-radius: var(--r-lg);
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--e2);
+}
+
+.sk-spacer {
+  flex: 1;
+}
+
+.sk-main {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sk-upload {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-6) var(--sp-4);
+  border-radius: var(--r-2xl);
+}
+
+.sk-hero {
+  border-radius: 50%;
+}
+
+.sk-dropzones {
+  display: grid;
+  gap: var(--sp-4);
+  width: min(100%, var(--content-max));
+  padding: var(--sp-3);
+  border-radius: var(--r-xl);
+  background: var(--surface-veil);
+}
+
+.sk-panes {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--sp-3);
+}
+
+.sk-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-radius: 20px;
+  border: 1px solid var(--hairline);
+  background: var(--surface-veil);
+  box-shadow: var(--e2);
+}
+
+.sk-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.sk-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.sk-card {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--e1), inset 0 1px 0 oklch(100% 0 0 / 0.8);
+}
+
+.sk-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.sk-sheet {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--e2);
+  overflow: hidden;
+}
+
+.sk-sheet-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-glass);
+}
+
+.sk-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-6) var(--sp-5);
+  background: var(--chip);
+}
+
+@supports (corner-shape: squircle) {
+  .sk-card,
+  .sk-pane,
+  .sk-sheet {
+    corner-shape: squircle;
+  }
+}
+
+/* From the rail breakpoint the shell matches the real two-column layout. */
+@media (min-width: 1024px) {
+  .sk-shell {
+    grid-template-columns: var(--rail-w) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .sk-shell[data-collapsed="true"] {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .sk-rail {
+    grid-row: 1 / span 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-6);
+    height: calc(100dvh - (var(--page-pad) * 2));
+    padding: var(--sp-5);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--e2);
+  }
+
+  .sk-rail-narrow {
+    align-items: center;
+    padding: var(--sp-4) var(--sp-2);
+  }
+
+  .sk-rail-head {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+
+  .sk-rail-menu {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .sk-rail-foot {
+    margin-top: auto;
+  }
+
+  .sk-panes {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 600px) {
+  .sk-dropzones {
+    grid-template-columns: 1fr 1fr;
+  }
+}
