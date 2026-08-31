@@ -3432,18 +3432,23 @@ button {
   }
 }
 
-/* ══ the click pulse ═══════════════════════════════════════════════════════
+/* ══ the click spark ═══════════════════════════════════════════════════════
  *
- * Acknowledgement, and nothing more. It sits in its own fixed layer above
- * everything and takes no pointer events, so it can decorate a click without ever
- * being able to intercept one -- which matters on the answer sheet, where a click
- * is a coordinate rather than a command.
+ * Four short strokes flicking outward from the pointer, measured off the VedaAI
+ * site rather than invented: the same four bearings on every click and at every
+ * position, travelling from about 16px out to 31px while shortening from 8px to
+ * 3px, over roughly a quarter of a second.
  *
- * Transform and opacity only, so each ring is composited and none of them touch
- * layout. That is what lets this run on every click in a list without competing
- * with the highlight animations for frames.
+ * The shortening is the part that matters. Four straight lines all growing
+ * outward reads as a cartoon starburst; four that shrink as they travel read as a
+ * spark, which is the difference between decoration and noise.
+ *
+ * Its own fixed layer, taking no pointer events, so it can decorate a click
+ * without ever being able to intercept one -- which matters on the answer sheet,
+ * where a click is a coordinate rather than a command. Transform and opacity
+ * only, so every stroke is composited and none of them touch layout.
  */
-.pulse-layer {
+.spark-layer {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -3451,26 +3456,61 @@ button {
   overflow: hidden;
 }
 
-.pulse {
+.spark {
   position: absolute;
-  width: 56px;
-  height: 56px;
-  /* Centred on the point rather than starting there: a ring that grows from a
-     corner reads as something arriving from off-screen. */
-  margin: -28px 0 0 -28px;
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  animation: click-pulse 520ms var(--ease-out) forwards;
+  width: 0;
+  height: 0;
 }
 
-@keyframes click-pulse {
+.spark i {
+  position: absolute;
+  /* Centred on the point, so the rotation below swings the stroke around the
+     click rather than around its own corner. */
+  left: -1px;
+  top: -1px;
+  display: block;
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--ink-hover);
+  transform-origin: 50% 50%;
+  animation: spark-fly 380ms cubic-bezier(0.22, 0.7, 0.36, 1) forwards;
+}
+
+/*
+ * `rotate` then `translateY` sends the stroke out along its own bearing, so one
+ * keyframe serves all four and each ray differs only by --a.
+ *
+ * The fallback is not decoration: --a is set per ray from the component, which
+ * the stylesheet cannot see, and a fallback is how a var() says so. The token
+ * test enforces that distinction and caught this without it.
+ */
+@keyframes spark-fly {
   from {
-    transform: scale(0.12);
-    opacity: 0.55;
+    transform: rotate(var(--a, 0deg)) translateY(-10px) scaleY(1);
+    opacity: 1;
+  }
+
+  /*
+   * The fade is held back deliberately.
+   *
+   * This first ran on --ease-out, which is cubic-bezier(0.16, 1, 0.3, 1) -- so
+   * front-loaded that at sixty milliseconds the stroke had already covered
+   * eighty-five per cent of its travel and most of its fade. Measuring it found
+   * nothing at the click point, because by the time any frame was captured there
+   * was nothing there. The reference is still plainly visible at ninety
+   * milliseconds and faint at two hundred and thirty.
+   *
+   * Retimed a second time after measuring this build: at 260ms the strokes had
+   * covered their whole travel by ninety milliseconds and were gone by a hundred
+   * and fifty, which is half the life of the thing being copied.
+   */
+  60% {
+    opacity: 0.85;
   }
 
   to {
-    transform: scale(1);
+    transform: rotate(var(--a, 0deg)) translateY(-32px) scaleY(0.34);
     opacity: 0;
   }
 }

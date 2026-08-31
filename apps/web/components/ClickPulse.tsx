@@ -3,54 +3,71 @@
 import { useEffect } from "react";
 
 /**
- * A ring that expands from wherever the pointer went down, and fades.
+ * Four short strokes that flick outward from the pointer and vanish.
  *
- * The whole point is that it costs nothing and is felt rather than noticed, so
- * everything here is arranged around not getting in the way.
+ * Measured off myvedaai.com rather than guessed at. Clicking the same point twice
+ * and two different points produced the same four bearings every time -- 211, 244,
+ * 278 and 312 degrees -- so this is a fixed fan rather than a random burst, and
+ * the fixedness is most of its character: it reads as one mark being stamped, not
+ * as particles being thrown.
  *
- * It draws into its own fixed layer with `pointer-events: none`, so it can never
- * intercept a click it is supposed to be decorating — which matters more here
- * than on most pages, because the answer sheet turns a click into a position and
- * would be broken by a stray overlay.
+ * Expressed here as CSS rotations, which measure from straight up rather than
+ * from the positive x-axis, so each is the measured bearing plus ninety.
  *
- * The nodes are created and removed directly rather than held in React state.
- * A click is not information the application needs; routing it through a render
- * would re-render the whole tree several times a second while somebody works
- * through a list of questions, which is exactly the frame budget the highlight
- * animations are trying to keep.
+ * The rest of the shape came from the same frames: the strokes travel from about
+ * sixteen pixels out to thirty-one, and *shorten* as they go -- eight pixels, then
+ * five, then three -- which is what stops a fan of straight lines reading as a
+ * cartoon starburst. The whole thing is over in about a quarter of a second.
  *
- * Reduced motion turns it off entirely rather than shortening it. An expanding
- * ring has no useful still frame — it is decoration or it is nothing, and someone
- * who has asked for less of it should get none.
+ * Everything else here is about staying out of the way. Its own fixed layer with
+ * `pointer-events: none`, so it can decorate a click but never intercept one --
+ * which matters on the answer sheet, where a click is a coordinate rather than a
+ * command. Nodes created and removed directly rather than held in React state,
+ * because a click is not something the application needs to know and routing it
+ * through a render would re-render the tree several times a second while somebody
+ * works down a list of questions.
  */
+
+/** The four bearings, converted from measured screen angles to CSS rotations. */
+const RAYS = [-59, -26, 8, 42] as const;
+
 export function ClickPulse(): null {
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     const layer = document.createElement("div");
-    layer.className = "pulse-layer";
+    layer.className = "spark-layer";
     layer.setAttribute("aria-hidden", "true");
     document.body.appendChild(layer);
 
     const onPointerDown = (event: PointerEvent): void => {
-      // Primary button only. A right-click opens a menu and a middle-click opens
-      // a tab; neither is the gesture this is acknowledging.
+      // Primary button only. A right-click opens a menu and a middle-click opens a
+      // tab; neither is the gesture this is acknowledging.
       if (event.button !== 0) return;
 
-      const ring = document.createElement("span");
-      ring.className = "pulse";
-      ring.style.left = `${event.clientX}px`;
-      ring.style.top = `${event.clientY}px`;
-      layer.appendChild(ring);
+      const burst = document.createElement("span");
+      burst.className = "spark";
+      burst.style.left = `${event.clientX}px`;
+      burst.style.top = `${event.clientY}px`;
+
+      for (const angle of RAYS) {
+        const ray = document.createElement("i");
+        ray.style.setProperty("--a", `${angle}deg`);
+        burst.appendChild(ray);
+      }
+
+      layer.appendChild(burst);
 
       // Removed by the animation it was created for, so nothing has to track it.
-      ring.addEventListener("animationend", () => ring.remove(), { once: true });
+      // Listening on the burst catches the last ray to finish, since they all run
+      // the same duration and the event bubbles.
+      burst.addEventListener("animationend", () => burst.remove(), { once: true });
     };
 
-    // `pointerdown` rather than `click`: it fires the instant the finger or button
-    // goes down, which is when a person expects the acknowledgement — waiting for
-    // the release makes the interface feel like it is lagging behind them. Passive
-    // because this never calls preventDefault and must not delay scrolling.
+    // `pointerdown` rather than `click`: the acknowledgement is expected when the
+    // finger goes down, and waiting for the release reads as the interface lagging
+    // behind the person using it. Passive because this never calls preventDefault
+    // and must not delay scrolling.
     window.addEventListener("pointerdown", onPointerDown, { passive: true });
 
     return () => {
