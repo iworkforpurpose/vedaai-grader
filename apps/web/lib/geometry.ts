@@ -82,3 +82,66 @@ export function pointerToNormalized(
 export function area(box: BBox): number {
   return (box.x1 - box.x0) * (box.y1 - box.y0);
 }
+
+/**
+ * Collapse highlight bands that overlap, so a region of writing is marked once.
+ *
+ * The mapper already merges lines into runs, and where writing is genuinely
+ * separated — the two halves of a code page, an answer at the top and another at
+ * the bottom — it deliberately emits a band each. That part is right and this
+ * must not undo it.
+ *
+ * What it does undo is bands drawn on top of one another: a wide band with a
+ * tighter one nested inside it reads as the sheet being highlighted twice, and a
+ * teacher cannot tell which of the two rectangles is the claim. Overlap is the
+ * test precisely because separation is the thing worth keeping — two bands that
+ * do not touch are two regions, and two that do are one region drawn twice.
+ *
+ * Transitive, so a chain of partial overlaps becomes one band rather than
+ * collapsing pairwise and leaving a seam. Pages never merge with each other.
+ */
+export function mergeOverlapping(boxes: readonly PageBox[]): PageBox[] {
+  const out: PageBox[] = [];
+
+  for (const [page, group] of groupByPage(boxes)) {
+    const pending = group.map((pb) => pb.box);
+
+    while (pending.length > 0) {
+      let current = pending.shift();
+      if (!current) break;
+
+      // Re-scan after every union: growing the band can bring a box within reach
+      // that was not touching the smaller version of it.
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (let i = pending.length - 1; i >= 0; i -= 1) {
+          const other = pending[i];
+          if (other && overlaps(current, other)) {
+            current = union(current, other);
+            pending.splice(i, 1);
+            grew = true;
+          }
+        }
+      }
+
+      out.push({ page, box: current });
+    }
+  }
+
+  return out;
+}
+
+/** Whether two boxes share any area. Touching edges do not count. */
+function overlaps(a: BBox, b: BBox): boolean {
+  return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+}
+
+function union(a: BBox, b: BBox): BBox {
+  return {
+    x0: Math.min(a.x0, b.x0),
+    y0: Math.min(a.y0, b.y0),
+    x1: Math.max(a.x1, b.x1),
+    y1: Math.max(a.y1, b.y1),
+  };
+}

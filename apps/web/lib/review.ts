@@ -12,6 +12,7 @@
  * to preserve.
  */
 
+import { mergeOverlapping } from "./geometry";
 import type {
   AnswerBlock,
   AnswerStatus,
@@ -152,7 +153,10 @@ export function summarize(submission: Submission, rows: QuestionRow[]): ReviewSu
 /** Boxes for one question's answer, grouped by the page they sit on. */
 export function highlightByPage(mapping: Mapping | undefined): Map<number, PageBox[]> {
   const out = new Map<number, PageBox[]>();
-  for (const box of mapping?.highlight?.boxes ?? []) {
+  // Merged before grouping, so a band nested inside another is drawn once. A
+  // region marked twice reads as two claims about the same writing, and a teacher
+  // cannot tell which rectangle is the one the mapper means.
+  for (const box of mergeOverlapping(mapping?.highlight?.boxes ?? [])) {
     const bucket = out.get(box.page);
     if (bucket) bucket.push(box);
     else out.set(box.page, [box]);
@@ -408,12 +412,18 @@ export function citationHighlight(
   const wanted = new Set(lineIds);
   const grouped = new Map<number, PageBox[]>();
 
+  const cited: PageBox[] = [];
   for (const line of submission.answer_sheet_lines?.lines ?? []) {
     if (!wanted.has(line.line_id)) continue;
-    const existing = grouped.get(line.page);
-    const entry = { page: line.page, box: line.box };
-    if (existing) existing.push(entry);
-    else grouped.set(line.page, [entry]);
+    cited.push({ page: line.page, box: line.box });
+  }
+
+  // Cited lines are consecutive far more often than not, and one box per line is
+  // the shape the mapper rejected as unreadable. Same merge, same reason.
+  for (const box of mergeOverlapping(cited)) {
+    const existing = grouped.get(box.page);
+    if (existing) existing.push(box);
+    else grouped.set(box.page, [box]);
   }
   return grouped;
 }
