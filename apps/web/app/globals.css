@@ -137,7 +137,28 @@
   --r-pill: 64px;
   --r-circle: 100px;
 
-  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.03), 0 12px 32px -12px rgb(0 0 0 / 0.12);
+  /* ── depth ───────────────────────────────────────────────────────────
+   *
+   * Three steps, because one shadow on everything is the same as no shadow: if a
+   * panel and the card inside it are lit identically then neither is above the
+   * other, and the screen reads as a drawing rather than as a stack.
+   *
+   * Tinted warm rather than neutral black. The page is a warm grey and a black
+   * shadow falling on it reads as dirt; a shadow has to be a darker version of
+   * what it falls on before it reads as depth at all.
+   */
+  --surface-raised: oklch(99.2% 0.001 90);
+
+  --e1: 0 1px 2px oklch(30% 0.01 60 / 0.05);
+  --e2:
+    0 1px 2px oklch(30% 0.01 60 / 0.05),
+    0 8px 16px -8px oklch(30% 0.01 60 / 0.12);
+  --e3:
+    0 2px 4px oklch(30% 0.01 60 / 0.06),
+    0 24px 48px -16px oklch(30% 0.01 60 / 0.18);
+
+  /* The name the upload screen already uses, now pointing at the ladder. */
+  --shadow-panel: var(--e2);
 
   /* ── layout ──────────────────────────────────────────────────────────── */
   --rail-w: 304px; /* fixed: 21% of 1440 would be 403px at 1920 */
@@ -1483,6 +1504,9 @@ body::before {
   padding: var(--sp-4);
   border-radius: 20px;
   background: var(--surface-veil);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--e2);
+  backdrop-filter: blur(20px);
 }
 
 .q-head {
@@ -1632,7 +1656,13 @@ body::before {
   border: 2px solid transparent;
   border-left-width: 3px;
   border-radius: var(--r-lg);
-  background: var(--surface);
+  /*
+   * The inset is a lit top edge. Without it a white card on a white panel reads
+   * as a rectangle drawn on the panel rather than as an object resting on it —
+   * the shadow says there is a gap underneath and nothing says there is a top.
+   */
+  background: var(--surface-raised);
+  box-shadow: var(--e1), inset 0 1px 0 oklch(100% 0 0 / 0.8);
   text-align: left;
   cursor: pointer;
   width: 100%;
@@ -1658,8 +1688,14 @@ body::before {
 .q-card:has(.score[data-status="uncertain"]) { border-left-color: var(--status-review); }
 .q-card:has(.score[data-status="pages_missing"]) { border-left-color: var(--status-missing); }
 
+.q-card:hover {
+  box-shadow: var(--e3), inset 0 1px 0 oklch(100% 0 0 / 0.8);
+  transform: translateY(-1px);
+}
+
 .q-card[data-selected="true"] {
   border-color: #ff8d36;
+  box-shadow: var(--e3), inset 0 1px 0 oklch(100% 0 0 / 0.8);
 }
 
 .q-row {
@@ -1926,9 +1962,10 @@ body::before {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1.25px solid rgb(0 0 0 / 0.1);
+  border: 1px solid var(--hairline);
   border-radius: 20px;
   background: var(--surface);
+  box-shadow: var(--e2);
   overflow: hidden;
 }
 
@@ -2698,5 +2735,26 @@ body::before {
     --status-not-required: #6b6f77;
     --status-missing: #c0392b;
     --status-neutral: #6b6d72;
+  }
+}
+
+/* ══ squircle corners ══════════════════════════════════════════════════════
+ *
+ * A rounded rectangle changes curvature abruptly where the arc meets the straight
+ * edge. A superellipse does not, which is why the same radius reads as softer
+ * without reading as rounder — it is the difference people notice on Apple
+ * hardware and generally cannot name.
+ *
+ * Chrome only, and entirely cosmetic: everywhere else keeps the radius it already
+ * had, which is the radius the Figma file specifies.
+ */
+@supports (corner-shape: squircle) {
+  .q-card,
+  .q-pane,
+  .sheet-pane,
+  .dropzone,
+  .stage-inner,
+  .score {
+    corner-shape: squircle;
   }
 }
