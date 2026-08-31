@@ -203,7 +203,7 @@ function SegmentedControl<T extends string>({
               padding: "var(--sp-1) var(--sp-3)",
               border: "none",
               borderLeft: i === 0 ? "none" : "1px solid var(--border)",
-              background: active ? "var(--accent)" : "transparent",
+              background: active ? "var(--accent-ink)" : "transparent",
               color: active ? "var(--accent-contrast)" : "var(--text-2)",
               cursor: "pointer",
             }}

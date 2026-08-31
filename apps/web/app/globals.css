@@ -18,18 +18,40 @@
  */
 
 :root {
-  /* ── palette, from the file ──────────────────────────────────────────── */
-  --accent: #ff5623;
-  --accent-tint: rgb(255 147 80 / 0.15); /* block behind the accent title */
-  --accent-ring-outer: rgb(255 86 35 / 0.1);
-  --accent-ring-inner: rgb(255 86 35 / 0.26);
+  color-scheme: light;
 
-  --ink: #303030; /* primary button, active nav text */
-  --ink-hover: #1f1f1f;
-  --title: #2b2b2b;
-  --body: rgb(94 94 94 / 0.8);
-  --body-solid: #5e5e5e;
-  --muted: #a9a9a9;
+  /* ── palette, from the file, authored in OKLCH ────────────────────────
+   *
+   * OKLCH rather than hex because the derived shades are the point: a tint or a
+   * hover is now the base colour with one number changed, and it stays the same
+   * colour while it changes. Hex fallbacks are at the end of this file.
+   *
+   * Two values are not the ones in the frame. Both were below WCAG AA where they
+   * carry text, and both are logged in design/SPEC.md. The comment on each says
+   * what the file had.
+   */
+  --accent: oklch(67.8% 0.213 36.1); /* #ff5623 — fills, rings, badges: no text */
+  --accent-tint: oklch(72.6% 0.156 42.5 / 0.15); /* block behind the accent title */
+  --accent-ring-outer: oklch(67.8% 0.213 36.1 / 0.1);
+  --accent-ring-inner: oklch(67.8% 0.213 36.1 / 0.26);
+
+  /*
+   * The same orange, dark enough to read.
+   *
+   * White on #ff5623 is 3.18:1, so the primary button did not meet AA for its own
+   * label, and the orange links were the same. Rather than restyle the button or
+   * dull the brand, the accent keeps every job where nothing sits on it and this
+   * takes the jobs where something does. Same hue, same chroma, lower lightness —
+   * side by side they read as one colour.
+   */
+  --accent-ink: oklch(59.1% 0.213 36.1); /* #df3500 — text, and fills under text */
+
+  --ink: oklch(30.9% 0 90); /* #303030 — primary button, active nav text */
+  --ink-hover: oklch(23.9% 0 90); /* #1f1f1f */
+  --title: oklch(28.9% 0 90); /* #2b2b2b */
+  --body: oklch(48.2% 0 90 / 0.8);
+  --body-solid: oklch(48.2% 0 90); /* #5e5e5e */
+  --muted: oklch(56.7% 0 90); /* the frame's #a9a9a9 was 2.35:1 on white */
 
   --surface: #ffffff;
   --surface-glass: rgb(255 255 255 / 0.75); /* top bar */
@@ -49,13 +71,13 @@
    * teacher reads at a glance, so these are named by role and must survive any
    * restyle.
    */
-  --status-answered: #1f8a52;
+  --status-answered: oklch(52.4% 0.128 154.9); /* #1f8a52 was 3.86:1 on its fill */
   --status-answered-soft: #e8f4ed;
-  --status-missing: #c0392b;
+  --status-missing: oklch(54.3% 0.174 29.7); /* #c0392b */
   --status-missing-soft: #fbeae8;
-  --status-review: #b26a00;
+  --status-review: oklch(55.1% 0.132 65.1); /* #b26a00 was 3.83:1 on its fill */
   --status-review-soft: #fdf2e2;
-  --status-neutral: #6b6d72;
+  --status-neutral: oklch(53.5% 0.008 268.5); /* #6b6d72 */
   --status-neutral-soft: #f0f0f1;
 
   /*
@@ -67,9 +89,9 @@
    * alike. Both are cool, to sit apart from the warm accent family, which is what
    * the paper's own marks use.
    */
-  --status-unanswered: #5c6672;
+  --status-unanswered: oklch(50.6% 0.023 253);
   --status-unanswered-soft: #eef0f3;
-  --status-not-required: #6b6f77;
+  --status-not-required: oklch(54.2% 0.013 259.8);
   --status-not-required-soft: #f2f3f5;
 
   --hl-fill: rgb(255 86 35 / 0.16);
@@ -539,7 +561,7 @@ body::before {
   min-width: 37px;
   padding: 0 10px;
   border-radius: var(--r-sm);
-  background: var(--accent);
+  background: var(--accent-ink);
   color: var(--on-accent);
   font-size: var(--fs-xs);
   font-weight: 600;
@@ -942,7 +964,7 @@ body::before {
 
 .dropzone-label em {
   font-style: normal;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .dropzone-hint {
@@ -1505,7 +1527,7 @@ body::before {
 
 /* Marking is the primary action on this screen, so it wears the accent. */
 .q-head-action[data-primary="true"] {
-  background: var(--accent);
+  background: var(--accent-ink);
   color: #fff;
 }
 
@@ -1645,7 +1667,7 @@ body::before {
 }
 
 .q-card[data-selected="true"] .q-num {
-  background: var(--accent);
+  background: var(--accent-ink);
 }
 
 /* Sub-part letter, its own column in the frame so labels stay aligned. */
@@ -1813,7 +1835,7 @@ body::before {
   border-radius: var(--r-sm);
   font: inherit;
   font-size: var(--fs-sm);
-  color: var(--accent);
+  color: var(--accent-ink);
   cursor: pointer;
   text-decoration: underline;
 }
@@ -2212,7 +2234,7 @@ body::before {
 }
 
 .tool-toggle[aria-pressed="true"] {
-  background: var(--accent);
+  background: var(--accent-ink);
   color: #fff;
 }
 
@@ -2563,11 +2585,39 @@ body::before {
 .unlock-error {
   min-height: 1.2em;
   margin: 0;
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: var(--fs-xs);
 }
 
 .unlock-submit {
   justify-content: center;
   padding-left: 20px;
+}
+
+/* ══ hex fallback ══════════════════════════════════════════════════════════
+ *
+ * For browsers without OKLCH. Only the tokens whose value is a flat colour: the
+ * alpha-carrying ones degrade to their opaque form, which is worse than the
+ * original and much better than losing the declaration entirely.
+ *
+ * These are the same colours, converted — not a second palette to keep in step.
+ * The contrast test reads the OKLCH values above, so if these two ever disagree
+ * it is these that are wrong.
+ */
+@supports not (color: oklch(0% 0 0)) {
+  :root {
+    --accent: #ff5623;
+    --accent-ink: #df3500;
+    --ink: #303030;
+    --ink-hover: #1f1f1f;
+    --title: #2b2b2b;
+    --body-solid: #5e5e5e;
+    --muted: #767676;
+    --status-answered: #077f47;
+    --status-unanswered: #5c6672;
+    --status-review: #a55e00;
+    --status-not-required: #6b6f77;
+    --status-missing: #c0392b;
+    --status-neutral: #6b6d72;
+  }
 }
