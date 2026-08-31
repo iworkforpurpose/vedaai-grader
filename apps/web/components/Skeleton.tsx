@@ -63,9 +63,20 @@ export function ShellSkeleton({
           </span>
         </div>
 
-        <span className="toolkit">
-          <Block w="100%" h="18px" radius="var(--r-circle)" />
-        </span>
+        {/*
+          * The toolkit button is a block itself, not a block inside one.
+          *
+          * Every other class reused here paints a container -- a pane, a card, a
+          * chip -- and those persist through the load, so keeping their fill is
+          * right. This one paints a filled control at #272727, and reusing it
+          * gave a finished black button with a shimmer strip inside: the loudest
+          * thing on a screen that is supposed to be waiting.
+          *
+          * `sk` follows `toolkit` in the stylesheet, so at equal specificity the
+          * shimmer wins the fill while the geometry -- full width, 42px, pill --
+          * still comes from the real rule rather than from numbers copied here.
+          */}
+        <span className="toolkit sk" />
 
         <ul className="rail-menu">
           {Array.from({ length: 7 }, (_, i) => (
