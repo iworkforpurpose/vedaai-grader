@@ -188,9 +188,9 @@ export function AppShell({
               <Image src="/brand/school-crest.png" alt="" width={59} height={60} />
             </span>
             <span className="school-text">
-              <span className="school-name">Delhi Public School</span>
+              <span className="school-name">Atlas University</span>
               <br />
-              <span className="school-place">Bokaro Steel City</span>
+              <span className="school-place">Mumbai City</span>
             </span>
           </div>
 
