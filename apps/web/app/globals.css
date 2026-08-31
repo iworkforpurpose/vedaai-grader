@@ -2521,9 +2521,15 @@ body::before {
 
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  /* Longer than a hover, shorter than an entrance. A screen change is worth
-     noticing and not worth waiting for. */
-  animation-duration: 260ms;
+  /*
+   * The screen swap runs on `--slow`, the step named for something arriving.
+   *
+   * It was 260ms, which was chosen against the other swaps in the app -- where
+   * nothing moves but the content. On the upload screen the rail collapses in the
+   * same gesture, and a 260ms dissolve over a rail that is still travelling reads
+   * as the page stuttering rather than as one change.
+   */
+  animation-duration: var(--slow);
   animation-timing-function: var(--ease);
 }
 
@@ -2565,9 +2571,31 @@ body::before {
  * unnecessary morph on persistent furniture is the flicker this naming exists to
  * prevent. A short dissolve absorbs any sub-pixel difference.
  */
-::view-transition-group(rail),
 ::view-transition-group(topbar) {
   animation-duration: 160ms;
+}
+
+/*
+ * The rail is the exception the rule above did not account for.
+ *
+ * Its geometry genuinely does change on one swap -- starting a mapping collapses
+ * it from 304px to 64px -- so it is not furniture holding still, it is a second
+ * animation running inside the first. Three clocks were involved: the dissolve at
+ * 260ms, this group at 160ms, and the rail's own width transition at `--travel`.
+ * The browser handed the rail back to the live DOM at 160ms with most of a 600ms
+ * width transition still to play, and that hand-off is the jolt.
+ *
+ * One clock now. The group animates the geometry for the whole swap, and the CSS
+ * transition stands down while it does, the same way the entrance animations do
+ * below.
+ */
+::view-transition-group(rail) {
+  animation-duration: var(--slow);
+  animation-timing-function: var(--ease);
+}
+
+:root:active-view-transition .rail {
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
