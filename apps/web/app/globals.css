@@ -1630,6 +1630,7 @@ body::before {
   gap: var(--sp-3);
   padding: var(--sp-3);
   border: 2px solid transparent;
+  border-left-width: 3px;
   border-radius: var(--r-lg);
   background: var(--surface);
   text-align: left;
@@ -1638,6 +1639,24 @@ body::before {
   font: inherit;
   color: inherit;
 }
+
+/*
+ * The chip's hue again, on the card's leading edge.
+ *
+ * Reading down a list is vertical, so a colour on the left edge is picked up in
+ * peripheral vision before any chip has been fixated. It repeats the chip rather
+ * than adding to it — the point is to make the shape of the list legible before
+ * a single word is read.
+ *
+ * `answered` takes the soft fill rather than the ink: it is the state that needs
+ * no action, and a saturated edge on every answered question would drown out the
+ * few that do.
+ */
+.q-card:has(.score[data-status="answered"]) { border-left-color: var(--status-answered-soft); }
+.q-card:has(.score[data-status="unanswered"]) { border-left-color: var(--status-unanswered); }
+.q-card:has(.score[data-status="ocr_failed"]),
+.q-card:has(.score[data-status="uncertain"]) { border-left-color: var(--status-review); }
+.q-card:has(.score[data-status="pages_missing"]) { border-left-color: var(--status-missing); }
 
 .q-card[data-selected="true"] {
   border-color: #ff8d36;
@@ -1711,6 +1730,66 @@ body::before {
 .score[data-tone="partial"] { background: rgb(255 153 0 / 0.1); color: #e3600f; }
 .score[data-tone="zero"] { background: #ffe9e2; color: #c0350a; }
 .score[data-tone="none"] { background: var(--chip); color: var(--body-solid); }
+
+/* ── the status chip, by status ───────────────────────────────────────────
+ *
+ * Until now every one of these was the same grey. The review model computes a
+ * colour per status and the card took the label off the same object and dropped
+ * the colour, so answered, blank, unreadable and missing-page all wore an
+ * identical pill and the list could not be scanned without reading it line by
+ * line — which is the one thing a teacher opens this screen to avoid.
+ *
+ * Three channels, not one: hue, a hairline at the same hue, and a glyph on the
+ * two states that ask to be looked at. Colour alone excludes anyone who cannot
+ * separate green from amber, and this is the most consequential element here.
+ *
+ * The six values are the AnswerStatus union in packages/contracts, read rather
+ * than assumed — `pages_missing` is plural, and "Not found" is `uncertain`. An
+ * attribute selector that matches nothing fails exactly as silently as the bug
+ * this replaces.
+ */
+.score[data-tone="none"][data-status] {
+  gap: var(--sp-1);
+  border: 1px solid;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.score[data-status="answered"] {
+  background: var(--status-answered-soft);
+  border-color: oklch(from var(--status-answered) l c h / 0.24);
+  color: var(--status-answered);
+}
+
+.score[data-status="unanswered"] {
+  background: var(--status-unanswered-soft);
+  border-color: oklch(from var(--status-unanswered) l c h / 0.24);
+  color: var(--status-unanswered);
+}
+
+.score[data-status="ocr_failed"],
+.score[data-status="uncertain"] {
+  background: var(--status-review-soft);
+  border-color: oklch(from var(--status-review) l c h / 0.24);
+  color: var(--status-review);
+}
+
+.score[data-status="not_required"] {
+  background: var(--status-not-required-soft);
+  border-color: oklch(from var(--status-not-required) l c h / 0.24);
+  color: var(--status-not-required);
+}
+
+.score[data-status="pages_missing"] {
+  background: var(--status-missing-soft);
+  border-color: oklch(from var(--status-missing) l c h / 0.24);
+  color: var(--status-missing);
+}
+
+.score-mark {
+  font-weight: 800;
+  line-height: 1;
+}
 
 .q-chevron {
   flex: none;

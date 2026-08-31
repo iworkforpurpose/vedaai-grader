@@ -102,7 +102,23 @@ export function QuestionCard({
               {label}
             </span>
           ) : (
-            <span className="score" data-tone="none">
+            <span
+              className="score"
+              data-tone="none"
+              data-status={row.status}
+              title={row.presentation.hint}
+            >
+              {/*
+                The channel that is not colour.
+                `aria-hidden` because the label beside it already carries the
+                meaning, and "exclamation Not found" is a worse thing to hear
+                than "Not found".
+              */}
+              {row.presentation.needsAttention && (
+                <span className="score-mark" aria-hidden="true">
+                  !
+                </span>
+              )}
               {row.presentation.label}
             </span>
           )}
