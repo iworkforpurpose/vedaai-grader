@@ -46,6 +46,27 @@ resolves to nothing, and the declaration is dropped:
 | `--radius-sm` | `StatusChip.tsx:30`, `PageCanvas.tsx:56`, `GradePanel.tsx:94` | `border-radius` dropped — corners render square. The defined token is `--r-sm`. |
 | `--status-unanswered` | `lib/review.ts:53` | `color` dropped — the "Not answered" chip inherits its parent's colour. |
 | `--status-not-required` | `lib/review.ts:65` | Same, for "Not required". |
+| `--border` | 9 sites | Borders dropped. |
+| `--text-muted` | 10 sites | Colour dropped. |
+| `--text-2` | 6 sites | Colour dropped. |
+| `--surface-2` | 2 sites | Background dropped. |
+
+**Dead components.** `QuestionList.tsx`, `GradePanel.tsx` and `StatusChip.tsx`
+(~335 lines) are imported by nothing. They hold most of the undefined-token
+references above, which is why the defects went unnoticed. They are deleted rather
+than repaired. `StatusChip`'s one genuinely valuable idea — a non-colour channel
+for status, via a `!` glyph — is not lost; it moves onto the live chip in §4.
+
+The undefined tokens that survive the deletion are live on the `/review/[id]/inspect`
+debug route (`PageCanvas`, `InkOverlay`, `DebugReview`) and are defined as aliases
+onto the existing palette.
+
+**The grey chip has a precise cause.** `lib/review.ts` builds a `StatusPresentation`
+carrying a `colour` per status, and the live card at `QuestionCard.tsx:105` renders
+`<span className="score" data-tone="none">{row.presentation.label}</span>` — taking
+the label and discarding the colour. `.score[data-tone="none"]` is grey by
+definition, so every status renders identically. The fix is to key the chip on the
+status as well as the tone, not to invent a new component.
 
 **Contrast failures.** Measured, sRGB, WCAG 2.1 non-large text (needs 4.5:1):
 
@@ -69,10 +90,16 @@ Three divergence lines go into `design/SPEC.md`: `--accent-ink`, the darkened
 
 ## 2. Token spine — `app/globals.css`
 
-**Colour authoring.** OKLCH, each value wrapped in `light-dark()` with both slots
-identical for now. Hex fallbacks retained under `@supports not (color: oklch(0% 0 0))`
-for the small tail of browsers without it. Measured conversions of the existing
-palette:
+**Colour authoring.** OKLCH, with hex fallbacks under
+`@supports not (color: oklch(0% 0 0))` for the small tail of browsers without it.
+
+Design decided against wrapping each value in `light-dark()`. With dark mode out
+of scope both slots would be identical, which is ceremony that reads as a feature —
+and it buys nothing, because every token already lives in one `:root` block in one
+file. Adding dark mode later is the same one-file edit either way. `color-scheme:
+light` is declared instead, so form controls and scrollbars match the page.
+
+Measured conversions of the existing palette:
 
 ```
 accent            #ff5623   oklch(67.8% 0.213  36.1)
