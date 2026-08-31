@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { ClickPulse } from "@/components/ClickPulse";
 
 /**
  * Both faces come from the Figma file rather than being chosen here: Bricolage
@@ -56,7 +57,16 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
   return (
     <html lang="en" className={`${bricolage.variable} ${inter.variable} ${mono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/*
+          Outside the tree it decorates, because it decorates all of it. Rendering
+          it here rather than per screen means a click is acknowledged on the
+          access page and the waiting screen too, not only where a component
+          remembered to ask for it.
+        */}
+        <ClickPulse />
+      </body>
     </html>
   );
 }

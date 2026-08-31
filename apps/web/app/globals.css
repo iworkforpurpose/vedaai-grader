@@ -3431,3 +3431,46 @@ button {
     opacity: 0;
   }
 }
+
+/* ══ the click pulse ═══════════════════════════════════════════════════════
+ *
+ * Acknowledgement, and nothing more. It sits in its own fixed layer above
+ * everything and takes no pointer events, so it can decorate a click without ever
+ * being able to intercept one -- which matters on the answer sheet, where a click
+ * is a coordinate rather than a command.
+ *
+ * Transform and opacity only, so each ring is composited and none of them touch
+ * layout. That is what lets this run on every click in a list without competing
+ * with the highlight animations for frames.
+ */
+.pulse-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pulse {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  /* Centred on the point rather than starting there: a ring that grows from a
+     corner reads as something arriving from off-screen. */
+  margin: -28px 0 0 -28px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  animation: click-pulse 520ms var(--ease-out) forwards;
+}
+
+@keyframes click-pulse {
+  from {
+    transform: scale(0.12);
+    opacity: 0.55;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
