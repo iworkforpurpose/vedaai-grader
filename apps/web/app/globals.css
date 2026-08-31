@@ -278,6 +278,20 @@ img {
 :root {
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /*
+   * A real spring, sampled.
+   *
+   * linear() interpolates between as many points as it is given, and values past
+   * 1 overshoot -- which is what a spring does and what no cubic-bezier can
+   * express. Used only where the reader caused the change. An overshoot nobody
+   * asked for reads as instability rather than as life, which is why this is not
+   * the default curve.
+   */
+  --ease-spring: linear(
+    0, 0.0033, 0.0505, 0.1685, 0.3348, 0.5108, 0.6702, 0.7987, 0.8929,
+    0.9542, 0.9887, 1.0052, 1.0107, 1.0104, 1.0077, 1.0045, 1.0018, 1
+  );
   --fast: 120ms;
   --mid: 240ms;
   --slow: 420ms;
@@ -336,6 +350,19 @@ button:active:not(:disabled),
 .dropzone:active {
   transform: scale(0.97);
   transition-duration: 60ms;
+}
+
+/*
+ * The spring goes on the release, not the press.
+ *
+ * On the way down it would fight the finger -- the control has to be under the
+ * pointer when the pointer is there. On the way back the overshoot is what makes
+ * it read as a thing with mass rather than a rectangle changing size.
+ */
+button:not(:active):not(:disabled),
+.dropzone:not(:active) {
+  transition-timing-function: var(--ease-spring);
+  transition-duration: var(--mid);
 }
 
 :focus-visible {
@@ -1622,6 +1649,18 @@ body::before {
   .q-card {
     animation: card-in var(--slow) var(--ease-out) both;
     animation-delay: var(--stagger, 0ms);
+  }
+
+  /*
+   * Where the browser can count siblings it does its own staggering, and the
+   * inline custom property the card passes down stops being needed. Capped at a
+   * dozen either way: past that the last card waits a third of a second for a
+   * delay nobody can perceive as ordering.
+   */
+  @supports (animation-delay: calc(sibling-index() * 1ms)) {
+    .q-card {
+      animation-delay: calc(min(sibling-index(), 12) * 28ms);
+    }
   }
 }
 
