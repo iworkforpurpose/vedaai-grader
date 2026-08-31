@@ -466,7 +466,16 @@ body::before {
   border-radius: 0 var(--r-lg) var(--r-lg) 0;
   box-shadow: var(--shadow-panel);
   transform: translateX(-102%);
-  transition: transform 220ms ease;
+  /*
+   * The drawer arrives on the slow step, decelerating.
+   *
+   * 220ms flat `ease` was the last raw duration in the file, and it read as the
+   * panel appearing rather than as it being pulled out -- at 304px of travel that
+   * is roughly 1400px a second, which is faster than a hand moves. `--slow` is the
+   * step named for something arriving, and `--ease-out` front-loads the distance
+   * so it still feels immediate to the touch while settling instead of stopping.
+   */
+  transition: transform var(--slow) var(--ease-out);
   overflow-y: auto;
 }
 
@@ -1164,10 +1173,12 @@ body::before {
     opacity: 0;
   }
 
+  /* Matched to the width beside them: at `--fast` the labels were gone a third of
+     the way through the collapse, which read as two animations rather than one. */
   .nav-label,
   .brand-word,
   .school-text {
-    transition: opacity var(--fast) var(--ease);
+    transition: opacity var(--mid) var(--ease);
   }
 
   .rail-scrim {
