@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 
 /** Milliseconds between one character appearing and the next. */
-const STEP_MS = 42;
+const STEP_MS = 70;
 
 /**
  * A phrase that arrives a character at a time.
@@ -18,9 +18,9 @@ const STEP_MS = 42;
  * character, and that changes how the line breaks. The title wraps at phone width
  * and carries `text-wrap: balance`; neither survives thirty inline-blocks intact.
  *
- * The reveal is a step rather than a fade. A character that fades up over 200ms
- * reads as an entrance; one that simply appears reads as having been typed, which
- * is what was asked for.
+ * Each character fades over 90ms against a 70ms cadence, so one is still
+ * arriving as the next begins. A hard step reads as typed but also as brittle;
+ * the short overlap keeps the sense of typing and takes the edge off it.
  */
 export function TypedPhrase({ text }: { text: string }): React.JSX.Element {
   const words = text.split(" ");

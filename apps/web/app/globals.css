@@ -3134,22 +3134,32 @@ button {
   white-space: nowrap;
 }
 
+/*
+ * A caret that occupies no space.
+ *
+ * It used to be a real box, 0.055em wide with a margin beside it. At the display
+ * size that is about five pixels, which was exactly enough to push the heading
+ * past its wrapping point: the title sat on two lines while the caret was there
+ * and snapped back to one when it left. Painting it with a shadow instead draws
+ * the same bar and reserves nothing, so the line the phrase wraps to is decided
+ * once, by the words, and never changes.
+ */
 .typed-caret {
   display: inline-block;
-  width: 0.055em;
-  height: 0.78em;
-  margin-left: 0.06em;
-  vertical-align: -0.04em;
-  background: currentColor;
+  width: 0;
+  height: 0.8em;
+  vertical-align: -0.06em;
+  box-shadow: 0.035em 0 0 0.028em currentColor;
   opacity: 0;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .typed-char {
     opacity: 0;
-    /* `step-end` over a nominal duration: the character is absent and then it is
-       present. A fade would read as an entrance; typing has no in-between. */
-    animation: typed-in 1ms step-end both;
+    /* 90ms against a 70ms cadence, so a character is still arriving as the next
+       one starts. A hard step reads as typed and also as brittle; the overlap
+       keeps the typing and softens it. */
+    animation: typed-in 90ms var(--ease-out) both;
   }
 
   /*
@@ -3182,12 +3192,9 @@ button {
   }
 }
 
+/* Only opacity: there is no width left to collapse, which was the bug. */
 @keyframes caret-leave {
   to {
     opacity: 0;
-    /* Takes the blink with it: an infinite animation on a zero-width box is still
-       an animation, and this is decoration that has finished its job. */
-    width: 0;
-    margin-left: 0;
   }
 }
