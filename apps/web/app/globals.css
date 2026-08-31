@@ -911,7 +911,11 @@ body::before {
 
 .hero {
   position: relative;
-  width: clamp(110px, 26vw, 138px);
+  /* Named, because the badges orbit at a fraction of it and a second copy of the
+     clamp in their transform would drift the moment either was touched. */
+  --hero-size: clamp(110px, 26vw, 138px);
+  --orbit: calc(var(--hero-size) * 0.44);
+  width: var(--hero-size);
   aspect-ratio: 1;
   flex: none;
   border-radius: 50%;
@@ -936,15 +940,35 @@ body::before {
   place-items: end center;
 }
 
+/*
+ * The four badges, sitting on the ring rather than at four measured offsets.
+ *
+ * The frame places them by edge inset, which pins each to a corner and says
+ * nothing about the circle they belong to -- they were at four different radii,
+ * which is invisible while they hold still and impossible to hide once they move.
+ *
+ * So each is anchored at the centre and pushed out along its own angle. The
+ * transform reads outward: turn to the angle, step out by the orbit radius, then
+ * turn back by the same amount. That last turn is the one that matters -- without
+ * it the badge orbits *and* tumbles, and the icon inside it ends up upside down
+ * at the bottom of every revolution.
+ */
 .hero-badge {
   position: absolute;
+  top: 50%;
+  left: 50%;
   width: 13px;
   height: 13px;
+  margin: -6.5px 0 0 -6.5px;
   border-radius: 50%;
   background: var(--accent);
   color: var(--on-accent);
   display: grid;
   place-items: center;
+  transform:
+    rotate(var(--from))
+    translateY(calc(var(--orbit) * -1))
+    rotate(calc(var(--from) * -1));
 }
 
 .hero-badge svg {
@@ -952,10 +976,54 @@ body::before {
   height: 8px;
 }
 
-.hero-badge[data-at="tr"] { top: 8%; right: 12%; }
-.hero-badge[data-at="tl"] { top: 33%; left: 1%; }
-.hero-badge[data-at="br"] { bottom: 27%; right: 1%; }
-.hero-badge[data-at="bl"] { bottom: 9%; left: 30%; }
+/*
+ * Ninety degrees apart, on the diagonals the frame roughly had them on.
+ *
+ * `--from` is the resting angle. The delay is the same angle expressed as time --
+ * a quarter of the period per quarter turn -- so a badge that starts at 45deg is
+ * handed an animation already 3.5s old and picks up exactly where it was sitting.
+ * The two numbers have to agree or the badges jump the moment the page loads.
+ */
+.hero-badge[data-at="tr"] { --from: 45deg; animation-delay: -3.5s; }
+.hero-badge[data-at="br"] { --from: 135deg; animation-delay: -10.5s; }
+.hero-badge[data-at="bl"] { --from: 225deg; animation-delay: -17.5s; }
+.hero-badge[data-at="tl"] { --from: 315deg; animation-delay: -24.5s; }
+
+/*
+ * Scoped to no-preference rather than left to the global reduced-motion override.
+ *
+ * That override collapses every duration to 0.01ms, which for a rotation means
+ * the animation lands on its end frame -- a full 360deg, identical to zero -- and
+ * all four badges would pile up at the top of the circle. Not applying the
+ * animation at all leaves the resting transform above, which is the arrangement
+ * the frame intends.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-badge {
+    animation: badge-orbit 28s linear infinite;
+  }
+}
+
+/*
+ * 28 seconds a revolution: slow enough to read as drift rather than as spin, and
+ * slow enough that it never competes with anything the teacher is doing. This is
+ * decoration on an empty state, and decoration that asks for attention is a bug.
+ */
+@keyframes badge-orbit {
+  from {
+    transform:
+      rotate(0deg)
+      translateY(calc(var(--orbit) * -1))
+      rotate(0deg);
+  }
+
+  to {
+    transform:
+      rotate(360deg)
+      translateY(calc(var(--orbit) * -1))
+      rotate(-360deg);
+  }
+}
 
 /* ── drop zones ────────────────────────────────────────────────────────── */
 

@@ -146,3 +146,13 @@ frames are read as intent rather than as targets:
    tall to hold one line of text. Padding and the number badge are tightened to
    put roughly a third more of the list on screen. The upload frame is untouched;
    the mapping screen has no Figma frame to diverge from.
+10. **The hero badges orbit, and sit on one radius.** The frame places the four
+   badges by edge inset — `top: 8%; right: 12%` and so on — which pins each to a
+   corner of the box and says nothing about the circle they belong to. Measured
+   from the centre they sat at four different radii, which is invisible while they
+   hold still and impossible to hide once they move. Each is now anchored at the
+   hero's centre and pushed out along its own angle, ninety degrees apart on the
+   diagonals the frame roughly used, and they drift one revolution every 28
+   seconds. The badge counter-rotates as it goes so its icon stays upright.
+   Not applied under `prefers-reduced-motion: reduce`, where they hold the resting
+   arrangement.
