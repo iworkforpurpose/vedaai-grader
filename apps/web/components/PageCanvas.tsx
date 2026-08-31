@@ -53,7 +53,7 @@ export function PageCanvas({
           width: "100%",
           background: "var(--surface)",
           border: "1px solid var(--border)",
-          borderRadius: "var(--radius-sm)",
+          borderRadius: "var(--r-sm)",
           overflow: "hidden",
           boxShadow: "var(--shadow)",
         }}

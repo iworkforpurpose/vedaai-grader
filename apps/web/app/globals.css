@@ -58,6 +58,20 @@
   --status-neutral: #6b6d72;
   --status-neutral-soft: #f0f0f1;
 
+  /*
+   * Two absence states the review model names but the palette never had.
+   *
+   * They are deliberately not the same grey. "Not answered" is a fact about the
+   * student — the page was blank — and "not required" is a fact about the paper.
+   * A teacher acts on the first and ignores the second, so they must not look
+   * alike. Both are cool, to sit apart from the warm accent family, which is what
+   * the paper's own marks use.
+   */
+  --status-unanswered: #5c6672;
+  --status-unanswered-soft: #eef0f3;
+  --status-not-required: #6b6f77;
+  --status-not-required-soft: #f2f3f5;
+
   --hl-fill: rgb(255 86 35 / 0.16);
   --hl-stroke: #ff5623;
   --hl-fill-ink: rgb(178 106 0 / 0.14);
@@ -111,6 +125,34 @@
      is laid out in a 789px column, and using the outer number stretched the drop
      zones by nearly 300px. */
   --content-max: 789px;
+
+  /* ── the debug route ─────────────────────────────────────────────────
+   *
+   * /review/[id]/inspect was written against a naming scheme the stylesheet
+   * never adopted, so every one of these declarations was being dropped and the
+   * whole surface rendered unstyled. Aliased onto the real palette rather than
+   * renamed at seventeen call sites: the debug surface is not what this pass is
+   * about, and it should follow the palette rather than fork it.
+   */
+  --border: var(--hairline);
+  --surface-2: var(--row-active);
+  --text-2: var(--body-solid);
+  --text-muted: var(--muted);
+  --radius: var(--r-md);
+  --shadow: var(--shadow-panel);
+  --accent-contrast: var(--on-accent);
+
+  /* One step above the subtitle, for the inspect page's own headings. */
+  --fs-xl: clamp(1.25rem, 1.1rem + 0.75vw, 1.75rem);
+
+  /*
+   * The three overlay kinds, which need to be told apart at a glance and must not
+   * be confused with the status family — a debug overlay that borrows the colour
+   * of "answered" reads as a claim about the answer.
+   */
+  --debug-line: #2563eb;
+  --debug-word: #7c3aed;
+  --debug-ink: #0d9488;
 }
 
 /* ── reset ─────────────────────────────────────────────────────────────── */
