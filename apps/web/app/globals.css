@@ -2862,68 +2862,226 @@ body::before {
  * a door, and a door that advertises what is behind it is worse than one that
  * does not.
  */
+/* ══ the waiting caption ═══════════════════════════════════════════════════ */
+
+.stage-phase {
+  display: inline-block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /*
+   * Each phase arrives rather than swapping in place. The span is remounted per
+   * phase, so this entrance runs again every time the caption changes -- a plain
+   * text swap at this size reads as a glitch, because the eye catches the change
+   * without catching the word.
+   */
+  .stage-phase {
+    animation: phase-in var(--mid) var(--ease-out) both;
+  }
+}
+
+@keyframes phase-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ══ the door ══════════════════════════════════════════════════════════════
+ *
+ * Built from the vocabulary the rest of the application already uses rather than
+ * invented beside it: the hero's two accent rings, the top bar's glass, the
+ * elevation ladder, and the mono face the counts are set in. Somebody who has
+ * seen this screen and then gets in should recognise where they are.
+ *
+ * It still says nothing about what is behind it. That was a deliberate decision
+ * and it survives the restyle — there is no description of the service and no
+ * mention of whose work is stored here.
+ */
+
 .unlock {
+  /*
+   * Above the atmosphere rather than painted over it.
+   *
+   * This used to set an opaque `--page` background, which covered the two blurred
+   * ellipses `body::before` puts behind every screen — so the one page a stranger
+   * sees was the one page with no depth in it. Lifting it out of the way is the
+   * same `position: relative; z-index: 1` the shell uses.
+   */
+  position: relative;
+  z-index: 1;
   min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: var(--sp-5);
-  background: var(--page);
+}
+
+.unlock-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-5);
+  width: min(400px, 100%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .unlock-inner {
+    animation: screen-in var(--slow) var(--ease-out) both;
+  }
+}
+
+.unlock-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .unlock-card {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  width: min(360px, 100%);
+  align-items: center;
+  gap: var(--sp-3);
   padding: var(--sp-6) var(--sp-5) var(--sp-5);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(48 48 48 / 0.06), 0 12px 32px rgb(48 48 48 / 0.08);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-2xl);
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--e3), inset 0 1px 0 oklch(100% 0 0 / 0.8);
+  text-align: center;
+}
+
+/*
+ * The hero's rings, at a size that suits a door rather than a welcome: the same
+ * 10% and 26% accent circles, the same proportion between them, a lock where the
+ * portrait goes.
+ */
+.unlock-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: var(--accent-ring-outer);
+  color: var(--accent-ink);
+}
+
+.unlock-ring::before {
+  content: "";
+  position: absolute;
+  inset: 10.9%;
+  border-radius: 50%;
+  background: var(--accent-ring-inner);
+}
+
+.unlock-ring svg {
+  position: relative;
+}
+
+.unlock-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
 }
 
 .unlock-title {
   margin: 0;
   color: var(--title);
   font-size: var(--fs-lg);
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
 }
 
 .unlock-note {
-  margin: 0 0 var(--sp-2);
+  margin: 0;
   color: var(--body);
   font-size: var(--fs-sm);
 }
 
+/*
+ * The code, in the face the numbers are set in everywhere else.
+ *
+ * Wide tracking and centred, because an access code is read in groups rather
+ * than as a word, and mono keeps the groups the same width whatever is typed.
+ */
 .unlock-input {
-  min-height: 44px;
+  width: 100%;
+  min-height: 48px;
+  margin-top: var(--sp-2);
   padding: 0 var(--sp-4);
-  border: 1px solid var(--hairline);
+  border: 1.5px solid var(--hairline);
   border-radius: var(--r-md);
   background: var(--surface);
   color: var(--title);
-  font: inherit;
-  font-size: var(--fs-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  letter-spacing: 0.18em;
+  text-align: center;
 }
 
-.unlock-input[aria-invalid="true"] {
+.unlock-input::placeholder {
+  color: var(--muted);
+  letter-spacing: 0.12em;
+}
+
+.unlock-input:focus-visible {
+  outline: none;
   border-color: var(--accent);
+  /* The ring the rest of the app uses for focus, as a halo rather than an
+     outline — an outline on a 48px field at this radius reads as an error. */
+  box-shadow: 0 0 0 4px var(--accent-ring-outer);
+}
+
+/* Refusal wears the status language the review screen uses for the same idea. */
+.unlock-input[aria-invalid="true"] {
+  border-color: var(--status-missing);
+  background: var(--status-missing-soft);
 }
 
 /*
- * Height held whether or not there is a message, so the button does not jump
- * up the card the moment a code is refused.
+ * Height held whether or not there is a message, so the button does not jump up
+ * the card the moment a code is refused.
  */
 .unlock-error {
   min-height: 1.2em;
   margin: 0;
-  color: var(--accent-ink);
+  color: var(--status-missing);
   font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* One shake, on the message rather than the field: the field is where the next
+     attempt is typed and it should not be moving when the hands arrive. */
+  .unlock-error[data-shown="true"] {
+    animation: refused 320ms var(--ease);
+  }
+}
+
+@keyframes refused {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(1px); }
 }
 
 .unlock-submit {
+  width: 100%;
   justify-content: center;
   padding-left: 20px;
+}
+
+@supports (corner-shape: squircle) {
+  .unlock-card {
+    corner-shape: squircle;
+  }
 }
 
 /* ══ hex fallback ══════════════════════════════════════════════════════════

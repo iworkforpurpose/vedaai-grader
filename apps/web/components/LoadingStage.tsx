@@ -1,4 +1,5 @@
 import { LoaderMark } from "./icons";
+import { LoadingPhases } from "./LoadingPhases";
 
 /**
  * The waiting screen, from the loading frame.
@@ -16,10 +17,18 @@ export function LoadingStage({
   title = "Extracting...",
   note = "This may take a while",
   detail,
+  phases,
 }: {
   title?: string;
   note?: string;
   detail?: string;
+  /**
+   * Stages to cycle through in the detail line, instead of a fixed sentence.
+   *
+   * Takes the place of `detail` rather than sitting beside it: two lines of
+   * status, one moving and one not, read as the screen disagreeing with itself.
+   */
+  phases?: readonly string[];
 }): React.JSX.Element {
   return (
     <div className="stage" role="status" aria-live="polite">
@@ -31,7 +40,13 @@ export function LoadingStage({
           <p className="stage-note">{note}</p>
         </div>
 
-        {detail && <p className="stage-detail">{detail}</p>}
+        {phases ? (
+          <p className="stage-detail">
+            <LoadingPhases phases={phases} />
+          </p>
+        ) : (
+          detail && <p className="stage-detail">{detail}</p>
+        )}
       </div>
     </div>
   );

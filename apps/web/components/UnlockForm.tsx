@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
+import { LockIcon } from "./icons";
 
 /**
  * The access code prompt.
@@ -56,35 +58,66 @@ export function UnlockForm({ next }: { next?: string }): React.JSX.Element {
 
   return (
     <main className="unlock">
-      <form className="unlock-card" onSubmit={submit}>
-        <h1 className="unlock-title">Access code</h1>
-        <p className="unlock-note">This service is not open to the public.</p>
-
-        <input
-          className="unlock-input"
-          type="password"
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          placeholder="Enter code"
-          aria-label="Access code"
-          aria-invalid={refused}
-          autoFocus
-          autoComplete="off"
-        />
-
+      <div className="unlock-inner">
         {/*
-          Announced politely rather than assertively: the message replaces itself
-          on each attempt, and a screen reader interrupting mid-word to repeat it
-          is worse than hearing it a moment later.
-        */}
-        <p className="unlock-error" role="status" aria-live="polite">
-          {refused ? "That code was not accepted." : " "}
-        </p>
+          * The operator's mark, and nothing else.
+          *
+          * The page still says nothing about what is behind it — no description
+          * of the service, no hint at whose scripts are stored here. Naming the
+          * product to somebody who cannot get in would be an invitation rather
+          * than a door, and that reasoning has not changed; this is the operator
+          * identifying itself, which is what stops the page reading as a phishing
+          * form.
+          */}
+        <div className="unlock-brand">
+          <span className="brand-mark">
+            <Image src="/brand/logo.png" alt="" width={40} height={40} priority />
+          </span>
+          <span className="brand-word">VedaAI</span>
+        </div>
 
-        <button className="cta unlock-submit" type="submit" disabled={!code.trim() || checking}>
-          {checking ? "Checking…" : "Continue"}
-        </button>
-      </form>
+        <form className="unlock-card" onSubmit={submit}>
+          {/* The hero's rings, at a size that suits a door rather than a welcome. */}
+          <span className="unlock-ring" aria-hidden="true">
+            <LockIcon size={24} />
+          </span>
+
+          <div className="unlock-heading">
+            <h1 className="unlock-title">Access code</h1>
+            <p className="unlock-note">This service is not open to the public.</p>
+          </div>
+
+          <input
+            className="unlock-input"
+            type="password"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            placeholder="••••-••••-••••"
+            aria-label="Access code"
+            aria-invalid={refused}
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+          />
+
+          {/*
+            Announced politely rather than assertively: the message replaces
+            itself on each attempt, and a screen reader interrupting mid-word to
+            repeat it is worse than hearing it a moment later.
+          */}
+          <p className="unlock-error" role="status" aria-live="polite" data-shown={refused}>
+            {refused ? "That code was not accepted." : " "}
+          </p>
+
+          <button
+            className="cta unlock-submit"
+            type="submit"
+            disabled={!code.trim() || checking}
+          >
+            {checking ? "Checking…" : "Continue"}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

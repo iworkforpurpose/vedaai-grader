@@ -200,6 +200,29 @@ export function VedaMark({ size = 22 }: IconProps): React.JSX.Element {
   );
 }
 
+export function LockIcon({ size = 22 }: IconProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect
+        x="4.5"
+        y="10.5"
+        width="15"
+        height="10"
+        rx="3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M8 10.5V8a4 4 0 0 1 8 0v2.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <circle cx="12" cy="15.5" r="1.4" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Small glyphs for the badges orbiting the hero portrait. */
 export function ClockGlyph({ size = 12 }: IconProps): React.JSX.Element {
   return (

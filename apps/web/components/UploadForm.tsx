@@ -7,6 +7,7 @@ import { API_BASE } from "@/lib/api";
 import { crossFade } from "@/lib/transitions";
 import { TypedPhrase } from "./TypedPhrase";
 import { LoadingStage } from "./LoadingStage";
+import { PIPELINE_PHASES } from "./LoadingPhases";
 import {
   ArrowRightIcon,
   ClockGlyph,
@@ -154,7 +155,7 @@ export function UploadForm({
    * forever instead of coming back and saying why.
    */
   if (busy) {
-    return <LoadingStage />;
+    return <LoadingStage phases={PIPELINE_PHASES} />;
   }
 
   return (

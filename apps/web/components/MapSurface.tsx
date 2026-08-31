@@ -20,6 +20,7 @@ import {
 import { useNarrow } from "@/lib/breakpoints";
 import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
+import { PIPELINE_PHASES } from "./LoadingPhases";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
 
@@ -282,7 +283,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   }
 
   if (submission.status === "processing") {
-    return <LoadingStage detail="Rendering pages and reading the handwriting." />;
+    return <LoadingStage phases={PIPELINE_PHASES} />;
   }
 
   return (
