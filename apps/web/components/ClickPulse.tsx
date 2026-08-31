@@ -31,6 +31,9 @@ import { useEffect } from "react";
 /** The four bearings, converted from measured screen angles to CSS rotations. */
 const RAYS = [-59, -26, 8, 42] as const;
 
+/** How far a touch may wander and still count as a tap rather than a scroll. */
+const TAP_SLOP_PX = 10;
+
 export function ClickPulse(): null {
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -40,15 +43,11 @@ export function ClickPulse(): null {
     layer.setAttribute("aria-hidden", "true");
     document.body.appendChild(layer);
 
-    const onPointerDown = (event: PointerEvent): void => {
-      // Primary button only. A right-click opens a menu and a middle-click opens a
-      // tab; neither is the gesture this is acknowledging.
-      if (event.button !== 0) return;
-
+    const spark = (x: number, y: number): void => {
       const burst = document.createElement("span");
       burst.className = "spark";
-      burst.style.left = `${event.clientX}px`;
-      burst.style.top = `${event.clientY}px`;
+      burst.style.left = `${x}px`;
+      burst.style.top = `${y}px`;
 
       for (const angle of RAYS) {
         const ray = document.createElement("i");
@@ -57,21 +56,63 @@ export function ClickPulse(): null {
       }
 
       layer.appendChild(burst);
-
       // Removed by the animation it was created for, so nothing has to track it.
-      // Listening on the burst catches the last ray to finish, since they all run
-      // the same duration and the event bubbles.
       burst.addEventListener("animationend", () => burst.remove(), { once: true });
     };
 
-    // `pointerdown` rather than `click`: the acknowledgement is expected when the
-    // finger goes down, and waiting for the release reads as the interface lagging
-    // behind the person using it. Passive because this never calls preventDefault
-    // and must not delay scrolling.
+    /*
+     * A touch that has gone down but has not yet earned a spark.
+     *
+     * A mouse press cannot be a scroll -- scrolling is a wheel -- so a mouse gets
+     * its spark immediately, which is where the responsiveness comes from. A
+     * finger press usually *is* a scroll, and firing on contact meant every swipe
+     * down the question list left a spark behind it. So touch waits for the lift
+     * and only sparks if the finger stayed put.
+     */
+    let pending: { id: number; x: number; y: number } | null = null;
+
+    const onPointerDown = (event: PointerEvent): void => {
+      // Primary button only. A right-click opens a menu and a middle-click opens
+      // a tab; neither is the gesture this is acknowledging.
+      if (event.button !== 0) return;
+
+      if (event.pointerType === "mouse") {
+        spark(event.clientX, event.clientY);
+        return;
+      }
+      pending = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+
+    const onPointerMove = (event: PointerEvent): void => {
+      if (!pending || event.pointerId !== pending.id) return;
+      const travelled = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
+      // Far enough to be a scroll or a drag, so it was never a tap.
+      if (travelled > TAP_SLOP_PX) pending = null;
+    };
+
+    const onPointerUp = (event: PointerEvent): void => {
+      if (!pending || event.pointerId !== pending.id) return;
+      const travelled = Math.hypot(event.clientX - pending.x, event.clientY - pending.y);
+      if (travelled <= TAP_SLOP_PX) spark(event.clientX, event.clientY);
+      pending = null;
+    };
+
+    const forget = (event: PointerEvent): void => {
+      if (pending && event.pointerId === pending.id) pending = null;
+    };
+
+    // Passive throughout: none of these call preventDefault, and a non-passive
+    // listener on pointermove would put this in the way of every scroll.
     window.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerup", onPointerUp, { passive: true });
+    window.addEventListener("pointercancel", forget, { passive: true });
 
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", forget);
       layer.remove();
     };
   }, []);
