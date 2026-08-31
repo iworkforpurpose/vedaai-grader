@@ -1825,39 +1825,48 @@ body::before {
  */
 .score[data-tone="none"][data-status] {
   gap: var(--sp-1);
-  border: 1px solid;
+  /*
+   * Width and style only, never the shorthand.
+   *
+   * `border: 1px solid` also sets border-color, to currentColor -- and this
+   * selector outranks the per-status rules below it, so the shorthand quietly
+   * reset every one of their border colours and the hairline came out fully
+   * saturated. Two longhands cannot do that.
+   */
+  border-width: 1px;
+  border-style: solid;
   font-size: var(--fs-sm);
   font-weight: 600;
 }
 
 .score[data-status="answered"] {
   background: var(--status-answered-soft);
-  border-color: oklch(from var(--status-answered) l c h / 0.24);
+  border-color: color-mix(in oklch, var(--status-answered) 30%, transparent);
   color: var(--status-answered);
 }
 
 .score[data-status="unanswered"] {
   background: var(--status-unanswered-soft);
-  border-color: oklch(from var(--status-unanswered) l c h / 0.24);
+  border-color: color-mix(in oklch, var(--status-unanswered) 30%, transparent);
   color: var(--status-unanswered);
 }
 
 .score[data-status="ocr_failed"],
 .score[data-status="uncertain"] {
   background: var(--status-review-soft);
-  border-color: oklch(from var(--status-review) l c h / 0.24);
+  border-color: color-mix(in oklch, var(--status-review) 30%, transparent);
   color: var(--status-review);
 }
 
 .score[data-status="not_required"] {
   background: var(--status-not-required-soft);
-  border-color: oklch(from var(--status-not-required) l c h / 0.24);
+  border-color: color-mix(in oklch, var(--status-not-required) 30%, transparent);
   color: var(--status-not-required);
 }
 
 .score[data-status="pages_missing"] {
   background: var(--status-missing-soft);
-  border-color: oklch(from var(--status-missing) l c h / 0.24);
+  border-color: color-mix(in oklch, var(--status-missing) 30%, transparent);
   color: var(--status-missing);
 }
 
