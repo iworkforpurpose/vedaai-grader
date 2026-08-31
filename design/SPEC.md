@@ -156,3 +156,10 @@ frames are read as intent rather than as targets:
    seconds. The badge counter-rotates as it goes so its icon stays upright.
    Not applied under `prefers-reduced-motion: reduce`, where they hold the resting
    arrangement.
+11. **The avatar is a photograph, not the exported asset.** `avatar.png` in the
+   table above came from node `I1:8795;17584:38945;17584:23797`. It is now a
+   photograph of the signed-in user, cropped square to the face and exported at
+   96px for the 32px it renders at — the same 3x the other brand assets use. The
+   name beside it changed with it. Nothing else about the top bar moved, and the
+   image stays `alt=""`: the name carries the identity, so announcing the picture
+   as well would say it twice.
