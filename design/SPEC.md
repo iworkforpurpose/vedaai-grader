@@ -163,3 +163,9 @@ frames are read as intent rather than as targets:
    name beside it changed with it. Nothing else about the top bar moved, and the
    image stays `alt=""`: the name carries the identity, so announcing the picture
    as well would say it twice.
+12. **The school crest is Atlas University's logo.** `school-crest.png` came
+   from node `I1:8796;17584:35143;17584:35129` and was Delhi Public School's. The
+   card beside it now reads Atlas University, Mumbai City, so the emblem follows.
+   Exported at 180px for the 60px it renders at. The slot still uses
+   `object-fit: contain` and its 8px radius, so a square logo with a full-bleed
+   field reads as a rounded mark rather than being cropped.
