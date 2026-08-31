@@ -20,7 +20,7 @@ import {
 import { useNarrow } from "@/lib/breakpoints";
 import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
-import { PIPELINE_PHASES } from "./LoadingPhases";
+import { ProcessingStage } from "./ProcessingStage";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
 
@@ -283,7 +283,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
   }
 
   if (submission.status === "processing") {
-    return <LoadingStage phases={PIPELINE_PHASES} />;
+    return <ProcessingStage submissionId={submission.submission_id} />;
   }
 
   return (
