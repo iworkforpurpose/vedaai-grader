@@ -1,17 +1,15 @@
 /**
  * The shapes a screen wears while it is still arriving.
  *
- * These are the *contents* of a screen, not a screen. The rail and the top bar
- * are rendered for real by `AppShell` around them, because neither depends on
- * anything being fetched — they are the same markup either side of the load, so
- * drawing placeholder versions of them would be inventing a second layout that
- * has to be kept in step with the first. It would not be, and the seam is exactly
- * the misalignment a skeleton is supposed to avoid.
+ * The whole page is blocks — rail, top bar and content alike — so the loading
+ * state reads as the application waiting rather than as a page with a hole in it.
  *
- * For the same reason everything here reuses the real layout classes — `.map`,
- * `.q-pane`, `.q-card`, `.sheet-bar`, `.upload`, `.dropzones` — and only replaces
- * the text and images inside them with blocks. Alignment is then a property of
- * the stylesheet rather than a set of numbers copied into a second one.
+ * Every one of them is built from the application's own layout classes: `.shell`,
+ * `.rail`, `.nav-row`, `.topbar`, `.map-panes`, `.q-card`, `.dropzones`. An
+ * earlier version drew its own shell with the measurements transcribed into it,
+ * and two layouts describing one screen only agree until somebody edits either.
+ * Reusing the rules makes alignment a property of the stylesheet instead of a set
+ * of numbers kept in step by hand.
  *
  * Deliberately not a spinner. A spinner says "something is happening" and nothing
  * else; a skeleton says where things will be, so the eye has already settled on
@@ -32,6 +30,121 @@ function Block({
 }
 
 /**
+ * The whole page, as blocks.
+ *
+ * Built out of the application's own layout classes -- `.shell`, `.rail`,
+ * `.rail-menu`, `.nav-row`, `.topbar`, `.topbar-actions` -- with a block wherever
+ * a logo, a label or an icon would be. That is the part that matters: an earlier
+ * version drew its own shell with the measurements transcribed into it, and two
+ * layouts describing one screen only agree until somebody edits either. Reusing
+ * the rules means the skeleton cannot land anywhere the content will not.
+ *
+ * The rail carries `data-collapsed` for the same reason the real one does. Show a
+ * full-width rail here and the review route snaps it to icons the instant the
+ * content arrives -- an animation on the one part of the screen that did not
+ * change, at the moment the reader is deciding where to look.
+ */
+export function ShellSkeleton({
+  collapsed = false,
+  children,
+}: {
+  collapsed?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="shell" role="status" aria-busy="true" aria-label="Loading">
+      <nav className="rail" data-collapsed={collapsed} aria-hidden="true">
+        <div className="rail-head">
+          <span className="brand-mark">
+            <Block w="40px" h="40px" radius="var(--r-md)" />
+          </span>
+          <span className="brand-word">
+            <Block w="96px" h="20px" />
+          </span>
+        </div>
+
+        <span className="toolkit">
+          <Block w="100%" h="18px" radius="var(--r-circle)" />
+        </span>
+
+        <ul className="rail-menu">
+          {Array.from({ length: 7 }, (_, i) => (
+            <li key={i}>
+              <span className="nav-row">
+                <span className="nav-icon">
+                  <Block w="20px" h="20px" radius="var(--r-sm)" />
+                </span>
+                <span className="nav-label">
+                  <Block w={`${94 - (i % 4) * 16}px`} h="14px" />
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="rail-foot">
+          <span className="nav-row">
+            <span className="nav-icon">
+              <Block w="20px" h="20px" radius="var(--r-sm)" />
+            </span>
+            <span className="nav-label">
+              <Block w="66px" h="14px" />
+            </span>
+          </span>
+
+          <div className="school">
+            <span className="school-crest">
+              <Block w="59px" h="60px" radius="50%" />
+            </span>
+            <span className="school-text sk-lines">
+              <Block w="128px" h="14px" />
+              <Block w="92px" h="12px" />
+            </span>
+          </div>
+        </div>
+      </nav>
+
+      <div className="shell-main">
+        <header className="topbar" aria-hidden="true">
+          <span className="round-button">
+            <Block w="22px" h="22px" radius="var(--r-sm)" />
+          </span>
+
+          <span className="crumb">
+            <span className="nav-icon only-wide">
+              <Block w="20px" h="20px" radius="var(--r-sm)" />
+            </span>
+            <Block w="62px" h="16px" />
+          </span>
+
+          <div className="topbar-actions">
+            <span className="round-button only-wide">
+              <Block w="20px" h="20px" radius="50%" />
+            </span>
+            <span className="round-button">
+              <Block w="20px" h="20px" radius="50%" />
+            </span>
+            <span className="round-button only-wide">
+              <Block w="20px" h="20px" radius="50%" />
+            </span>
+            <span className="user-button">
+              <span className="avatar">
+                <Block w="32px" h="32px" radius="50%" />
+              </span>
+              <span className="user-name">
+                <Block w="112px" h="16px" />
+              </span>
+            </span>
+          </div>
+        </header>
+
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * The upload screen's contents.
  *
  * Wears `.upload` itself, so the column width, the gaps and the centring are the
@@ -39,7 +152,7 @@ function Block({
  */
 export function UploadSkeleton(): React.JSX.Element {
   return (
-    <div className="upload sk-screen" role="status" aria-busy="true" aria-label="Loading">
+    <div className="upload sk-screen">
       <div className="upload-heading">
         <Block w="min(560px, 90%)" h="var(--fs-title)" radius="var(--r-md)" />
         <Block w="min(240px, 55%)" h="var(--fs-lg)" />
@@ -75,7 +188,7 @@ export function UploadSkeleton(): React.JSX.Element {
  */
 export function ReviewSkeleton(): React.JSX.Element {
   return (
-    <div className="map sk-screen" role="status" aria-busy="true" aria-label="Loading">
+    <div className="map sk-screen">
       <div className="map-panes">
         <section className="q-pane">
           <div className="q-head">
