@@ -998,18 +998,44 @@ body::before {
   border-radius: var(--r-lg);
   background: var(--surface);
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease;
+  /*
+   * No `transition` shorthand here.
+   *
+   * There was one, listing border-color and background at a raw 140ms. Being a
+   * shorthand it also rewrote `transition-property`, which the shared rule sets
+   * for every interactive surface -- and `transform` was on that list. So the
+   * press feedback had nothing to animate: the zone snapped to 0.97 and snapped
+   * back, which is what read as the click being broken rather than pressed.
+   *
+   * The shared rule already covers border-color, background-color, box-shadow and
+   * transform on the `--mid` step, which is what this wanted.
+   */
 }
 
 .dropzone:hover,
 .dropzone[data-dragging="true"] {
   border-color: var(--accent);
   background: #fffaf8;
+  box-shadow: var(--e2);
 }
 
+/* Dragging is a stronger state than hovering: something is actually over it. */
+.dropzone[data-dragging="true"] {
+  box-shadow: var(--e3);
+}
+
+/*
+ * Filled. The border goes solid, because dashed means "drop something here" and
+ * that is no longer true.
+ *
+ * `border-style` cannot be transitioned, so it changes on its own frame. The soft
+ * green wash is what carries the change instead -- it animates, it arrives at the
+ * same moment, and it is what the eye reads first.
+ */
 .dropzone[data-filled="true"] {
   border-style: solid;
   border-color: var(--status-answered);
+  background: var(--status-answered-soft);
 }
 
 .dropzone-icon {
