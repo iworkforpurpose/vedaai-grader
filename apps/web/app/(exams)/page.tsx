@@ -1,6 +1,6 @@
 import { ExamsScreen } from "@/components/ExamsScreen";
 import { fetchHealth } from "@/lib/api.server";
-import { atLeast } from "@/lib/pacing";
+import { paced } from "@/lib/pacing";
 
 /**
  * The Exams tab — the only reachable screen, as scoped.
@@ -20,13 +20,12 @@ export default async function ExamsPage(): Promise<React.JSX.Element> {
   // because a health check timed out is worse than one whose hint omits a size,
   // and the upload itself does not depend on this answer.
   //
-  // Paced, so `loading.tsx` is on screen long enough to be read rather than
-  // glimpsed. The health read usually returns in single-digit milliseconds, which
-  // without a floor is a skeleton that flashes -- the exact flicker it exists to
-  // prevent.
+  // Paced rather than delayed: the health read usually returns in single-digit
+  // milliseconds, and that is a screen that should show no loading state at all.
+  // The skeleton appears only if this route is genuinely slow.
   let maxUploadBytes: number | undefined;
   try {
-    maxUploadBytes = (await atLeast(fetchHealth())).max_upload_bytes;
+    maxUploadBytes = (await paced(fetchHealth())).max_upload_bytes;
   } catch {
     maxUploadBytes = undefined;
   }

@@ -1,37 +1,63 @@
 /**
- * How long a screen change is held open, and why it is held at all.
+ * When a loading state is worth showing, and for how long.
  *
- * A skeleton that appears and vanishes inside a hundred milliseconds is worse
- * than no skeleton: the eye registers that something happened without being able
- * to read what, which is the flicker every loading state is trying to avoid. So
- * once a screen commits to loading, it stays loading for a floor.
+ * The first version of this held every screen open for a second and a half,
+ * whatever it was waiting for. That is the wrong shape and it showed: a route
+ * that resolves in forty milliseconds was being made forty times slower to
+ * display a skeleton nobody needed, and every hot reload during development came
+ * with a second and a half of blocks.
  *
- * This is a deliberate floor rather than a threshold. The usual shape is to show
- * nothing until the work has already taken 250ms or so, and that is the better
- * default when the work is genuinely fast -- it costs nothing and the reader
- * never sees a loading state at all. Chosen against that here: the screens this
- * paces are ones where something real is being fetched, and a consistent beat on
- * every large change reads as an application that is doing something rather than
- * one that flickers.
+ * The shape that works has two numbers rather than one.
+ *
+ * Nothing appears for the first `APPEAR_AFTER_MS`. Work that finishes inside that
+ * window is simply fast, and the reader sees the finished screen with no loading
+ * state at all — which is the correct amount of ceremony for something that was
+ * never slow.
+ *
+ * Once the skeleton has been shown it stays for `HOLD_MS`. A loading state that
+ * appears and vanishes inside a few frames is worse than none: the eye registers
+ * that something happened without being able to read what, which is the flicker
+ * the skeleton exists to prevent.
+ *
+ * The delay is enforced twice, in the two places that can each only do half of
+ * it. This module keeps the server from resolving so soon after the threshold
+ * that the skeleton flashes; the stylesheet keeps the skeleton from painting
+ * before the threshold at all. Neither can do the other's half.
  */
 
-/** The floor, in milliseconds. One constant, so it is one edit to change. */
-export const SKELETON_MS = 1500;
+/** How long work may take before a loading state is worth showing. */
+export const APPEAR_AFTER_MS = 250;
+
+/** Once shown, the shortest time a loading state stays up. */
+export const HOLD_MS = 600;
 
 /**
- * Resolve `work`, but never sooner than `ms`.
+ * Resolve `work`, delaying only when a loading state will already be on screen.
  *
- * The two run together rather than in sequence: work that already takes longer
- * than the floor is not delayed at all, and work that finishes early waits out
- * the remainder. A sequential `await sleep()` followed by `await work` would add
- * the floor to every load instead of absorbing it.
+ * Fast work is not delayed at all. Work that crossed the threshold is held until
+ * the skeleton has had `HOLD_MS` to be looked at, so the total is at most
+ * `APPEAR_AFTER_MS + HOLD_MS` of padding and usually none.
  *
- * A rejection is not paced. An error should surface as soon as it is known --
- * holding a skeleton over a failure only delays the moment the reader can act on
- * it, and the error boundary has its own arrival.
+ * A rejection is never paced. An error should surface as soon as it is known;
+ * holding a skeleton over a failure only delays the moment the reader can act.
  */
-export async function atLeast<T>(work: Promise<T>, ms: number = SKELETON_MS): Promise<T> {
-  const floor = new Promise<void>((resolve) => setTimeout(resolve, ms));
-  const [result] = await Promise.all([work, floor]);
+export async function paced<T>(
+  work: Promise<T>,
+  {
+    appearAfterMs = APPEAR_AFTER_MS,
+    holdMs = HOLD_MS,
+  }: { appearAfterMs?: number; holdMs?: number } = {},
+): Promise<T> {
+  const started = Date.now();
+  const result = await work;
+  const elapsed = Date.now() - started;
+
+  // Never became visible, so there is nothing to hold.
+  if (elapsed < appearAfterMs) return result;
+
+  const remaining = appearAfterMs + holdMs - elapsed;
+  if (remaining > 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+  }
   return result;
 }

@@ -1,69 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { atLeast, SKELETON_MS } from "./pacing";
+import { APPEAR_AFTER_MS, HOLD_MS, paced } from "./pacing";
 
 /**
- * Fake timers throughout. A test that really waits 1.5s to prove a 1.5s floor is
- * a test nobody runs, and one that waits 20ms to prove it is a test that fails on
- * a loaded machine.
+ * Fake timers throughout, including the clock `paced` measures with. A test that
+ * really waits out these delays is a test nobody runs, and one that waits a few
+ * milliseconds to prove them is a test that fails on a loaded machine.
  */
-describe("atLeast", () => {
+describe("paced", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("holds work that finishes early until the floor", async () => {
+  it("does not delay work that finished before the threshold", async () => {
     const settled = vi.fn();
-    const promise = atLeast(Promise.resolve("done"), 1500).then((v) => {
-      settled(v);
-      return v;
-    });
+    void paced(Promise.resolve("fast")).then(settled);
 
-    await vi.advanceTimersByTimeAsync(1400);
-    expect(settled).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(200);
-    expect(settled).toHaveBeenCalledWith("done");
-    await expect(promise).resolves.toBe("done");
+    // Enough for the promise chain, nowhere near the threshold.
+    await vi.advanceTimersByTimeAsync(10);
+    expect(settled).toHaveBeenCalledWith("fast");
   });
 
-  it("does not delay work that already took longer than the floor", async () => {
-    const slow = new Promise<string>((resolve) => setTimeout(() => resolve("slow"), 4000));
+  it("holds work that crossed the threshold until it has been seen", async () => {
+    const slow = new Promise<string>((resolve) => setTimeout(() => resolve("slow"), 300));
     const settled = vi.fn();
-    const promise = atLeast(slow, 1500).then((v) => {
-      settled(v);
-      return v;
-    });
+    void paced(slow).then(settled);
 
-    // The floor has long passed; only the work is still outstanding.
+    // The work is done at 300ms, but the skeleton appeared at 250ms and is owed
+    // its hold, so nothing resolves yet.
+    await vi.advanceTimersByTimeAsync(320);
+    expect(settled).not.toHaveBeenCalled();
+
+    // 250 + 600 = 850ms from the start.
+    await vi.advanceTimersByTimeAsync(560);
+    expect(settled).toHaveBeenCalledWith("slow");
+  });
+
+  it("does not pad work that already outlasted the hold", async () => {
+    const verySlow = new Promise<string>((resolve) => setTimeout(() => resolve("v"), 4000));
+    const settled = vi.fn();
+    void paced(verySlow).then(settled);
+
     await vi.advanceTimersByTimeAsync(3900);
     expect(settled).not.toHaveBeenCalled();
 
-    // It resolves with the work, not the work plus another floor.
+    // Resolves with the work, not the work plus another hold.
     await vi.advanceTimersByTimeAsync(150);
-    expect(settled).toHaveBeenCalledWith("slow");
-    await expect(promise).resolves.toBe("slow");
+    expect(settled).toHaveBeenCalledWith("v");
   });
 
-  it("surfaces a rejection without waiting out the floor", async () => {
-    const promise = atLeast(Promise.reject(new Error("nope")), 1500);
+  it("surfaces a rejection without waiting", async () => {
     const caught = vi.fn();
-    void promise.catch(caught);
+    void paced(Promise.reject(new Error("nope"))).catch(caught);
 
     await vi.advanceTimersByTimeAsync(10);
     expect(caught).toHaveBeenCalled();
   });
 
-  it("defaults to the shared constant", async () => {
-    const settled = vi.fn();
-    void atLeast(Promise.resolve(1)).then(settled);
-
-    await vi.advanceTimersByTimeAsync(SKELETON_MS - 100);
-    expect(settled).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(150);
-    expect(settled).toHaveBeenCalled();
-  });
-
-  it("is the value the screens are paced to", () => {
-    expect(SKELETON_MS).toBe(1500);
+  it("never pads by more than the threshold plus the hold", () => {
+    expect(APPEAR_AFTER_MS + HOLD_MS).toBeLessThanOrEqual(1000);
   });
 });

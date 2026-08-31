@@ -3,7 +3,7 @@ import { AppShell } from "@/components/AppShell";
 import { MapSurface } from "@/components/MapSurface";
 import type { Submission } from "@/lib/contracts";
 import { INTERNAL_API_BASE } from "@/lib/api.server";
-import { atLeast } from "@/lib/pacing";
+import { paced } from "@/lib/pacing";
 
 /**
  * The mapping screen for one submission.
@@ -21,10 +21,10 @@ export default async function ReviewPage({
   params: Promise<{ id: string }>;
 }): Promise<React.JSX.Element> {
   const { id } = await params;
-  // Paced against the skeleton in `loading.tsx`. The fetch is local and fast, and
-  // the screen it builds is the densest in the app -- landing in it instantly from
-  // a blank frame is what the skeleton is here to replace.
-  const response = await atLeast(
+  // Paced against the skeleton in `loading.tsx`. On a warm fetch this adds
+  // nothing at all; when the submission is genuinely slow, the skeleton appears
+  // and is held long enough to be read rather than glimpsed.
+  const response = await paced(
     fetch(`${INTERNAL_API_BASE}/submissions/${id}`, { cache: "no-store" }),
   );
   if (response.status === 404) notFound();

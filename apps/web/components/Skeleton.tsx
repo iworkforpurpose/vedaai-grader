@@ -52,7 +52,7 @@ export function ShellSkeleton({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="shell" role="status" aria-busy="true" aria-label="Loading">
+    <div className="shell sk-hold" role="status" aria-busy="true" aria-label="Loading">
       <nav className="rail" data-collapsed={collapsed} aria-hidden="true">
         <div className="rail-head">
           <span className="brand-mark">

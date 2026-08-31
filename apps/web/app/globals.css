@@ -3251,6 +3251,34 @@ button {
  * and a skeleton that does not land where the content lands is worse than none.
  */
 
+/*
+ * Nothing paints for the first quarter second.
+ *
+ * This is the other half of the rule in lib/pacing.ts, and neither half can do
+ * the other's job. The server decides when the content is ready; only the
+ * stylesheet can decide not to draw the skeleton in the meantime. A route that
+ * resolves in forty milliseconds swaps the fallback out before this delay
+ * elapses, so the reader never sees a loading state for something that was never
+ * slow -- which is most loads, and was the problem with holding every screen open
+ * for a second and a half regardless.
+ *
+ * A hold rather than a fade: the skeleton is either worth showing or it is not,
+ * and a quarter second of it dissolving into view is a quarter second of neither.
+ */
+.sk-hold {
+  animation: sk-hold 1ms 250ms both;
+}
+
+@keyframes sk-hold {
+  from {
+    visibility: hidden;
+  }
+
+  to {
+    visibility: visible;
+  }
+}
+
 .sk {
   display: block;
   background: var(--row-active);
