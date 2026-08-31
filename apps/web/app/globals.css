@@ -58,6 +58,17 @@
   --surface-veil: rgb(255 255 255 / 0.5); /* drop-zone container */
   --chip: #f6f6f6; /* circular icon buttons */
   --row-active: #f0f0f0; /* selected nav row, school card */
+  /*
+   * Where a hovered control lands, wherever it started.
+   *
+   * The top bar had two answers to this. The icon buttons rested on --chip and
+   * hovered to #ececec; the assistant button and the user button rested on
+   * nothing and hovered to --chip -- a full step lighter, so the two controls at
+   * the end of the bar read as weaker than the ones beside them for no reason a
+   * reader could name. Resting states still differ, which is the design's intent;
+   * the destination should not.
+   */
+  --surface-hover: oklch(94.3% 0 90); /* #ececec */
   --page: #ececec;
   --hairline: rgb(48 48 48 / 0.1);
   --dashed: #d4d4d4;
@@ -722,7 +733,7 @@ body::before {
 }
 
 .round-button:hover {
-  background: #ececec;
+  background: var(--surface-hover);
 }
 
 .round-button[data-plain="true"] {
@@ -730,7 +741,7 @@ body::before {
 }
 
 .round-button[data-plain="true"]:hover {
-  background: var(--chip);
+  background: var(--surface-hover);
 }
 
 .crumb {
@@ -778,7 +789,7 @@ body::before {
 }
 
 .user-button:hover {
-  background: var(--chip);
+  background: var(--surface-hover);
 }
 
 .avatar {
