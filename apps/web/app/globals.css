@@ -2025,14 +2025,25 @@ body::before {
   gap: 10px;
   min-height: 64px;
   padding: var(--sp-3) var(--sp-5);
-  background: var(--ink);
-  color: #fff;
+  /*
+   * Glass, not ink.
+   *
+   * Drawn as #303030, which put the strongest contrast in the viewport on a strip
+   * of zoom controls sitting above a scanned page. It also made the two panes read
+   * as two different applications, one with a white header and one with a black.
+   * The paper should own the contrast range here -- it is the thing the product
+   * exists to look at.
+   */
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--title);
 }
 
 .sheet-bar h2 {
   font-size: var(--fs-base);
   font-weight: 700;
-  color: rgb(255 255 255 / 0.8);
+  color: var(--body-solid);
   white-space: nowrap;
 }
 
@@ -2050,7 +2061,7 @@ body::before {
   gap: var(--sp-1);
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-circle);
-  background: rgb(255 255 255 / 0.14);
+  background: var(--chip);
   font-size: var(--fs-sm);
 }
 
@@ -2062,12 +2073,12 @@ body::before {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #fff;
+  color: var(--title);
   cursor: pointer;
 }
 
 .tool-button:hover:not(:disabled) {
-  background: rgb(255 255 255 / 0.18);
+  background: var(--row-active);
 }
 
 .tool-button:disabled {
@@ -2375,8 +2386,8 @@ body::before {
   padding: 0 var(--sp-3);
   border: 0;
   border-radius: var(--r-circle);
-  background: rgb(255 255 255 / 0.12);
-  color: rgb(255 255 255 / 0.7);
+  background: var(--chip);
+  color: var(--body-solid);
   font: inherit;
   font-size: var(--fs-sm);
   white-space: nowrap;
@@ -2384,8 +2395,8 @@ body::before {
 }
 
 .tool-toggle:hover {
-  background: rgb(255 255 255 / 0.2);
-  color: #fff;
+  background: var(--row-active);
+  color: var(--title);
 }
 
 .tool-toggle[aria-pressed="true"] {
