@@ -169,3 +169,20 @@ frames are read as intent rather than as targets:
    Exported at 180px for the 60px it renders at. The slot still uses
    `object-fit: contain` and its 8px radius, so a square logo with a full-bleed
    field reads as a rounded mark rather than being cropped.
+13. **Phone and desktop now show the same content.** Two of the frames'
+   differences were content rather than layout, and both are removed.
+
+   The user's name was hidden below 640px, which left a phone showing a photograph
+   of somebody and no way to read who. It stays at every width; the breadcrumb
+   yields the room instead, since it already truncates and repeats what the rail
+   says.
+
+   The accent phrase in the page title was desktop-only, and the reason given was
+   sound — the title wraps on a phone and a tinted block cut across a wrap reads as
+   damage. `box-decoration-break: clone` answers that: each line fragment gets its
+   own padding and rounded corners, so a wrapped phrase reads as two tinted
+   phrases rather than one broken one.
+
+   The rail is still a drawer below 1024px. That is presentation, not content —
+   every navigation item and the school card are present either way — and a 304px
+   column pinned beside a 393px screen is not a layout.

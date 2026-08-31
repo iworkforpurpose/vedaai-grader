@@ -826,10 +826,30 @@ body::before {
 
 /* The name and chevron go first when the bar runs out of room; the avatar alone
    still identifies the account. */
+/*
+ * The name stays at every width.
+ *
+ * It used to be hidden below 640px, which left the phone showing a photograph of
+ * somebody and no way to know who. The bar is genuinely tight there, so the room
+ * comes from the breadcrumb instead: it already truncates, and it repeats what the
+ * rail says, while the name is the one thing on this screen you cannot read
+ * anywhere else.
+ */
 @media (max-width: 639px) {
-  .user-name,
-  .user-chevron {
-    display: none;
+  .topbar {
+    padding-left: var(--sp-3);
+  }
+
+  .crumb {
+    flex: 1 1 auto;
+  }
+
+  .topbar-actions {
+    flex: none;
+  }
+
+  .user-name {
+    font-size: var(--fs-sm);
   }
 }
 
@@ -924,9 +944,24 @@ body::before {
  * width. Reading the style-override table rather than the flattened PNG is what
  * distinguished the two.
  */
+/*
+ * The accent phrase, at every width.
+ *
+ * The frame only tints it on desktop, and the reason given for that was sound:
+ * the title wraps on a phone, and a tinted block cut across a wrap reads as
+ * damage rather than as emphasis. `box-decoration-break: clone` is the answer the
+ * note did not have -- each line fragment gets its own padding and its own rounded
+ * corners, so a wrapped phrase reads as two tinted phrases rather than one broken
+ * one, and the phone can have the same heading the desktop does.
+ */
 .upload-title em {
   font-style: normal;
-  color: inherit;
+  color: var(--accent);
+  padding: 0.1em 0.2em;
+  border-radius: var(--r-sm);
+  background: var(--accent-tint);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .upload-subtitle {
@@ -1338,14 +1373,6 @@ body::before {
     padding-top: var(--sp-7);
   }
 
-  /* See the note on .upload-title em: the accent and its tinted block are both
-     desktop-frame features, so they arrive together. */
-  .upload-title em {
-    color: var(--accent);
-    padding: 0.1em 0.2em;
-    border-radius: var(--r-sm);
-    background: var(--accent-tint);
-  }
 }
 
 
