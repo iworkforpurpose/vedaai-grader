@@ -319,6 +319,19 @@ img {
    * small should ever be given this -- it is a step for surfaces, not controls.
    */
   --travel: 900ms;
+
+  /*
+   * Ambient. For a change the reader did not ask for and should not be pulled
+   * towards -- at the moment, the caption cycling under the loader while the
+   * service works.
+   *
+   * The other four are all reactive: something was clicked, pressed or opened,
+   * and the motion is the answer to it. Nothing answers this one, so it has to be
+   * slow enough that noticing it is optional. At 1.2s against a phase every 4s
+   * the words are dissolving for most of the time they are on screen, which is
+   * what stops five changes in twenty seconds reading as flicker.
+   */
+  --drift: 1200ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2864,32 +2877,25 @@ body::before {
  */
 /* ══ the waiting caption ═══════════════════════════════════════════════════ */
 
+/*
+ * All the phases occupy one grid cell, so the container is as wide and as tall as
+ * the longest of them from the first frame and the line never moves. Only opacity
+ * changes, and both halves of the change animate -- the outgoing phrase is still
+ * there to fade out, which is the difference between a cross-fade and a flicker.
+ */
+.stage-phases {
+  display: grid;
+  justify-items: center;
+}
+
 .stage-phase {
-  display: inline-block;
+  grid-area: 1 / 1;
+  opacity: 0;
+  transition: opacity var(--drift) var(--ease);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  /*
-   * Each phase arrives rather than swapping in place. The span is remounted per
-   * phase, so this entrance runs again every time the caption changes -- a plain
-   * text swap at this size reads as a glitch, because the eye catches the change
-   * without catching the word.
-   */
-  .stage-phase {
-    animation: phase-in var(--mid) var(--ease-out) both;
-  }
-}
-
-@keyframes phase-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.stage-phase[data-active="true"] {
+  opacity: 1;
 }
 
 /* ══ the door ══════════════════════════════════════════════════════════════
