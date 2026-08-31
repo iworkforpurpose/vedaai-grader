@@ -304,7 +304,7 @@ img {
    * panel ten times the size, because what the eye judges is speed rather than
    * time. Only the rail uses this.
    */
-  --travel: 600ms;
+  --travel: 900ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
