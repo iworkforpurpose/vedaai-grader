@@ -119,3 +119,30 @@ frames are read as intent rather than as targets:
    Substituted.
 4. **Drop zones are drop targets.** The design draws a dashed rectangle, which is
    the conventional signal, so they accept a drop as well as a click.
+5. **Five colours are darker than the file.** Measured against WCAG 2.1, five
+   pairs carrying text sat below the 4.5:1 their size and weight require: white on
+   the `#FF5623` primary button (3.18:1), the same orange as link text (3.18:1),
+   the `#A9A9A9` breadcrumb on white (2.35:1), and the answered (3.86:1) and
+   review (3.83:1) status inks on their own fills. The accent itself is unchanged
+   and keeps every job where nothing sits on it — the focus ring, the notification
+   dot, the hero badge, the selected card's border, the large display title. Text
+   and the fills that carry a label use `--accent-ink`, the same hue and chroma at
+   lower lightness. `apps/web/lib/colour.test.ts` asserts all of it against the
+   stylesheet, so the table cannot go stale.
+6. **Two status colours the file does not have.** The review model names six
+   answer states; the frame drew three score pills. `--status-unanswered` and
+   `--status-not-required` are additions, deliberately cool so they sit apart from
+   the warm accent family the paper's own marks use.
+7. **Surfaces sit on three planes, not one.** The file draws panel and card in the
+   same white with one shadow. Geometry is unchanged; the card gains its own
+   near-white, a lighter shadow and a lit top edge, so it reads as an object on
+   the panel rather than a shape drawn on it. Shadows are tinted warm — a neutral
+   black shadow on a warm grey page reads as dirt.
+8. **The answer-sheet bar is glass, not `#303030`.** Drawn as ink in the frame,
+   which put the screen's strongest contrast on a control strip above a scanned
+   page and made the two panes read as two applications. It matches the top bar
+   instead.
+9. **The mapping screen is denser than the frame.** The question card was 96px
+   tall to hold one line of text. Padding and the number badge are tightened to
+   put roughly a third more of the list on screen. The upload frame is untouched;
+   the mapping screen has no Figma frame to diverge from.
