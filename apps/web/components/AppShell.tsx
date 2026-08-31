@@ -258,7 +258,7 @@ export function AppShell({
               <span className="avatar">
                 <Image src="/brand/avatar.png" alt="" width={32} height={32} />
               </span>
-              <span className="user-name">Madhur Rastogi</span>
+              <span className="user-name">Vighnesh Nama</span>
               <span className="user-chevron nav-icon">
                 <ChevronDownIcon size={20} />
               </span>

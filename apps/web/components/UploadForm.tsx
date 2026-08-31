@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { crossFade } from "@/lib/transitions";
+import { TypedPhrase } from "./TypedPhrase";
 import { LoadingStage } from "./LoadingStage";
 import {
   ArrowRightIcon,
@@ -160,7 +161,10 @@ export function UploadForm({
     <form className="upload" onSubmit={onSubmit}>
       <div className="upload-heading">
         <h1 className="upload-title">
-          Upload <em>Question Paper &amp; Answer Sheets</em>
+          Upload{" "}
+          <em>
+            <TypedPhrase text="Question Paper & Answer Sheets" />
+          </em>
         </h1>
         <p className="upload-subtitle">Upload both files to get started</p>
       </div>

@@ -3107,3 +3107,87 @@ button {
   padding: var(--sp-6) var(--sp-5);
   overflow: hidden;
 }
+
+/* ══ the typed heading ═════════════════════════════════════════════════════
+ *
+ * Only opacity moves. Every character is laid out from the first frame, so the
+ * heading never changes size while it types — which matters because the hero and
+ * the drop zones sit under it and would be shunted down the page for the whole
+ * second and a quarter otherwise.
+ */
+
+/* Present for anything that reads the page, absent for anything that looks. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Keeps a word whole; the spaces between words are real text and still break. */
+.typed-word {
+  white-space: nowrap;
+}
+
+.typed-caret {
+  display: inline-block;
+  width: 0.055em;
+  height: 0.78em;
+  margin-left: 0.06em;
+  vertical-align: -0.04em;
+  background: currentColor;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .typed-char {
+    opacity: 0;
+    /* `step-end` over a nominal duration: the character is absent and then it is
+       present. A fade would read as an entrance; typing has no in-between. */
+    animation: typed-in 1ms step-end both;
+  }
+
+  /*
+   * Two animations, two delays. The blink starts immediately and repeats; the
+   * exit is handed a delay past the last character, so the caret is still there
+   * while the phrase finishes and gone shortly after.
+   */
+  .typed-caret {
+    animation:
+      caret-blink 900ms step-end infinite,
+      caret-leave 320ms var(--ease) both;
+  }
+}
+
+@keyframes typed-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes caret-leave {
+  to {
+    opacity: 0;
+    /* Takes the blink with it: an infinite animation on a zero-width box is still
+       an animation, and this is decoration that has finished its job. */
+    width: 0;
+    margin-left: 0;
+  }
+}
