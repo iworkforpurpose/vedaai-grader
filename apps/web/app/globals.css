@@ -2832,3 +2832,64 @@ body::before {
 .score {
   font-variant-numeric: tabular-nums;
 }
+
+/* ══ touch behaviour ════════════════════════════════════════════════════════
+ *
+ * Two things the browser does to a document that are wrong for an application.
+ *
+ * The tap highlight paints a translucent rectangle over whatever was tapped. On
+ * an ordinary control it is invisible against the control's own press state; on
+ * the navigation scrim it is a `position: fixed; inset: 0` button, so the
+ * rectangle is the entire screen and closing the drawer flashes the whole
+ * viewport. The press feedback this app already has says the same thing better.
+ *
+ * Long-press selection is the other. Chrome -- the rail, the bars, the tabs, the
+ * chips -- is furniture, and dragging a selection across furniture is never
+ * something anyone meant to do; it just leaves the interface looking broken until
+ * you tap to clear it.
+ *
+ * Content is deliberately left selectable. A teacher copying a question, or the
+ * feedback written about an answer, is doing something real, and taking that away
+ * to fix a cosmetic problem would be the worse trade.
+ */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rail,
+.topbar,
+.sheet-bar,
+.map-tabs,
+.q-head,
+.rail-scrim,
+.score,
+.hl-tab,
+.q-num,
+button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Selection stays where the words are the point. */
+.q-text,
+.q-sub,
+.q-hint,
+.feedback,
+.upload-title,
+.upload-subtitle,
+.dropzone-file,
+.stage-title,
+.stage-note,
+.stage-detail {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/*
+ * The scrim is a button only so it can be reached and dismissed from a keyboard.
+ * It should never look like one -- it has no label, and a focus ring the size of
+ * the viewport is worse than no ring at all. Focus moves into the drawer itself.
+ */
+.rail-scrim:focus-visible {
+  outline: none;
+}
