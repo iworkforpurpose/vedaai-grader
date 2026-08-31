@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useNarrow } from "@/lib/breakpoints";
 import {
@@ -146,10 +147,23 @@ export function AppShell({
           {NAV.map((entry) => (
             <li key={entry.label}>
               {entry.available ? (
-                <a className="nav-row" href="/" aria-current="page" title={entry.label}>
+                /*
+                 * A Link, not an anchor.
+                 *
+                 * As a plain `<a href>` this was a full document navigation:
+                 * leaving a review tore the page down, refetched the route and
+                 * rehydrated the whole bundle, so the one thing a reader sees is
+                 * a white frame between two screens. Nothing in CSS can soften
+                 * that, because for a moment there is no document to animate.
+                 *
+                 * Client-side, the rail and the top bar are the same elements
+                 * either side of the change -- they never blink -- and the
+                 * arriving screen runs the entrance it already has.
+                 */
+                <Link className="nav-row" href="/" aria-current="page" title={entry.label}>
                   <span className="nav-icon">{entry.icon}</span>
                   <span className="nav-label">{entry.label}</span>
-                </a>
+                </Link>
               ) : (
                 <span className="nav-row" aria-disabled="true" title={entry.label}>
                   <span className="nav-icon">{entry.icon}</span>
