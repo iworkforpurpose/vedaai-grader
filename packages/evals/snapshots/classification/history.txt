@@ -1,0 +1,18 @@
+furniture	St Andrew's High School
+furniture	Class 10 · History · Half-Yearly Examination
+instruction	Time: 2 hours Maximum Marks: 40
+furniture	Read the following carefully.
+instruction	Answer all questions. Each question carries 4 marks.
+furniture	Write your question number clearly in the left margin.
+question_start	Q.1 Explain two reasons why the League of Nations failed to prevent war in the 1930s.
+question_start	Q.2 Describe the part played by the railways in the growth of industrial towns.
+question_start	Q.3 (a) What is meant by the term 'balance of power'?
+question_start	Q.3 (b) Give one example of it breaking down before 1914.
+instruction	Read the source below and answer the question that follows.
+material	"We were told the war would be over by Christmas. By the second winter
+material	nobody said it any more, and the newspapers had stopped printing the
+material	casualty lists in full." · a soldier's letter home, 1915
+question_start	Q.4 What does the source suggest about how opinion at home changed during the war?
+question_start	Q.5 Assess how far the Treaty of Versailles was responsible for later instability in Europe.
+question_start	Q.6 Explain why the invention of the printing press changed who could take part in public
+question_continuation	argument.

@@ -44,10 +44,11 @@ from vedaai_evals import marks as marks_mod  # noqa: E402
 from vedaai_evals import metrics  # noqa: E402
 
 #: Where the documents live. Fresh papers are generated; the corpus is real work.
-SOURCES = [ROOT / "data" / "fresh", ROOT / "data" / "corpus"]
+SOURCES = [ROOT / "data" / "fresh", ROOT / "data" / "corpus", ROOT / "data" / "asap-real"]
 
 #: The five documents that carry mark truth today.
-DOCUMENTS = ["history", "geography", "english", "economics", "physics", "math-paper"]
+DOCUMENTS = ["history", "geography", "english", "economics", "physics", "math-paper",
+             "asap-clean", "asap-middling", "asap-worst"]
 
 
 def locate(doc: str) -> tuple[Path, Path] | None:
@@ -78,16 +79,29 @@ def run_document(doc: str, *, engine: str, page_root: Path) -> Submission:
     store = SubmissionStore()
     store.put(Submission(submission_id=doc))
 
+    # Exact transcription, so mark error is the marker's alone. Refused by normal
+    # engine selection because a real scanned sheet's text layer is spurious; on a
+    # generated script it is the ground truth.
+    #
+    # And only where there *is* one. A scanned sheet has no text layer, so forcing
+    # the reader on it returns zero lines, nothing is marked, and the document
+    # scores zero — which reads as a catastrophic regression rather than as the
+    # harness asking for something impossible. The gate reported exactly that on
+    # four documents the first time it ran.
+    override = None
+    if engine == "text-layer":
+        if script.has_text_layer:
+            override = PdfTextLayerEngine()
+        else:
+            print(f"    {doc}: no text layer on the script, using the recognizer")
+
     submission = pipeline.ingest(
         submission_id=doc,
         question_paper=(paper_bytes, paper),
         answer_sheet=(script_bytes, script),
         page_store=PageStore(root=page_root / doc),
         submission_store=store,
-        # Exact transcription, so mark error is the marker's alone. Refused by
-        # normal engine selection because a real scanned sheet's text layer is
-        # spurious; on a generated script it is the ground truth.
-        answer_engine_override=PdfTextLayerEngine() if engine == "text-layer" else None,
+        answer_engine_override=override,
     )
 
     if submission.mapping is None or submission.questions is None:

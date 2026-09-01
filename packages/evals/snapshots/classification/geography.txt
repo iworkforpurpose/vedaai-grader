@@ -1,0 +1,14 @@
+furniture	Riverside Secondary School
+furniture	Class 9 · Geography · Term Test
+instruction	Time: 90 minutes Maximum Marks: 30
+furniture	All questions are compulsory.
+question_start	1. Name the three main types of rainfall and state where each occurs. [3]
+question_start	2. Study the sketch of the river below and answer the parts that follow.
+material	A
+material	B
+material	N
+question_start	2. (i) Name the landform marked at position A. [2]
+question_start	2. (ii) Explain how the feature at position B is formed. [4]
+question_start	3. Draw a labelled sketch of a meander showing the fastest flow and the deposits. [5]
+question_start	4. Give two reasons why people continue to settle on floodplains despite the risk. [4]
+question_start	5. Distinguish between weathering and erosion, with one example of each. [4]
