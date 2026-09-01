@@ -22,6 +22,7 @@ not reduced. A grade assembled from partly invented evidence is not a smaller
 grade — it is an unfounded one.
 """
 
+from . import scheme
 from .citations import CitationProblem, check, gradable_lines
 from .engine import (
     Claude,
@@ -30,6 +31,7 @@ from .engine import (
     OpenAIGrader,
     RubricOnly,
     assemble,
+    assemble_checks,
     select_grader,
 )
 from .rubric import Criterion, EvidenceKind, Rubric, derive
@@ -47,6 +49,8 @@ __all__ = [
     "Rubric",
     "RubricOnly",
     "assemble",
+    "assemble_checks",
+    "scheme",
     "check",
     "derive",
     "gradable_lines",

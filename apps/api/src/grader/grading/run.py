@@ -28,6 +28,7 @@ from vedaai_contracts import (
 )
 
 from . import rubric as rubric_mod
+from . import scheme as scheme_mod
 from .citations import gradable_lines
 from .engine import Grader
 
@@ -149,9 +150,25 @@ async def grade_submission(
             )
 
         async with semaphore:
+            # The correct answer, worked out from the question before this script
+            # is read. None where it could not be derived, which marks exactly as
+            # it did before schemes existed.
+            #
+            # Derived inside the semaphore so the extra call is bounded by the
+            # same concurrency as marking, and cached by question so a class of
+            # forty scripts pays for one paper's schemes rather than forty.
+            try:
+                scheme = await scheme_mod.derive(question, spec)
+            except Exception:  # noqa: BLE001 - never fatal
+                scheme = None
+            if scheme is not None and (
+                scheme.needs_material or any(not c.verifiable for c in scheme.checks)
+            ):
+                advisory.append(question.label_raw)
             try:
                 return await grader.grade(
-                    question=question, rubric=spec, index=index, line_ids=line_ids
+                    question=question, rubric=spec, index=index,
+                    line_ids=line_ids, scheme=scheme,
                 )
             except Exception as exc:  # noqa: BLE001 - reported, never fatal
                 # A model that cannot be reached is not a failed submission. The
@@ -171,6 +188,11 @@ async def grade_submission(
                 )
 
     failures: list[str] = []
+    #: Questions whose mark scheme rests on material the paper did not supply — a
+    #: poem, a figure, a source. The marks on these are advisory and the teacher
+    #: is told so, because nothing downstream can verify a quotation from a
+    #: passage nobody has.
+    advisory: list[str] = []
     ordered = sorted(paper.questions, key=lambda q: q.print_order)
 
     # Beyond the cap, questions are still returned — found, located, and reported
@@ -194,6 +216,15 @@ async def grade_submission(
             )
         )
     result = GradeResult(grades=list(grades), weak_topics=_weak_topics(list(grades), paper))
+
+    if advisory:
+        failures.append(
+            "These questions refer to a passage, figure or source that the question "
+            "paper does not contain, so their marks rest on an assumed answer and "
+            "could not be checked against the material: "
+            + ", ".join(sorted(set(advisory))[:8])
+            + ". Read them yourself."
+        )
 
     # Deduplicated, because a bad key fails identically on every question and a
     # teacher does not need to read the same sentence eight times.
