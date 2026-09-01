@@ -189,6 +189,63 @@ class TestSegmentation:
         assert blocks[0].ink_region_ids == ["ink:001"]
         assert not blocks[0].is_text_free
 
+    def test_algebra_that_looks_like_a_label_does_not_split_an_answer(self) -> None:
+        # Handwritten working is full of text that a label grammar accepts. On a
+        # real script "5(n) + 3(P) = 190" parsed as question 5 part n, and
+        # "5(26) + 3P = 190" as question 5 part 26 -- and a label is the strongest
+        # boundary the segmenter has, so each cut the answer in two. The fragments
+        # then competed for questions on their own and landed on questions the
+        # student had never attempted.
+        #
+        # The paper says which numbers are real. Nothing here is question 5.
+        paper = [
+            question("1", "Q1", "A man buys five notebooks and three pens.", 0, ["1"]),
+            question("2", "Q2", "A father and his son have some coins.", 1, ["2"]),
+        ]
+        lines = [
+            line(1, "Q1. Given 5 notebooks and 3 pens = 190", y0=0.10),
+            line(2, "5(n) + 3(P) = 190", y0=0.13),
+            line(3, "5(26) + 3P = 190", y0=0.16),
+            line(4, "So n = 26 and P = 20", y0=0.19),
+        ]
+        blocks = segment_blocks(lines, [], paper)
+
+        assert len(blocks) == 1, "one answer, not three"
+        assert "5(26)" in blocks[0].text
+
+    def test_a_misread_subpart_marker_does_not_split_an_answer(self) -> None:
+        # The student wrote "(i)" and "(ii)" to number the parts of one proof; the
+        # recognizer read both as "(9)". Parsed as question 9 -- a question this
+        # paper does not have -- each split the proof, and the fragment carrying
+        # its conclusion drifted onto a different question entirely.
+        paper = [
+            question("T/1", "T1", "AB is a line segment and P is its mid-point.", 0, ["1"]),
+            question("T/2", "T2", "Two isosceles triangles on the same base.", 1, ["2"]),
+        ]
+        lines = [
+            line(1, "T1 P is the mid point of AB, so AP = BP.", y0=0.10),
+            line(2, "(9) Now, AP = BP and angle APD = angle EPB.", y0=0.13),
+            line(3, "(9) Then, AD = BE by CPCT.", y0=0.16),
+        ]
+        blocks = segment_blocks(lines, [], paper)
+
+        assert len(blocks) == 1, "one proof, not three"
+        assert "CPCT" in blocks[0].text
+
+    def test_a_label_naming_a_real_question_still_splits(self) -> None:
+        # The guard must not cost the boundary it exists to find. Two answers, each
+        # opening with a label the paper actually printed.
+        paper = [
+            question("1", "Q1", "A man buys five notebooks and three pens.", 0, ["1"]),
+            question("2", "Q2", "A father and his son have some coins.", 1, ["2"]),
+        ]
+        lines = [
+            line(1, "Q1. The notebook costs 26 rupees.", y0=0.10),
+            line(2, "Q2. The father has 42 coins.", y0=0.13),
+        ]
+        blocks = segment_blocks(lines, [], paper)
+        assert len(blocks) == 2
+
     def test_ink_spanning_several_lines_of_a_block_is_attached_to_it(self) -> None:
         # A connected component of handwriting covers the whole answer, not one
         # line of it, and block geometry is a box *per line*. Asking whether any

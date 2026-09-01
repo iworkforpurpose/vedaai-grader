@@ -21,9 +21,16 @@ lines, and it is still an answer that has to be highlightable.
 
 from __future__ import annotations
 
-from vedaai_contracts import AnswerBlock, InkRegion, InkRegionKind, Line, PageBox
+from vedaai_contracts import (
+    AnswerBlock,
+    InkRegion,
+    InkRegionKind,
+    Line,
+    PageBox,
+    Question,
+)
 
-from ..questions.numbering import parse_label
+from ..questions.numbering import detect_section_prefixes, parse_label
 from . import furniture
 
 #: A vertical gap this many times the normal line spacing suggests a new block.
@@ -54,8 +61,15 @@ _CONTINUATION_MARKERS = (
 def segment_blocks(
     lines: list[Line],
     ink_regions: list[InkRegion],
+    questions: list[Question] | None = None,
 ) -> list[AnswerBlock]:
-    """Group answer-sheet lines into blocks, using ink to avoid false splits."""
+    """Group answer-sheet lines into blocks, using ink to avoid false splits.
+
+    ``questions`` is what the paper actually asks, and it is what makes a written
+    label trustworthy enough to cut an answer in two. Passing None keeps the old
+    behaviour of believing any label-shaped line, which is only safe when the
+    paper is unknown.
+    """
     # Script details — name, class, roll number, "Set 3" — are removed before
     # anything is grouped. They are not answers, and left in they become candidate
     # blocks: on the golden set the line "Name: Test Student  Class: 6C" was
@@ -67,6 +81,15 @@ def segment_blocks(
         if region.kind.counts_as_page_ink and region.is_substantive
     ]
 
+    # What the paper asks, as the segmenter needs it: the set of token paths that
+    # name a real question, and the prefix styles it numbers them with. Both come
+    # from the paper rather than from a grammar written in advance.
+    known_paths: set[tuple[str, ...]] | None = None
+    prefixes: frozenset[str] = frozenset()
+    if questions:
+        known_paths = {tuple(question.path) for question in questions}
+        prefixes = detect_section_prefixes([q.label_raw for q in questions])
+
     blocks: list[AnswerBlock] = []
     current: list[Line] = []
     spacing = _normal_spacing(usable)
@@ -76,7 +99,7 @@ def segment_blocks(
 
         if not current:
             starts_new = False
-        elif _has_question_label(line):
+        elif _label_boundary(line, known_paths, prefixes):
             # An explicit label is the strongest boundary a student ever gives.
             starts_new = True
         else:
@@ -196,8 +219,44 @@ def _ink_bridges(previous: Line, current: Line, ink: list[InkRegion]) -> bool:
     return (covered / height) >= _GAP_INK_SHARE
 
 
-def _has_question_label(line: Line) -> bool:
-    return parse_label(line.text) is not None
+def _label_boundary(
+    line: Line,
+    known_paths: set[tuple[str, ...]] | None,
+    prefixes: frozenset[str],
+) -> bool:
+    """Whether this line opens a new answer by naming a question.
+
+    A label is the strongest boundary a student ever gives, and it is the least
+    reversible decision this module makes: the aligner assigns whole blocks and
+    cannot divide one, so a boundary invented here can never be undone.
+
+    Which is why the label has to name a question the paper contains. Handwritten
+    working is full of text a label grammar accepts. Measured on one mathematics
+    script, 8 lines parsed as labels and 5 were false: ``5(n) + 3(P) = 190`` as
+    question 5 part n, ``5(26) + 3P = 190`` as question 5 part 26, and ``(i)`` and
+    ``(ii)`` -- the student's own numbering of two halves of a proof -- both read
+    by the recognizer as ``(9)``. Each one cut an answer in two, and the fragments
+    then competed for questions separately and landed on questions the student had
+    never attempted.
+
+    This is the rule the two downstream consumers of labels already apply:
+    ``anchors._resolve`` refuses a label naming no question, and ``_label_hints``
+    requires the claimed qid to exist before a label may even carry a weighted
+    hint. Segmentation was the one stage trusting a label unchecked while making
+    the most permanent decision of the three.
+
+    The cost, and it is real: extraction recall now gates segmentation. A question
+    missed on the paper means a student's correct label for it no longer splits
+    their answer. Accepted because the failure being removed is both worse and
+    commoner, and because merging is what the aligner's ``continue`` move exists
+    to repair while splitting is repairable by nothing.
+    """
+    parsed = parse_label(line.text, prefixes=prefixes)
+    if parsed is None:
+        return False
+    if known_paths is None:
+        return True
+    return parsed.tokens in known_paths
 
 
 def _build(index: int, lines: list[Line]) -> AnswerBlock:
