@@ -257,9 +257,19 @@ def _user_message(question: Question, rubric: Rubric, reference: str = "") -> st
         if reference.strip()
         else ""
     )
+    # Material the paper printed with the question. Where it is present a check
+    # that would otherwise be unanswerable becomes answerable — the table's rows are
+    # here, so "does the answer use 10 and 100 from the first row" is checkable —
+    # and `needs_material` should be false for it.
+    printed = (
+        "\n\nMATERIAL PRINTED WITH THE QUESTION, which you may rely on:\n"
+        + "\n".join(f"  {m}" for m in question.material)
+        if question.material
+        else ""
+    )
     return f"""\
 QUESTION {question.label_raw} ({rubric.marks_available:g} marks total)
-{question.text}{known}
+{question.text}{printed}{known}
 
 Write the checks. They must sum to {rubric.marks_available:g}.\
 """
@@ -285,7 +295,10 @@ async def derive(
     if rubric.marks_available <= 0:
         return None
 
-    key = f"{question.qid}\x00{question.text}\x00{rubric.marks_available}\x00{reference}"
+    key = (
+        f"{question.qid}\x00{question.text}\x00{rubric.marks_available}"
+        f"\x00{reference}\x00{'|'.join(question.material)}"
+    )
     if key in _CACHE:
         return _CACHE[key]
 

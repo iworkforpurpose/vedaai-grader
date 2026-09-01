@@ -41,6 +41,20 @@ class LineRole(StrEnum):
     SECTION_HEADER = "section_header"
     INSTRUCTION = "instruction"
     FURNITURE = "furniture"  # headers, footers, page numbers, competency tags
+    MATERIAL = "material"
+    """Content the paper prints for a question to refer to: a source extract, a
+    passage, the rows of a table, the labels on a figure.
+
+    It is not question text and it is not furniture, and collapsing it into either
+    loses marks. Read as question text it corrupts the question — a history paper's
+    source extract became part of the question above it and cost eight marks. Read
+    as furniture it is discarded, which is where it went next: the same extract
+    vanished, and the question that asks "what does the source suggest?" was marked
+    without the source. An economics table's numbers went the same way, stripped as
+    bare page numbers, leaving "calculate the elasticity between the first and
+    second rows" with the column headings and no data.
+
+    So it is kept, and attached to the questions that refer to it."""
     MARKS = "marks"
 
 
@@ -112,6 +126,20 @@ class Stem(BaseModel):
     line_ids: list[str] = Field(default_factory=list)
     geometry: list[PageBox] = Field(default_factory=list)
 
+    material: list[str] = Field(
+        default_factory=list,
+        description="Text the paper printed for this question to refer to — a source "
+        "extract, a passage, the rows of a table. Kept apart from `text` because it is "
+        "not what was asked: the marks come from the question and the material is what "
+        "the answer is judged against.",
+    )
+    material_line_ids: list[str] = Field(default_factory=list)
+    material_geometry: list[PageBox] = Field(
+        default_factory=list,
+        description="Where the material sits, so a figure with no readable text can "
+        "still be cropped and shown to something that can see it.",
+    )
+
 
 class Question(BaseModel):
     """One answerable question, or labelled sub-part.
@@ -147,6 +175,20 @@ class Question(BaseModel):
 
     line_ids: list[str] = Field(default_factory=list)
     geometry: list[PageBox] = Field(default_factory=list)
+
+    material: list[str] = Field(
+        default_factory=list,
+        description="Text the paper printed for this question to refer to — a source "
+        "extract, a passage, the rows of a table. Kept apart from `text` because it is "
+        "not what was asked: the marks come from the question and the material is what "
+        "the answer is judged against.",
+    )
+    material_line_ids: list[str] = Field(default_factory=list)
+    material_geometry: list[PageBox] = Field(
+        default_factory=list,
+        description="Where the material sits, so a figure with no readable text can "
+        "still be cropped and shown to something that can see it.",
+    )
 
     extraction_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 

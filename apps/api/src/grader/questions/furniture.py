@@ -128,6 +128,42 @@ def reads_as_a_heading(text: str) -> bool:
     return stripped.endswith(":") or _INVITES_ANSWERS.search(stripped) is not None
 
 
+#: An instruction that points at material printed beneath it: a source, a passage,
+#: a table, a figure. What follows is content the questions refer to, not furniture.
+#:
+#: Matched separately from ``_INSTRUCTION_PHRASES`` because the consequence is
+#: different. An ordinary rubric line is discarded and nothing is lost; these open a
+#: scope, and everything inside it has to survive. A history paper's source extract
+#: was thrown away as furniture and the question that asks "what does the source
+#: suggest?" was then marked without the source.
+_POINTS_AT_MATERIAL = re.compile(
+    r"\b(?:"
+    # "the following" needs a noun. "Read the following carefully." is a cover-page
+    # rubric line and it opened a material scope that then swallowed "Each question
+    # carries 4 marks" — so the paper's own denominators went missing and every
+    # question on it was graded out of nothing.
+    r"read the (?:source|passage|extract|text)"
+    r"|read the following (?:source|passage|extract|text|table|figure|carefully and)"
+    r"|study the (?:source|passage|extract|sketch|figure|diagram|map|table|graph)"
+    r"|(?:the )?(?:table|figure|diagram|sketch|graph|map|source|passage|extract)\s+"
+    r"(?:below|above|given below)"
+    r"|refer to the (?:table|figure|diagram|sketch|graph|map|source|passage)"
+    r"|based on the (?:source|passage|extract|table|figure)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: A line that is itself printed material rather than prose about it: a quotation,
+#: or a short cell from a table.
+_QUOTED = re.compile("^\\s*[\"\u201c\u2018']")
+_TABLE_CELL = re.compile("^\\s*[\\d.,%$\u20b9-]{1,12}\\s*$")
+
+
+def points_at_material(text: str) -> bool:
+    """Whether this line introduces material printed beneath it."""
+    return _POINTS_AT_MATERIAL.search(text.strip()) is not None
+
+
 #: A bracketed aside whose content is words rather than a number. Competency tags
 #: and candidate notes look like this; a mark allocation does not, and is handled
 #: separately so its value can be kept.
@@ -276,6 +312,7 @@ def classify(
     started: bool = True,
     following: tuple[str, ...] = (),
     prefixes: frozenset[str] = frozenset(),
+    material_open: bool = False,
 ) -> LineRole:
     """Decide what one line is.
 
@@ -302,6 +339,31 @@ def classify(
 
     if line.line_id in repeated:
         return LineRole.FURNITURE
+
+    lowered_early = text.lower()
+
+    # Inside an open material scope, anything that is not plainly a new question, a
+    # section boundary or a piece of rubric is the material itself. Checked before
+    # the *discarding* rules, because that is where the content was being lost — a
+    # quoted source line is not a labelled question, so every rule below it
+    # eventually called it furniture, and a table's numbers matched the
+    # bare-page-number pattern exactly.
+    #
+    # But after the rubric rules, and that ordering is load-bearing. A scope opened
+    # on the cover page otherwise swallows "Answer all questions. Each question
+    # carries 4 marks." — which is where the marks come from, so every question on
+    # the paper ends up graded out of nothing.
+    if material_open and not _SECTION_HEADER.match(text):
+        rubric = any(phrase in lowered_early for phrase in _INSTRUCTION_PHRASES) or (
+            per_question_marks(text) is not None
+        )
+        if not rubric and parse_label(text, prefixes=prefixes) is None:
+            return LineRole.MATERIAL
+
+    if _QUOTED.match(text):
+        # A quotation is printed material wherever it sits. Nothing a paper asks is
+        # phrased inside quote marks from the first character.
+        return LineRole.MATERIAL
 
     if _SECTION_HEADER.match(text):
         return LineRole.SECTION_HEADER
@@ -427,14 +489,20 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
     # Lines a heading has already accounted for as its figure — see below.
     inside_a_figure: set[int] = set()
 
+    # Whether a line that points at material has been seen and its content has not
+    # yet been closed off by a question or a section boundary.
+    material_open = False
+
     for position, line in enumerate(lines):
         upcoming = tuple(
             ln.text for ln in lines[position + 1 : position + 1 + _HEADING_LOOKAHEAD]
         )
         if position in inside_a_figure:
-            # Furniture, and it does not interrupt anything: the question it sits
-            # inside is still open when the line below it arrives.
-            roles[line.line_id] = LineRole.FURNITURE
+            # The figure a heading stepped over. Material rather than furniture: it
+            # is content the question refers to, and a geometry paper's "A", "B" and
+            # "N" are the only readable trace of the sketch its parts ask about.
+            # It still does not interrupt anything.
+            roles[line.line_id] = LineRole.MATERIAL
             continue
 
         role = classify(
@@ -444,10 +512,20 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
             started=started,
             following=upcoming,
             prefixes=prefixes,
+            material_open=material_open,
         )
         if role in {LineRole.QUESTION_START, LineRole.SECTION_HEADER}:
             started = True
         roles[line.line_id] = role
+
+        # A line pointing at material opens the scope; a question or a section
+        # closes it. Question text itself may open one — "The table below shows the
+        # price and quantity demanded of wheat" is a stem whose rows follow it — so
+        # the check runs after classification rather than instead of it.
+        if points_at_material(line.text):
+            material_open = True
+        elif role in {LineRole.QUESTION_START, LineRole.SECTION_HEADER}:
+            material_open = False
 
         # A label whose own line carries no question text is a heading, and what
         # sits between it and its text is a diagram. Classification already worked
@@ -473,7 +551,12 @@ def classify_all(lines: list[Line]) -> dict[str, LineRole]:
         # Instructions and section headers interrupt a question's text, so they
         # must not leave a following unlabelled line looking like a continuation
         # of something several lines back.
-        if role in {LineRole.SECTION_HEADER, LineRole.INSTRUCTION, LineRole.FURNITURE}:
+        if role in {
+            LineRole.SECTION_HEADER,
+            LineRole.INSTRUCTION,
+            LineRole.FURNITURE,
+            LineRole.MATERIAL,
+        }:
             previous = None
         else:
             previous = role
