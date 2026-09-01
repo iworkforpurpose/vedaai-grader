@@ -103,6 +103,47 @@ class TestConfirmedAnchors:
         assert by_qid["A/1"].block_ids == ["blk:000"]
         assert by_qid["A/2"].block_ids == ["blk:001"]
 
+    def test_a_tail_rejoins_its_answer_even_when_every_score_is_low(self) -> None:
+        # A page-spanning answer on a mathematics script. The tail is
+        # unmistakably the rest of it -- it names the notebook and the pen and
+        # gives their values -- and of every question on the paper it fits its own
+        # best, by a wide margin.
+        #
+        # In absolute terms it fits nothing. Symbols, digits and OCR damage leave
+        # a maths tail scoring 0.16 where the prose tail this floor was tuned on
+        # scored 0.44. So both repair paths refused it on `unrelated_below`, and
+        # the fallback that places whatever is left -- which applies no floor at
+        # all -- put it on an unrelated question.
+        #
+        # Measured on the real script: 0.1555 against its own question, 0.0394
+        # against the one it was given. The floor is a proxy for "this writing is
+        # about nothing", and a block whose clear best is the answer directly
+        # above it is not that.
+        class Faint:
+            unrelated_below = 0.30
+
+            def score(self, question_text: str, _block_text: str) -> float:
+                # Everything below the floor, as on the real script.
+                return 0.16 if "notebooks" in question_text else 0.04
+
+        questions = [
+            q("2", "Q2", "A father and his son have x and y coins. Find x and y.", 0, ["2"]),
+            q("4", "Q4", "A man buys 5 notebooks and 3 pens for 190 rupees.", 1, ["4"]),
+        ]
+        blocks = [
+            block("blk:000", "Q4. Given 5 notebooks and 3 pens = 190", y0=0.10,
+                  line_ids=["as:000"]),
+            block("blk:001", "Value of a note book = 26 and value of a Pen = 20", y0=0.30,
+                  line_ids=["as:001"]),
+        ]
+        anchors = [anchor("anc:000", "Q4.", "4", "as:000")]
+
+        result = resolve(paper(questions), blocks, anchors, [], similarity=Faint())
+        by_qid = result.by_qid()
+
+        assert by_qid["4"].block_ids == ["blk:000", "blk:001"], "the tail belongs to Q4"
+        assert by_qid["2"].status is not AnswerStatus.ANSWERED, "Q2 was never attempted"
+
     def test_confirmed_anchors_are_honoured_in_reverse_order(self) -> None:
         # The design error this corrects. Treating anchors as pins for a monotone
         # DP meant only a monotone subset survived, so a fully reversed sheet lost
