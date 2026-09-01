@@ -121,6 +121,30 @@ _LINE_SHAPED_ASPECT = 2.5
 #: a crossing-out. Deliberately demanding — see the note on _has_horizontal_strike.
 _STRIKE_WIDTH_FRACTION = 0.60
 
+#: How tall a region may be, in its own page's stroke heights, before a strike
+#: test on it stops meaning anything.
+#:
+#: **This is the guard that was missing, and its absence destroyed 57% of a real
+#: script's grading input.** The strike test asks for a continuous horizontal run
+#: across 60% of the region's *width*. That is demanding for one line of text and
+#: free for a region that is most of the page: ruled paper, a table rule, an
+#: underline or a long fraction bar all supply it. On the mathematics script two
+#: regions covering 0.65 of a page each were classified struck-through, and
+#: ``lines_excluded_from_grading`` then removed **63 lines whose mean recognition
+#: confidence was 0.877** from marking — text that had been read perfectly well.
+#: One question's entire answer, worth five marks, reached the grader with nothing
+#: in it and reported "crossed out or could not be read".
+#:
+#: Three, because a crossing-out is a line-scale event. A struck line is one
+#: stroke height of text plus the stroke through it, and a generous allowance for
+#: a descender or a doubled-up correction is still nothing like a page. The
+#: existing ``_MAX_REGION_AREA_FRACTION`` retry was supposed to prevent regions
+#: this large and does not: it re-dilates with a narrower kernel and then accepts
+#: whatever comes back, so an unbridgeable page still yields a page-sized blob.
+#: Rather than make merging stricter — which risks splitting real diagrams — the
+#: *conclusion* is gated on the region being the right scale to support it.
+_STRIKE_MAX_STROKE_HEIGHTS = 3.0
+
 #: Vertical slack allowed in that run, in pixels. Small on purpose: enough for a
 #: slightly sloped ruled line, not enough to smear cursive letters into a band.
 _STRIKE_WAVE_TOLERANCE_PX = 3
@@ -337,7 +361,7 @@ def find_regions(
         )
 
         has_strike = False
-        if kind is InkRegionKind.WRITING:
+        if kind is InkRegionKind.WRITING and h <= stroke_height * _STRIKE_MAX_STROKE_HEIGHTS:
             has_strike = _has_horizontal_strike(strict_crop.astype(np.uint8) * 255)
             if has_strike:
                 kind = InkRegionKind.STRUCK_THROUGH
