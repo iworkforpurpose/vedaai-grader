@@ -624,9 +624,47 @@ class TestScriptDetails:
         assert answer_furniture.is_furniture(line(1, "6282350749", y0=0.01)) is True
         assert answer_furniture.is_furniture(line(2, "6282350749", y0=0.60)) is False
 
-    def test_a_bare_page_number_is_stripped_anywhere(self) -> None:
+    def test_a_bare_page_number_is_stripped_at_the_page_edge(self) -> None:
         assert answer_furniture.is_furniture(line(1, "2", y0=0.97)) is True
         assert answer_furniture.is_furniture(line(2, "Page 2 of 4", y0=0.98)) is True
+        # And at the top, which is where this script's own page number sits.
+        assert answer_furniture.is_furniture(line(3, "Page 2", y0=0.02)) is True
+
+    def test_a_bare_number_in_the_body_is_arithmetic_not_a_page_number(self) -> None:
+        # The page-number pattern was tested *before* the header guard, so a bare
+        # one-to-three digit number counted as furniture wherever it appeared. On a
+        # real script that deleted 190, 25, 15, 2 and 3 from the working -- pieces
+        # of 5(26)+3P=190, 25*theta=230 and 198/15 -- so the grader was shown an
+        # answer with its arithmetic removed and read the gaps as the student's.
+        assert answer_furniture.is_furniture(line(1, "190", y0=0.45)) is False
+        assert answer_furniture.is_furniture(line(2, "25", y0=0.57)) is False
+        assert answer_furniture.is_furniture(line(3, "15", y0=0.74)) is False
+
+    def test_strips_a_header_that_repeats_in_place_across_pages(self) -> None:
+        # The roll-number box exactly as the recogniser rendered it on four pages:
+        # every page different, none of them matching any identity pattern, because
+        # furniture is the text *least* likely to be read correctly -- small print,
+        # boxed, at the very edge of a scan.
+        #
+        # What is stable is where it sits: y0 within 0.004 of the same height on
+        # every page. Position identifies it and its words never will.
+        header = ["Rdi No: 37", "RdiNo: 37", "Rdino: 3", "Rdl No: 37"]
+        lines = []
+        for page, text in enumerate(header):
+            lines.append(
+                line(page * 2 + 1, text, y0=0.088 + page * 0.001, page=page, x0=0.38)
+            )
+            lines.append(
+                line(
+                    page * 2 + 2,
+                    f"The answer to question {page + 1} carries on down the page.",
+                    y0=0.30,
+                    page=page,
+                )
+            )
+        answers, details = answer_furniture.strip(lines)
+        assert [ln.text for ln in details] == header
+        assert len(answers) == 4, "the four answer lines must all survive"
 
     def test_strip_returns_both_halves(self) -> None:
         # Neither half is discarded, so a caller can report what was set aside
