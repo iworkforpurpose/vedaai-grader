@@ -93,13 +93,16 @@ def segment_blocks(
     blocks: list[AnswerBlock] = []
     current: list[Line] = []
     spacing = _normal_spacing(usable)
+    # Where the writing starts, so a label can be told from an enumeration.
+    body_left = _body_left_edge(usable)
+    margin_labels = _labels_in_the_margin(usable, body_left)
 
     for index, line in enumerate(usable):
         starts_new = False
 
         if not current:
             starts_new = False
-        elif _label_boundary(line, known_paths, prefixes):
+        elif _label_boundary(line, known_paths, prefixes, body_left, margin_labels):
             # An explicit label is the strongest boundary a student ever gives.
             starts_new = True
         else:
@@ -219,10 +222,86 @@ def _ink_bridges(previous: Line, current: Line, ink: list[InkRegion]) -> bool:
     return (covered / height) >= _GAP_INK_SHARE
 
 
+#: How far left of the body text a label must sit to count as a margin label,
+#: as a share of page width. About a centimetre on A4.
+#:
+#: This exists because a student's own enumeration of the parts of one answer is
+#: indistinguishable from a question label by *text*. A physics script answered
+#: "State three properties of magnetic field lines" as:
+#:
+#:     1. Magnetic field lines go from north pole to south pole outside
+#:     the magnet.
+#:     2. The lines are closer together where the field is stronger.
+#:     3. The lines cross each other at the poles.
+#:
+#: Every one of "1.", "2." and "3." parses as a label, and the paper has
+#: questions 1, 2 and 3, so all three passed the known-paths check that was
+#: supposed to make labels safe. The answer was cut into three blocks, each was
+#: *confirmed* as an anchor and pinned — the highest authority the aligner has —
+#: and the result was that question 1 held the tail of its own working plus the
+#: first property, question 2 held only the second property, and question 3 held
+#: the third property plus the whole of the next answer.
+#:
+#: What separates them is where they sit. A question number is written in the
+#: margin, left of the writing; an enumeration sits at the body indent, because
+#: it *is* the body. Measured on that script: the margin labels were at x0≈0.035
+#: and the pointers at x0≈0.099, against a body edge of 0.100.
+_MARGIN_LEFT_OF_BODY = 0.030
+
+#: Characters after the label below which the line is the label and nothing else.
+#: A bare "Q4." on its own line is a question label wherever it sits.
+_BARE_LABEL_MAX_REMAINDER = 3
+
+
+#: A margin token is short in both senses — few characters and little width.
+#: The same reasoning ``reading_order._is_token`` uses.
+_MARGIN_TOKEN_MAX_CHARS = 6
+
+
+def _labels_in_the_margin(lines: list[Line], body_left: float) -> bool:
+    """Whether this script writes its question numbers in the margin.
+
+    Asked of the whole script rather than of one line, because it is a fact about
+    the student's habit and a single line cannot reveal it.
+
+    This is what makes the enumeration rule safe. Position alone is too blunt: a
+    student who writes "Q1." and "Q2." inline with no margin at all is labelling,
+    and refusing to split there fuses two answers — the one damage segmentation
+    cannot undo. But if the script *does* carry margin numbers, then a number at
+    the body indent is the student's own enumeration inside an answer, because
+    their question numbers are demonstrably somewhere else.
+
+    Deliberately not ``parse_label``. A margin label is often a bare digit, and a
+    bare digit does not parse as a label at all — it has no corroborating bracket
+    or ``Q`` — which is exactly why the physics script's own "1", "3" and "5" were
+    invisible to every label rule in the pipeline.
+    """
+    return any(
+        len(line.text.strip()) <= _MARGIN_TOKEN_MAX_CHARS
+        and line.box.x0 <= body_left - _MARGIN_LEFT_OF_BODY
+        for line in lines
+    )
+
+
+def _body_left_edge(lines: list[Line]) -> float:
+    """Where the answer text starts, measured from the script itself.
+
+    The median over lines long enough to be prose rather than a label or a
+    fragment, so a margin number cannot drag the estimate left and make itself
+    look like body text.
+    """
+    edges = sorted(line.box.x0 for line in lines if len(line.text.strip()) > 12)
+    if not edges:
+        return 0.0
+    return edges[len(edges) // 2]
+
+
 def _label_boundary(
     line: Line,
     known_paths: set[tuple[str, ...]] | None,
     prefixes: frozenset[str],
+    body_left: float = 0.0,
+    margin_labels: bool = False,
 ) -> bool:
     """Whether this line opens a new answer by naming a question.
 
@@ -256,7 +335,22 @@ def _label_boundary(
         return False
     if known_paths is None:
         return True
-    return parsed.tokens in known_paths
+    if parsed.tokens not in known_paths:
+        return False
+
+    # Named a real question, and now: is it in the margin, or is it the student's
+    # own numbering inside their answer? See ``_MARGIN_LEFT_OF_BODY``.
+    #
+    # A label alone on its line is exempt: a student who writes "Q4." and then
+    # starts the answer underneath has labelled it, wherever the number sits.
+    if len(parsed.remainder.strip()) <= _BARE_LABEL_MAX_REMAINDER:
+        return True
+    if not margin_labels:
+        # This script has no margin numbers, so an inline label is how it labels.
+        # Refusing here would fuse two answers, and that is the one damage
+        # segmentation cannot undo.
+        return True
+    return line.box.x0 <= body_left - _MARGIN_LEFT_OF_BODY
 
 
 def _build(index: int, lines: list[Line]) -> AnswerBlock:
