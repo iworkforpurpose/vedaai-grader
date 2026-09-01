@@ -34,8 +34,12 @@ from build_corpus import EXAMPLES, LIVE, summarise  # noqa: E402
 #: The deployed service sits behind Next, which owns the /api prefix and proxies
 #: past it. A local uvicorn is the bare API and has no prefix. Deriving it from the
 #: address avoids a flag that has to be remembered in step with --base.
+#:
+#: Keyed on the host rather than the port. Port 8000 was the same statement while
+#: only one local API ever ran, and stopped being one the first time a second had
+#: to come up beside it on 8001 — a bare API is bare wherever it is listening.
 def api_prefix(base: str) -> str:
-    return "" if ":8000" in base else "/api"
+    return "" if ("127.0.0.1" in base or "localhost" in base) else "/api"
 
 
 ROOT = Path(__file__).resolve().parents[2]
