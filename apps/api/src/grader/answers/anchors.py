@@ -32,7 +32,7 @@ from dataclasses import dataclass
 
 from vedaai_contracts import Anchor, AnchorStatus, AnswerBlock, Line, Question
 
-from ..questions.numbering import parse_label
+from ..questions.numbering import detect_section_prefixes, parse_label
 from .similarity import Similarity, default_similarity
 
 #: Semantic agreement at or above this confirms an anchor.
@@ -89,6 +89,14 @@ def detect(
     similarity = similarity or default_similarity
     by_id = {line.line_id: line for line in lines}
 
+    # The paper's own numbering styles, so a written label can be read the way the
+    # paper writes them. A section that prefixes its numbers -- "T1".."T5" beside
+    # "Q1".."Q4" -- is unreadable without them: `parse_label("T2")` returns None,
+    # so the student's own question number is discarded and the block is placed on
+    # whatever its wording happens to favour. On a real script that put a
+    # congruence proof onto a question the student never attempted, and marked it.
+    prefixes = detect_section_prefixes([question.label_raw for question in questions])
+
     candidates: list[_Candidate] = []
     for block in blocks:
         if not block.line_ids:
@@ -96,7 +104,7 @@ def detect(
         first = by_id.get(block.line_ids[0])
         if first is None:
             continue
-        parsed = parse_label(first.text)
+        parsed = parse_label(first.text, prefixes=prefixes)
         if parsed is None:
             continue
         candidates.append(

@@ -327,6 +327,35 @@ class TestAnchorDetection:
         assert found[0].claimed_qid is None, "ambiguous between Q2 and T2"
         assert not found[0].may_pin
 
+    def test_reads_a_written_label_in_the_papers_own_section_style(self) -> None:
+        # The paper numbers a section with a letter prefix -- "T1".."T5" beside
+        # "Q1".."Q4" -- and the student wrote "T2" above their answer. `parse_label`
+        # cannot see that as a label without being told the paper's prefixes, and
+        # `detect` already holds the questions those prefixes come from.
+        #
+        # Left unpassed, the strongest signal on the page is discarded: the block
+        # gets no anchor at all and is placed on whatever the wording happens to
+        # favour. On the real script that was a question the student never touched.
+        # Three numbers under each prefix, because that is what makes a prefix a
+        # scheme rather than a coincidence -- see `detect_section_prefixes`.
+        paper = [
+            question("1", "Q1", "A man buys five notebooks and three pens.", 0, ["1"]),
+            question("2", "Q2", "A father and his son have some coins each.", 1, ["2"]),
+            question("3", "Q3", "A fruit seller sells apples and oranges.", 2, ["3"]),
+            question("T/1", "T1", "AB is a line segment and P is its mid-point.", 3, ["1"]),
+            question("T/2", "T2", "Two isosceles triangles stand on the same base.", 4, ["2"]),
+            question("T/3", "T3", "Bisectors of two angles meet at a point O.", 5, ["3"]),
+        ]
+        lines = [
+            line(1, "T2", y0=0.10),
+            line(2, "Proof of (i): triangle ABD is congruent to triangle ACD.", y0=0.13),
+        ]
+        blocks = segment_blocks(lines, [])
+        found = anchors.detect(blocks, lines, paper)
+
+        assert found, "the student's own T2 must be read as a label"
+        assert found[0].claimed_qid == "T/2"
+
     def test_disputes_a_label_naming_no_question_on_the_paper(self) -> None:
         # Strong evidence of mislabelling, and nothing to pin an alignment to
         # regardless.
