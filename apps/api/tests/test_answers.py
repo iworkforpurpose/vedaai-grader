@@ -189,6 +189,29 @@ class TestSegmentation:
         assert blocks[0].ink_region_ids == ["ink:001"]
         assert not blocks[0].is_text_free
 
+    def test_ink_spanning_several_lines_of_a_block_is_attached_to_it(self) -> None:
+        # A connected component of handwriting covers the whole answer, not one
+        # line of it, and block geometry is a box *per line*. Asking whether any
+        # single line box contains a third of the region answers no as soon as the
+        # answer is three lines long, and the region is then promoted to a
+        # text-free block that alignment is right to refuse — so the writing that
+        # was read, transcribed and mapped is counted as ink belonging to nothing,
+        # and the unassigned-ink total that qualifies every absence claim on the
+        # page goes to one.
+        lines = [
+            line(1, "1. The first line of the answer.", y0=0.10),
+            line(2, "The second line of the answer.", y0=0.13),
+            line(3, "The third line of the answer.", y0=0.16),
+            line(4, "The fourth line of the answer.", y0=0.19),
+        ]
+        spanning = [ink(1, y0=0.10, y1=0.21)]
+
+        blocks = segment_blocks(lines, spanning)
+
+        assert len(blocks) == 1, "the answer is one block and the ink is its own"
+        assert blocks[0].ink_region_ids == ["ink:001"]
+        assert not any(b.is_text_free for b in blocks)
+
     def test_normal_spacing_is_not_the_median_of_all_gaps(self) -> None:
         # On a sheet of short answers, close to half of all gaps are *between*
         # answers, so a median sits between the two populations and no gap ever

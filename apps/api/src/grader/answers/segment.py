@@ -262,16 +262,35 @@ def _attach_ink(blocks: list[AnswerBlock], ink: list[InkRegion]) -> list[AnswerB
 
 
 def _best_block(region: InkRegion, blocks: list[AnswerBlock]) -> str | None:
-    """The block a region sits in, by area of overlap."""
+    """The block a region sits in, by area of overlap.
+
+    Summed across the block's boxes, not maximised over them. A block carries a
+    box per line rather than one per page — so that a highlight marks the writing
+    instead of the rectangle around it — and a connected component of handwriting
+    spans the whole answer. Against tight per-line boxes no single one holds much
+    of such a region: on ruled spacing the largest share is 0.26 at three lines
+    and 0.09 at eight, while the region genuinely sits about 0.75 inside the
+    block. Maximising therefore refused the ink of every answer longer than two
+    lines and promoted it to a text-free block, which alignment then declines for
+    good reasons of its own. The writing was read, transcribed and mapped, and
+    still counted as ink belonging to nothing: unassigned ink reached 0.97 on the
+    mathematics paper and 1.00 on the reassignment case, and past the 0.18
+    threshold that downgrades every absence claim, neither could report an
+    unanswered question at all.
+
+    Lines within a block do not overlap one another, so the sum is the area of the
+    region actually covered rather than a figure inflated by double counting.
+    """
     best_id: str | None = None
     best_overlap = 0.0
     for block in blocks:
-        for pb in block.geometry:
-            if pb.page != region.page:
-                continue
-            overlap = pb.box.intersection_area(region.box)
-            if overlap > best_overlap:
-                best_overlap, best_id = overlap, block.block_id
+        overlap = sum(
+            pb.box.intersection_area(region.box)
+            for pb in block.geometry
+            if pb.page == region.page
+        )
+        if overlap > best_overlap:
+            best_overlap, best_id = overlap, block.block_id
     if best_id is None or region.box.area <= 0:
         return None
     # Require a real share of the region to be inside, so a block does not claim
