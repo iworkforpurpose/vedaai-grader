@@ -134,6 +134,13 @@ class Rubric:
         return any(c.gradable_from_text for c in self.criteria)
 
 
+#: The smallest mark a board actually awards, and therefore the smallest a
+#: criterion may be worth. Half marks are common on Indian and UK boards;
+#: quarter marks are not, so a split that would need them is not a split the
+#: paper intended.
+MIN_CRITERION_MARKS = 0.5
+
+
 def requested_count(text: str) -> int | None:
     """How many distinct items the question asks for, if it says.
 
@@ -163,7 +170,34 @@ def derive(question: Question) -> Rubric:
     available = float(question.marks or 0.0)
     count = requested_count(text)
 
-    if count is None or count < 2:
+    # A split has to leave every criterion worth something a board would award.
+    #
+    # The even division below always sums to the printed total, which was checked
+    # and is true — and it is not sufficient. Where the count outruns the marks,
+    # the arithmetic puts the whole remainder on the first criterion and starves
+    # the rest, or goes negative:
+    #
+    #     "List six features of the plateau."      [2] -> [-0.5, .5, .5, .5, .5, .5]
+    #     "Give four examples of renewable energy." [1] -> [1.0, 0.0, 0.0, 0.0]
+    #
+    # The first is not a bad rubric, it is an unusable one: ``RubricPoint`` refuses
+    # a negative ``marks_available``, so assembling the grade raises, the
+    # per-question guard in ``run`` catches it, and the question reports "could not
+    # be marked automatically" with no indication that the paper and the parser are
+    # the reason. The second asks the model to judge four points when three of them
+    # cannot earn anything.
+    #
+    # So the count is only believed when the marks can carry it. Below that the
+    # question stays one criterion worth the printed total, which is what the paper
+    # actually said, and ``requested_count`` keeps its stated contract: it reports
+    # what the question asks for, and it is this function's job to decide whether
+    # the marks support acting on it.
+    smallest = MIN_CRITERION_MARKS
+    unsupported = count is not None and (
+        available <= 0 or available / count < smallest
+    )
+
+    if count is None or count < 2 or unsupported:
         return Rubric(
             qid=question.qid,
             criteria=[Criterion(criterion=text, marks=available, evidence=kind)],
