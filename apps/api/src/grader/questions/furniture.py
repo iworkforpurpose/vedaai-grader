@@ -68,6 +68,66 @@ _INSTRUCTION_PHRASES = (
     "this question paper",
 )
 
+#: A heading's text points forward at the parts beneath it. Matched together with
+#: a trailing colon, because that pairing is what separates a heading from a task
+#: whose marks happen to be itemised below it.
+#:
+#: Structure alone is not enough, and a real paper showed why. "3. Write a program
+#: that reads an array of 0s and 1s and prints the length of the longest run of
+#: 1s." carries no marks — they sit on its (a) and (b) — but it is the task, and
+#: calling it a heading would leave the question the student actually answered out
+#: of the candidate list. "2. Answer the following about the program you wrote for
+#: question 1:" is a heading, and the difference between them is not structural: it
+#: is that one is self-contained and the other is meaningless without its parts.
+#:
+#: ``follows?`` and not ``follow``, and the missing ``s`` cost eight marks. A
+#: history paper prints "Read the source below and answer the question that
+#: follows." — singular — and the trailing ``\b`` on the alternation refused it,
+#: because the boundary after "follow" falls between two word characters in
+#: "follows". The plural form a geography paper happened to use matched, so the
+#: rule looked complete. Both numbers are now accepted on both verbs.
+_POINTS_AT_ITS_PARTS = re.compile(
+    r"\b(?:the following"
+    r"|both parts?|all parts?|each part"
+    r"|the (?:parts?|questions?)\s+(?:below|that follows?|which follows?|given below)"
+    r"|these questions?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: A heading tells the student to answer what comes next. A task merely mentions
+#: it. This is what stands in for the colon when a paper does not use one.
+_INVITES_ANSWERS = re.compile(r"\b(?:answer|attempt|respond to)\b", re.IGNORECASE)
+
+
+def reads_as_a_heading(text: str) -> bool:
+    """Whether a line introduces other questions rather than asking one.
+
+    Pointing at the parts is necessary but never sufficient. "Balance the following
+    equation" points at something and is still a question, so a second signal has
+    to say that the parts are what gets answered.
+
+    A colon is one such signal. Requiring it was the whole rule, and a geography
+    paper ended the sentence instead: "Study the sketch of the river below and
+    answer the parts that follow." stayed an answerable question, sat in the
+    candidate list beside its own (i) and (ii), and took the answer to (ii) — which
+    was then reported uncertain on a question the student had answered in full.
+
+    The invitation is the other signal, and the more direct one: a heading asks the
+    student to *answer* what follows. "Balance the following equation." does not,
+    and stays a question whichever mark ends it.
+
+    Two callers now, and they use it for different things. ``mark_stems`` asks it of
+    a *labelled* question, to decide whether the label heads its parts rather than
+    asking anything. ``classify`` asks it of an *unlabelled* line, to decide whether
+    the line interrupts the question above it. See the note at that call site.
+    """
+    stripped = text.strip()
+    if _POINTS_AT_ITS_PARTS.search(stripped) is None:
+        return False
+    return stripped.endswith(":") or _INVITES_ANSWERS.search(stripped) is not None
+
+
 #: A bracketed aside whose content is words rather than a number. Competency tags
 #: and candidate notes look like this; a mark allocation does not, and is handled
 #: separately so its value can be kept.
@@ -315,6 +375,33 @@ def classify(
     # the page edge rules out a mid-page reference to another page.
     if _at_page_edge(line) and _PAGE_MARKER.search(text):
         return LineRole.FURNITURE
+
+    # An unlabelled line that introduces what comes after it, rather than
+    # continuing what came before.
+    #
+    # This is the fault that cost the most measured marks of anything in the
+    # pipeline. A history paper prints a source extract between Q.3(b) and Q.4:
+    #
+    #     Q.3 (b)  Give one example of it breaking down before 1914.
+    #     Read the source below and answer the question that follows.
+    #     "We were told the war would be over by Christmas. ..."
+    #     Q.4  What does the source suggest about how opinion at home changed?
+    #
+    # Nothing interrupted the chain. The instruction carries no label, matches no
+    # fixed rubric phrase, and followed a QUESTION_START — so it and all three
+    # quoted lines became continuations of Q.3(b), whose text grew to include the
+    # entire source. That polluted text then out-competed the real Q.4 for the
+    # answer about the source *and* absorbed Q.3's own answer from a later page.
+    # Three questions reported wrong, eight of the paper's twenty earned marks
+    # gone, and it presented as a marking failure rather than an extraction one.
+    #
+    # Checked after the label test, so a labelled heading — "2. Answer the
+    # following:" — is still a QUESTION_START and still becomes a stem later.
+    # Only a line with no label of its own reaches here, and such a line cannot be
+    # a question, so calling it rubric costs nothing even when the guess is wrong:
+    # the worst case is one instruction line not appended to the question above it.
+    if reads_as_a_heading(text):
+        return LineRole.INSTRUCTION
 
     if previous_role in {LineRole.QUESTION_START, LineRole.QUESTION_CONTINUATION, LineRole.STEM}:
         return LineRole.QUESTION_CONTINUATION
