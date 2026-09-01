@@ -76,6 +76,9 @@ class _Building:
     line_ids: list[str] = field(default_factory=list)
     boxes: list[PageBox] = field(default_factory=list)
     marks: int | None = None
+    material: list[str] = field(default_factory=list)
+    material_line_ids: list[str] = field(default_factory=list)
+    material_boxes: list[PageBox] = field(default_factory=list)
 
     def finish(self) -> Question:
         return Question(
@@ -88,6 +91,9 @@ class _Building:
             marks=self.marks,
             line_ids=list(self.line_ids),
             geometry=_union_per_page(self.boxes),
+            material=list(self.material),
+            material_line_ids=list(self.material_line_ids),
+            material_geometry=_union_per_page(self.material_boxes),
         )
 
 
@@ -141,6 +147,9 @@ def extract(index: LineIndex) -> QuestionPaper:
     # letter from a coincidence.
     prefixes = detect_section_prefixes([ln.text for ln in index.lines])
     building: _Building | None = None
+    #: The material block currently in hand, waiting for the questions that refer
+    #: to it. Reset by a section header, since material does not cross one.
+    material_lines: list[Line] = []
     # One entry per open ancestor: (indent level, absolute path, was the label
     # multi-token). The last flag is what distinguishes a sibling from a child —
     # see _resolve_path.
@@ -162,6 +171,7 @@ def extract(index: LineIndex) -> QuestionPaper:
                 # Numbering may restart in a new section, so ancestry from the
                 # previous one cannot apply here.
                 stack = []
+            material_lines = []
             continue
 
         if role is LineRole.INSTRUCTION:
@@ -170,6 +180,13 @@ def extract(index: LineIndex) -> QuestionPaper:
             # cover page. A cover-page rule governs the whole paper and a section's
             # own overrides it, which needs the two kept apart.
             section_instructions.setdefault(current_section, []).append(line.text)
+            continue
+
+        if role is LineRole.MATERIAL:
+            # Held open rather than attached immediately: a source extract sits
+            # between the question it belongs to and the one before it, so which
+            # question wants it is only decidable once the next label arrives.
+            material_lines.append(line)
             continue
 
         if role is LineRole.MARKS:
@@ -236,9 +253,16 @@ def extract(index: LineIndex) -> QuestionPaper:
                     line_ids=list(reopened.line_ids) + [line.line_id],
                     boxes=list(reopened.geometry) + [PageBox(page=line.page, box=line.box)],
                     marks=reopened.marks if reopened.marks is not None else marks,
+                    material=list(reopened.material)
+                    + [ln.text.strip() for ln in material_lines],
+                    material_line_ids=list(reopened.material_line_ids)
+                    + [ln.line_id for ln in material_lines],
+                    material_boxes=list(reopened.material_geometry)
+                    + [PageBox(page=ln.page, box=ln.box) for ln in material_lines],
                 )
                 continue
 
+            wanted = _material_for(body, parsed, material_lines, stack)
             building = _Building(
                 qid=canonical_qid(current_section, path),
                 label=parsed,
@@ -250,6 +274,9 @@ def extract(index: LineIndex) -> QuestionPaper:
                 line_ids=[line.line_id],
                 boxes=[PageBox(page=line.page, box=line.box)],
                 marks=marks,
+                material=[ln.text.strip() for ln in wanted],
+                material_line_ids=[ln.line_id for ln in wanted],
+                material_boxes=[PageBox(page=ln.page, box=ln.box) for ln in wanted],
             )
             print_order += 1
             continue
@@ -474,3 +501,63 @@ def question_lines(index: LineIndex, question: Question) -> list[Line]:
     """The lines a question was built from."""
     by_id = index.by_id()
     return [by_id[line_id] for line_id in question.line_ids if line_id in by_id]
+
+
+#: Words a question uses when it refers to material printed beside it.
+#:
+#: Attachment is deliberately narrow rather than "everything in scope". A source
+#: extract sits between Q.3 and Q.4 and is wanted by Q.4 alone; handing it to Q.5
+#: and Q.6 as well puts a soldier's letter into a question about the Treaty of
+#: Versailles, and the checks are derived from what the marker is shown.
+_REFERS_TO_MATERIAL = re.compile(
+    r"\b(?:"
+    r"the (?:source|passage|extract|table|figure|diagram|sketch|graph|map|text)"
+    r"|(?:first|second|third|following|above|below|given)\s+(?:row|rows|column|columns)"
+    r"|position\s+[A-Z]\b"
+    r"|marked\s+(?:at|on)\b"
+    r"|shown\s+(?:in|on|above|below)\b"
+    r"|in the (?:figure|diagram|sketch|table|map|passage|source)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def refers_to_material(text: str) -> bool:
+    """Whether a question's own words point at material printed with it."""
+    return _REFERS_TO_MATERIAL.search(text) is not None
+
+
+def _material_for(
+    body: str,
+    parsed: ParsedLabel,
+    material_lines: list[Line],
+    stack: list[_Ancestor],
+) -> list[Line]:
+    """The material this question should be shown, out of what is in hand.
+
+    Two ways to qualify, and a question needs only one.
+
+    **Its own words refer to the material.** "What does the source suggest…",
+    "between the first and second rows", "the landform marked at position A". This
+    is the direct case and it is what a reader would use.
+
+    **It is a part of the question that introduced the material.** A geography stem
+    reads "Study the sketch of the river below and answer the parts that follow",
+    and its (i) and (ii) then ask about positions on that sketch without naming it
+    again. Attaching by ancestry is what covers them.
+
+    Everything else gets nothing, which is the point. The alternative — give the
+    block to every question until the next one — was rejected because material is
+    not inert: the checks a marker is given are derived from what it is shown, so a
+    source extract handed to an unrelated question becomes checks about the source.
+    """
+    if not material_lines:
+        return []
+    if refers_to_material(body):
+        return list(material_lines)
+    # A sub-part of an open ancestor: the label has more than one token, or it is
+    # relative and sits under something. Either way it belongs to a question above
+    # it, and that question is what introduced the material.
+    if len(parsed.tokens) > 1 or (stack and not parsed.is_top_level_candidate):
+        return list(material_lines)
+    return []
