@@ -1,0 +1,94 @@
+{
+  "doc_id": "math-paper",
+  "source": "read",
+  "notes": "Mark truth only, for a real Class 9 mathematics script that lives untracked in data/corpus/math-paper/. Copied here because data/ is gitignored, so the only real-handwriting mark truth in the project existed on one machine with no backup. Deliberately narrow: question ids, printed denominators, what the student attempted, the award, the defensible band, the correct answer, and why that mark. No handwriting, no transcription, no geometry, nothing identifying. Solved by hand off the rendered pages on 2026-09-01 before any pipeline run; the prose original is EXPECTED.md beside the script. Nine questions, five marks each, 45 available, expected total 15 with 14-17 treated as agreement.",
+  "total_low": 14.0,
+  "total_high": 17.0,
+  "questions": [
+    {
+      "qid": "1",
+      "label_raw": "Q1",
+      "marks_available": 5.0,
+      "status": "unanswered",
+      "marks_awarded": 0.0,
+      "key": "Both taps together 6 h so A = 10 h, B = 15 h; x/10 + y/15 = 1 with y = 2x+1 gives x = 4, y = 9.",
+      "note": "Not attempted. No writing on any of the four pages relates to it."
+    },
+    {
+      "qid": "2",
+      "label_raw": "Q2",
+      "marks_available": 5.0,
+      "status": "unanswered",
+      "marks_awarded": 0.0,
+      "key": "y+18 = 2(x-18) and x+12 = 3(y-12) give x = 42, y = 30.",
+      "note": "Not attempted."
+    },
+    {
+      "qid": "3",
+      "label_raw": "Q3",
+      "marks_available": 5.0,
+      "status": "answered",
+      "marks_awarded": 5.0,
+      "key": "3x+2y = 58 and 2x+3y = 54 give apple Rs 13.20, orange Rs 9.20.",
+      "note": "Both values correct and the elimination is sound throughout. Full marks."
+    },
+    {
+      "qid": "4",
+      "label_raw": "Q4",
+      "marks_available": 5.0,
+      "status": "answered",
+      "marks_awarded": 5.0,
+      "key": "5n+3p = 190 and 3n+2p = 118 give notebook Rs 26, pen Rs 20.",
+      "note": "Both values correct, elimination done correctly. Full marks."
+    },
+    {
+      "qid": "T/1",
+      "label_raw": "T1",
+      "marks_available": 5.0,
+      "status": "answered",
+      "marks_awarded": 3.0,
+      "band_low": 2.0,
+      "band_high": 3.0,
+      "key": "Triangle DAP congruent to EBP by ASA using angle DAP = angle EBP (given), AP = BP, angle APD = angle EPB; then AD = BE by CPCT.",
+      "note": "Derives angle APD = angle EPB correctly and states both results, but the ASA triple cites angle EPA = angle DPB -- an angle at P belonging to neither triangle in the correspondence -- instead of the given angle BAD = angle ABE, so the congruence is not actually established. Method and conclusion credited, the congruence step is not. A marker may argue this down to 2."
+    },
+    {
+      "qid": "T/2",
+      "label_raw": "T2",
+      "marks_available": 5.0,
+      "status": "answered",
+      "marks_awarded": 2.0,
+      "band_low": 2.0,
+      "band_high": 3.0,
+      "key": "(i) SSS (ii) SAS (iii) AP bisects angle A and angle D (iv) AP is the perpendicular bisector of BC.",
+      "note": "(i) and (ii) done, but (ii) uses angle BAP = angle CAP without deriving it from (i) by CPCT; (iii) and (iv) never attempted. Two of four parts, one of them incompletely justified. A marker may argue this up to 3."
+    },
+    {
+      "qid": "T/3",
+      "label_raw": "T3",
+      "marks_available": 5.0,
+      "status": "unanswered",
+      "marks_awarded": 0.0,
+      "key": "With angle ABC = angle ACB = 2b, angle BOC = 180 - 2b, the external angle adjacent to angle ABC.",
+      "note": "Not attempted."
+    },
+    {
+      "qid": "T/4",
+      "label_raw": "T4",
+      "marks_available": 5.0,
+      "status": "unanswered",
+      "marks_awarded": 0.0,
+      "key": "AB = AD and OB = OD put A on the perpendicular bisector of BD; CB = CD and OB = OD put C on it too; so A, O, C are collinear.",
+      "note": "Not attempted."
+    },
+    {
+      "qid": "T/5",
+      "label_raw": "T5",
+      "marks_available": 5.0,
+      "status": "unanswered",
+      "marks_awarded": 0.0,
+      "key": "LN = QR/2 and MN = PQ/2 by the midpoint theorem, and PQ = QR.",
+      "note": "Not attempted."
+    }
+  ]
+}
