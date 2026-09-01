@@ -277,11 +277,75 @@ ECONOMICS_SCRIPT: list[dict] = [
 ]
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Physics — answers that are wrong in specific, ordinary ways
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Every other script here is answered well. That made the marker look good and
+# tested only half of marking: all four papers measure its willingness to AWARD,
+# and none measure its willingness to WITHHOLD. The only two partial-credit
+# questions in the whole set sit on the mathematics script, where transcription is
+# too damaged to tell a marking error from a reading one.
+#
+# So this paper is answered badly, in the six ways students are actually wrong.
+# Expected total is 5 of 14 — low on purpose, because a generous marker fails here
+# and passes everywhere else.
+
+PHYSICS_PAPER: list[tuple[str, str]] = [
+    ("title", "Nehru Vidyalaya"),
+    ("sub", "Class 10  ·  Physics  ·  Class Test"),
+    ("sub", "Time: 45 minutes                                Maximum Marks: 14"),
+    ("rule", ""),
+    ("instr", "Answer all questions. Show your working."),
+    ("gap", ""),
+    ("q", "1.  A car travels 150 m in 10 s. Calculate its average speed.   [2]"),
+    ("gap", ""),
+    ("q", "2.  State three properties of magnetic field lines.   [3]"),
+    ("gap", ""),
+    ("q", "3.  Explain why a bird can sit safely on a high-voltage transmission wire.   [3]"),
+    ("gap", ""),
+    ("q", "4.  Define resistance and state its SI unit.   [2]"),
+    ("gap", ""),
+    ("q", "5.  A wire carries a current of 2 A when 12 V is applied. Calculate its resistance.   [2]"),
+    ("gap", ""),
+    ("q", "6.  Give two uses of a convex mirror.   [2]"),
+]
+
+PHYSICS_SCRIPT: list[dict] = [
+    dict(page=0, label="1", lines=[
+        "Speed = distance / time",
+        "= 150 / 10",
+        "= 1.5 m/s",
+    ], case="METHOD CORRECT, ARITHMETIC WRONG — 150/10 is 15, not 1.5. Method mark only."),
+    dict(page=0, label="2", lines=[
+        "1. Magnetic field lines go from north pole to south pole outside",
+        "the magnet.",
+        "2. The lines are closer together where the field is stronger.",
+        "3. The lines cross each other at the poles.",
+    ], case="TWO OF THREE — the third property is false; field lines never cross."),
+    dict(page=1, label="3", lines=[
+        "A bird can sit on the wire because birds have feathers and",
+        "feathers are insulators, so the current cannot pass into the",
+        "bird's body. That is why it is safe for the bird.",
+    ], case="CONFIDENT AND WRONG — fluent, on topic, and not the reason. Nothing to credit."),
+    dict(page=1, label="4", lines=[
+        "Resistance is the resistance offered by a wire to the current",
+        "flowing through it. Its SI unit is the ohm.",
+    ], case="CIRCULAR DEFINITION, CORRECT UNIT — the unit mark only."),
+    dict(page=2, label="5", lines=[
+        "R = V / I",
+        "= 12 / 2",
+        "= 6 volts",
+    ], case="CORRECT WORKING, WRONG UNIT — resistance is in ohms, not volts."),
+]
+
+
 PAPERS = {
     "history": (HISTORY_PAPER, HISTORY_SCRIPT),
     "geography": (GEOGRAPHY_PAPER, GEOGRAPHY_SCRIPT),
     "english": (ENGLISH_PAPER, ENGLISH_SCRIPT),
     "economics": (ECONOMICS_PAPER, ECONOMICS_SCRIPT),
+    "physics": (PHYSICS_PAPER, PHYSICS_SCRIPT),
 }
 
 

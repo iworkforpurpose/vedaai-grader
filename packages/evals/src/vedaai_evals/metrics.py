@@ -561,3 +561,316 @@ def detector_agreement(
     report.covered_by_text = sum(1 for covered in ink_covered_flags if covered)
     report.uncovered = report.ink_regions - report.covered_by_text
     return report
+
+
+# -- scoring accuracy -----------------------------------------------------
+#
+# Everything above this line measures where an answer is or which question it
+# belongs to. Nothing above it measures whether the marks are right, which is
+# why no published figure has ever said so.
+#
+# Two decisions here mirror ones the harness already made elsewhere, for the same
+# reasons.
+#
+# **The false-zero rate is reported separately from mark error.** It is the
+# scoring analogue of the false-unanswered rate, and it hides inside an average
+# exactly as that one does: a script marked 18/20 against a truth of 20/20 looks
+# excellent whether the two missing marks were spread thinly or were one correct
+# answer scored zero. The second is the error a teacher acts on -- a student
+# challenges a zero and the teacher has to re-read -- so it does not get to
+# average away.
+#
+# **Error is partitioned by whether placement was right.** Marking error and
+# aligner error are indistinguishable in a single figure, and a fix to one would
+# be scored against the other. This is the same attribution the runner already
+# protects when it reads synthetic answer sheets from their text layer so that a
+# mapping regression cannot be confused with a recognition one.
+
+
+@dataclass(frozen=True)
+class GradedFact:
+    """What one question's grade says, flattened.
+
+    A deliberately small projection of ``QuestionGrade`` and ``Mapping`` rather
+    than the contracts themselves, so this module keeps working against a run
+    loaded from JSON as well as against live objects. The alternative -- importing
+    the contracts and reaching into them -- would tie the metric to whichever of
+    the three harnesses happened to produce it.
+    """
+
+    qid: str
+    status: str
+    """The mapping status: answered, unanswered, ocr_failed, not_required, ..."""
+
+    marks_available: float
+    marks_awarded: float
+    judged: bool
+    """True only where a model actually judged. Every other constructor in the
+    grading package returns a grade nobody judged, and the difference is not
+    otherwise recoverable -- an unjudged 0 and a judged 0 are the same number and
+    completely different facts."""
+
+    unmarked_reason: str = ""
+    rubric_marks_sum: float = 0.0
+    """Sum of the derived criteria's marks. Compared against marks_available to
+    catch a rubric split that changed the denominator."""
+
+    criteria: int = 0
+    awarded_points: int = 0
+    cited_points: int = 0
+    incoherent_points: int = 0
+    """Points claiming satisfied while carrying less than full marks, or the
+    reverse. Should be zero; measured rather than assumed."""
+
+
+@dataclass
+class ScoringReport:
+    """How close the proposed marks came, and where the error came from."""
+
+    scored: list[str] = field(default_factory=list)
+    excluded: list[str] = field(default_factory=list)
+    missing_from_run: list[str] = field(default_factory=list)
+    """Truth qids the run never produced. Almost always an extraction failure, and
+    loud here on purpose: silently scoring the intersection would let a paper that
+    lost half its questions report a flawless mark error."""
+
+    errors: dict[str, float] = field(default_factory=dict)
+    signed: dict[str, float] = field(default_factory=dict)
+    within_band: list[str] = field(default_factory=list)
+    awarded: dict[str, float] = field(default_factory=dict)
+    """What the run actually awarded each scored question.
+
+    Kept rather than reconstructed. A report that rebuilt it as
+    ``truth + signed_error`` is only correct where truth sits at its own band
+    midpoint, and printed an award of 0 on a 1-2 band as -0.5 — which reads as
+    the grader awarding negative marks, a bug that does not exist.
+    """
+    truth_marks: dict[str, float] = field(default_factory=dict)
+    """What truth says each scored question earned. Kept because the
+    false-zero denominator is "questions that earned something", which cannot be
+    recovered from the errors alone."""
+
+    false_zeros: list[str] = field(default_factory=list)
+    """Truth says the student earned marks; the run awarded nothing."""
+    false_credit: list[str] = field(default_factory=list)
+    """Truth says nothing was earned; the run awarded marks anyway."""
+
+    placed_right: list[str] = field(default_factory=list)
+    placed_wrong: list[str] = field(default_factory=list)
+    hedged: list[str] = field(default_factory=list)
+    """Truth says nothing was written and the run declined to say so outright --
+    `uncertain` where `unanswered` was available. Safe, and not a placement
+    error, so it is counted apart from both."""
+
+    truth_total: float = 0.0
+    awarded_total: float = 0.0
+    available_total: float = 0.0
+    total_band: tuple[float, float] = (0.0, 0.0)
+
+    denominator_mismatch: list[tuple[str, float, float]] = field(default_factory=list)
+    unmarked_reasons: dict[str, int] = field(default_factory=dict)
+    unjudged: list[str] = field(default_factory=list)
+
+    awarded_points: int = 0
+    cited_points: int = 0
+    incoherent_points: int = 0
+
+    # -- headline ---------------------------------------------------------
+
+    @property
+    def false_zero_rate(self) -> float | None:
+        """Share of genuinely-earned answers that were scored zero.
+
+        Reported first and alone. See the note at the head of this section.
+
+        The denominator is the questions that actually earned something, not every
+        scored question. Including the genuine zeros would dilute it with the
+        cases the system gets right for free -- a script where the student
+        attempted two of nine questions has seven unearned zeros, and counting
+        them would make any false zero look rare.
+        """
+        deserving = [q for q, marks in self.truth_marks.items() if marks > 0]
+        if not deserving:
+            return None
+        return len(self.false_zeros) / len(deserving)
+
+    @property
+    def mae(self) -> float | None:
+        """Mean absolute mark error per question, against the band midpoint."""
+        return _mean(list(self.errors.values()))
+
+    @property
+    def within_band_rate(self) -> float | None:
+        if not self.scored:
+            return None
+        return len(self.within_band) / len(self.scored)
+
+    @property
+    def total_error(self) -> float:
+        """Signed error on the whole script. The number a teacher would notice."""
+        return self.awarded_total - self.truth_total
+
+    @property
+    def total_within_band(self) -> bool:
+        low, high = self.total_band
+        return low <= self.awarded_total <= high
+
+    # -- attribution ------------------------------------------------------
+
+    @property
+    def mae_placed_right(self) -> float | None:
+        """Mark error where the answer reached the right question. Marker quality."""
+        return _mean([self.errors[q] for q in self.placed_right if q in self.errors])
+
+    @property
+    def mae_placed_wrong(self) -> float | None:
+        """Mark error where it did not. The cost of a misplacement, in marks."""
+        return _mean([self.errors[q] for q in self.placed_wrong if q in self.errors])
+
+    @property
+    def marks_lost_to_placement(self) -> float:
+        """Absolute marks the misplaced questions account for.
+
+        The single most useful number for deciding what to fix next: if this is
+        most of the error, the aligner is the problem and the marker is fine.
+        """
+        return sum(self.errors[q] for q in self.placed_wrong if q in self.errors)
+
+    # -- hygiene ----------------------------------------------------------
+
+    @property
+    def citation_rate(self) -> float | None:
+        """Share of mark-bearing rubric points that cited a line."""
+        if not self.awarded_points:
+            return None
+        return self.cited_points / self.awarded_points
+
+    @property
+    def denominator_ok(self) -> bool:
+        return not self.denominator_mismatch
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def scoring_scores(
+    truth: "object",
+    facts: dict[str, GradedFact],
+) -> ScoringReport:
+    """Score a run's marks against mark truth.
+
+    ``truth`` is a ``marks.MarkSet``; typed loosely to keep this module free of a
+    dependency on the truth loader, which is what lets the metric be tested with a
+    hand-built stub.
+
+    Questions truth deliberately excludes leave both the numerator and the
+    denominator, so an excluded question cannot quietly depress the script's
+    percentage.
+    """
+    report = ScoringReport()
+    report.total_band = truth.total_band  # type: ignore[attr-defined]
+
+    for entry in truth.questions:  # type: ignore[attr-defined]
+        fact = facts.get(entry.qid)
+
+        if fact is None:
+            report.missing_from_run.append(entry.qid)
+            continue
+
+        # Hygiene is collected for every question, scored or not: a broken
+        # denominator on an excluded question is still a broken denominator.
+        if fact.criteria and abs(fact.rubric_marks_sum - fact.marks_available) > 1e-6:
+            report.denominator_mismatch.append(
+                (entry.qid, fact.rubric_marks_sum, fact.marks_available)
+            )
+        report.awarded_points += fact.awarded_points
+        report.cited_points += fact.cited_points
+        report.incoherent_points += fact.incoherent_points
+        if fact.status == "answered" and not fact.judged:
+            report.unjudged.append(entry.qid)
+        if fact.status != "answered":
+            reason = fact.unmarked_reason or fact.status
+            report.unmarked_reasons[reason] = report.unmarked_reasons.get(reason, 0) + 1
+
+        if not entry.is_scored:
+            report.excluded.append(entry.qid)
+            continue
+
+        report.scored.append(entry.qid)
+
+        # Placement, from whether an answer was located at all -- not from status
+        # equality, which was the first version and was wrong in a way that
+        # inverted the whole attribution.
+        #
+        # On the real mathematics script five untouched questions came back
+        # `uncertain` where truth says `unanswered`. Status equality called all
+        # five misplaced, so the report claimed placement failed on five questions
+        # and succeeded on four, when in fact placement was perfect and every mark
+        # of the error was the marker's. `uncertain` on a question nobody answered
+        # is the system declining to assert a blank -- the conservative direction
+        # this product is deliberately built to prefer -- and counting it as a
+        # placement failure punishes exactly the behaviour the absence taxonomy
+        # exists to produce.
+        #
+        # So placement asks the only question that matters here: did writing get
+        # attached to this question, and should it have been?
+        truth_answered = entry.status is AnswerStatus.ANSWERED
+        system_placed = fact.status == "answered"
+        if truth_answered == system_placed:
+            report.placed_right.append(entry.qid)
+        else:
+            report.placed_wrong.append(entry.qid)
+
+        # Hedging is tracked separately, because it is a reporting-quality fact
+        # rather than a placement error and must not be averaged into either. A
+        # script where every blank reads `uncertain` is safe and unhelpful, and
+        # that is worth seeing without it corrupting the attribution above.
+        if not truth_answered and fact.status not in {"answered", entry.status.value}:
+            report.hedged.append(entry.qid)
+
+        low, high = entry.band
+        midpoint = (low + high) / 2
+        awarded = fact.marks_awarded
+        report.errors[entry.qid] = abs(awarded - midpoint)
+        report.signed[entry.qid] = awarded - midpoint
+        if low - 1e-6 <= awarded <= high + 1e-6:
+            report.within_band.append(entry.qid)
+
+        truth_marks = entry.marks_awarded or 0.0
+        report.truth_marks[entry.qid] = truth_marks
+        report.awarded[entry.qid] = awarded
+        if truth_marks > 0 and awarded == 0:
+            report.false_zeros.append(entry.qid)
+        if truth_marks == 0 and awarded > 0:
+            report.false_credit.append(entry.qid)
+
+        report.truth_total += truth_marks
+        report.awarded_total += awarded
+        report.available_total += entry.marks_available
+
+    return report
+
+
+def mark_stability(runs: list[dict[str, float]]) -> dict[str, float]:
+    """Per-question spread across repeated marking runs of one script.
+
+    Marking the same script twice must give the same marks, or a teacher cannot
+    check a number by looking again -- and every accuracy figure measured through
+    the grading path becomes noise. Temperature 0 and a fixed seed narrow this;
+    hosted models are not bit-reproducible, so it has to be measured rather than
+    assumed.
+
+    Returns the max-minus-min per question, which is the figure that matters:
+    variance understates a rare but large disagreement, and a teacher meets the
+    range, not the standard deviation.
+    """
+    if not runs:
+        return {}
+    qids = {qid for run in runs for qid in run}
+    spread: dict[str, float] = {}
+    for qid in sorted(qids):
+        seen = [run[qid] for run in runs if qid in run]
+        if seen:
+            spread[qid] = max(seen) - min(seen)
+    return spread

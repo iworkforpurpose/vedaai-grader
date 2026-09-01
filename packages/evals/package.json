@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "eval": "uv run --extra dev python -m vedaai_evals.runner",
+    "eval": "uv run --extra dev --extra semantic python -m vedaai_evals.runner",
     "test": "uv run --extra dev python -m pytest -q",
-    "typecheck": "uv run --extra dev python -m ruff check src tests"
+    "typecheck": "uv run --extra dev python -m ruff check src tests",
+    "score-marks": "uv run --extra dev --extra semantic python ../../tooling/scripts/score_marks.py"
   }
 }
