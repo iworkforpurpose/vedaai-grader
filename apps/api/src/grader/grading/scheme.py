@@ -225,10 +225,24 @@ they are fluent, confident and on topic.\
 """
 
 
-def _user_message(question: Question, rubric: Rubric) -> str:
+def _user_message(question: Question, rubric: Rubric, reference: str = "") -> str:
+    # A reference answer, where the teacher supplied one.
+    #
+    # This is the difference between checks derived from the question alone and
+    # checks derived from a real mark scheme, and it is worth keeping separable
+    # because the two are not equivalent: a model writing its own reference guesses
+    # confidently where it does not know, and enforcing that guess tripled the
+    # false-zero rate. A reference a person wrote does not have that failure.
+    known = (
+        f"\n\nThe teacher's reference answer, which is correct and authoritative:\n"
+        f"{reference.strip()}\n\nBase the checks on it. Do not add requirements it "
+        f"does not contain."
+        if reference.strip()
+        else ""
+    )
     return f"""\
 QUESTION {question.label_raw} ({rubric.marks_available:g} marks total)
-{question.text}
+{question.text}{known}
 
 Write the checks. They must sum to {rubric.marks_available:g}.\
 """
@@ -241,7 +255,9 @@ def available() -> bool:
     return bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
 
 
-async def derive(question: Question, rubric: Rubric, *, client=None) -> CheckBank | None:
+async def derive(
+    question: Question, rubric: Rubric, *, reference: str = "", client=None
+) -> CheckBank | None:
     """The checks for one question, or None if they could not be worked out.
 
     None rather than raising: marking falls back to the criteria the paper printed,
@@ -252,12 +268,12 @@ async def derive(question: Question, rubric: Rubric, *, client=None) -> CheckBan
     if rubric.marks_available <= 0:
         return None
 
-    key = f"{question.qid}\x00{question.text}\x00{rubric.marks_available}"
+    key = f"{question.qid}\x00{question.text}\x00{rubric.marks_available}\x00{reference}"
     if key in _CACHE:
         return _CACHE[key]
 
     try:
-        raw = await _ask(question, rubric, client=client)
+        raw = await _ask(question, rubric, reference=reference, client=client)
     except Exception:  # noqa: BLE001 - checks are an improvement, not a requirement
         return None
 
@@ -267,7 +283,9 @@ async def derive(question: Question, rubric: Rubric, *, client=None) -> CheckBan
     return bank if bank.usable else None
 
 
-async def _ask(question: Question, rubric: Rubric, *, client=None) -> dict:
+async def _ask(
+    question: Question, rubric: Rubric, *, reference: str = "", client=None
+) -> dict:
     if client is None:
         from openai import AsyncOpenAI
 
@@ -279,7 +297,7 @@ async def _ask(question: Question, rubric: Rubric, *, client=None) -> dict:
         seed=20240817,
         messages=[
             {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": _user_message(question, rubric)},
+            {"role": "user", "content": _user_message(question, rubric, reference)},
         ],
         response_format={
             "type": "json_schema",
