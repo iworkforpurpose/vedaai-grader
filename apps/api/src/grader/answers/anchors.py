@@ -64,6 +64,12 @@ _RIVAL_MARGIN = 0.12
 _MIN_TEXT_FOR_SEMANTICS = 24
 
 
+#: Sentinel for "any section", so that filtering on ``section_id=None`` — a real
+#: value, meaning a question outside every section — stays distinguishable from
+#: not filtering at all.
+_ANY_SECTION = object()
+
+
 @dataclass
 class _Candidate:
     block: AnswerBlock
@@ -98,15 +104,15 @@ def detect(
         )
 
     resolved = _resolve(candidates, questions)
-    order_ok = _order_consistent([qid for _c, qid in resolved])
+    order_ok = _order_consistent([qid for _c, qid, _ambiguous in resolved])
 
     anchors: list[Anchor] = []
-    for index, (candidate, qid) in enumerate(resolved):
+    for index, (candidate, qid, ambiguous) in enumerate(resolved):
         question = next((q for q in questions if q.qid == qid), None)
         agreement = _semantic_agreement(candidate.block, question, similarity)
         consistent = order_ok[index]
         outscored = _outscored_by_a_rival(candidate.block, qid, questions, similarity)
-        status = _decide(qid, agreement, consistent, outscored)
+        status = _decide(qid, agreement, consistent, outscored, ambiguous=ambiguous)
 
         anchors.append(
             Anchor(
@@ -125,57 +131,93 @@ def detect(
     return anchors
 
 
+def _label_key(text: str) -> str:
+    """A label reduced to the characters that identify it.
+
+    Alphanumerics only, so ``Q4.`` meets ``Q4`` and ``2 a)`` meets ``2 (a)``:
+    students and typesetters punctuate differently and neither is saying anything
+    by it.
+    """
+    return "".join(character for character in text.lower() if character.isalnum())
+
+
 def _resolve(
     candidates: list[_Candidate],
     questions: list[Question],
-) -> list[tuple[_Candidate, str | None]]:
+) -> list[tuple[_Candidate, str | None, bool]]:
     """Match each written label to a question in the paper.
 
-    Compared as token paths rather than as strings, so ``11 b)`` written by a
-    student matches ``11 (b)`` printed on the paper — the punctuation differs, the
-    structure does not.
+    Two indexes, and the order between them is the whole point.
+
+    **The label the paper printed is tried first.** A student writing ``Q4.``
+    where the paper printed ``Q4`` has named the question outright, and the
+    printed label carries the section — which ``path`` does not, because the
+    section lives in the qid instead.
+
+    **The token path is tried second, and may be ambiguous.** A paper whose
+    numbering restarts per section holds two questions whose path is ``("2",)``,
+    so this index cannot be single-valued. It was, once, and the later section
+    silently overwrote the earlier: on a mathematics paper with a ``Q`` section
+    and a ``T`` section that left every one of Q1-Q4 unreachable by any written
+    label, and a student's own correct ``Q4.`` resolved to ``T/4``, was confirmed
+    against it, and pinned the alignment onto a question they never attempted.
+    Their correct label was the thing that moved their answer.
 
     A lone sub-part label such as ``(b)`` is resolved against the most recent
     resolved parent, which is how the student meant it: having written ``11 (a)``
-    above, they see no need to repeat the 11.
-    """
-    by_path: dict[tuple[str, ...], str] = {
-        tuple(question.path): question.qid for question in questions
-    }
-    # Also indexed by the label the paper printed. A student writing "(b)" with
-    # no preceding parent cannot be resolved by path, but the paper may well have
-    # printed that question as "(b)" too — in which case the label itself is the
-    # match, and refusing it would dispute a perfectly good anchor.
-    by_label: dict[str, str] = {}
-    for question in questions:
-        normalized = " ".join(question.label_raw.split()).lower()
-        by_label.setdefault(normalized, question.qid)
+    above, they see no need to repeat the 11. That lookup is confined to the
+    parent's own section, since the parent is what says which section this is.
 
-    out: list[tuple[_Candidate, str | None]] = []
+    A label matching more than one question resolves to None and is reported
+    ambiguous — which is a different fact from naming no question at all, and is
+    why the two are distinguished rather than both collapsing to None. The
+    section the student was last writing in would often settle such a label, and
+    is deliberately *not* used for it: on the paper above, the student's own list
+    item ``2.`` inside their Q3 working would then resolve to Q2 and report an
+    untouched question as answered. A hedge costs a teacher a second look; a
+    confident wrong answer costs them the mark.
+    """
+    by_path: dict[tuple[str, ...], list[Question]] = {}
+    by_label: dict[str, list[Question]] = {}
+    for question in questions:
+        by_path.setdefault(tuple(question.path), []).append(question)
+        by_label.setdefault(_label_key(question.label_raw), []).append(question)
+
+    def sole(matches: list[Question], *, section: str | None = _ANY_SECTION) -> Question | None:
+        if section is not _ANY_SECTION:
+            matches = [q for q in matches if q.section_id == section]
+        return matches[0] if len(matches) == 1 else None
+
+    out: list[tuple[_Candidate, str | None, bool]] = []
     recent_parent: tuple[str, ...] = ()
+    recent_section: str | None = None
 
     for candidate in candidates:
-        qid = by_path.get(candidate.tokens)
-        if qid is not None:
-            out.append((candidate, qid))
-            # A multi-token label names its own parent; a single-token one *is*
-            # the parent for anything that follows beneath it.
-            recent_parent = (
-                candidate.tokens[:-1] if len(candidate.tokens) > 1 else candidate.tokens
-            )
-            continue
+        by_this_label = by_label.get(_label_key(candidate.raw), [])
+        by_this_path = by_path.get(candidate.tokens, [])
 
-        if len(candidate.tokens) == 1 and recent_parent:
+        found = sole(by_this_label) or sole(by_this_path)
+
+        if found is None and len(candidate.tokens) == 1 and recent_parent:
             for depth in range(len(recent_parent), 0, -1):
                 combined = recent_parent[:depth] + candidate.tokens
-                qid = by_path.get(combined)
-                if qid is not None:
+                found = sole(by_path.get(combined, []), section=recent_section)
+                if found is not None:
                     break
 
-        if qid is None:
-            qid = by_label.get(" ".join(candidate.raw.split()).lower())
+        if found is None:
+            # Ambiguous only if something matched and more than one thing did.
+            # A label naming nothing on the paper is a different report.
+            ambiguous = len(by_this_label) > 1 or len(by_this_path) > 1
+            out.append((candidate, None, ambiguous))
+            continue
 
-        out.append((candidate, qid))
+        out.append((candidate, found.qid, False))
+        # A multi-token label names its own parent; a single-token one *is* the
+        # parent for anything that follows beneath it.
+        path = tuple(found.path)
+        recent_parent = path[:-1] if len(path) > 1 else path
+        recent_section = found.section_id
     return out
 
 
@@ -292,9 +334,19 @@ def _decide(
     agreement: float | None,
     consistent: bool,
     outscored_by_a_rival: bool,
+    *,
+    ambiguous: bool = False,
 ) -> AnchorStatus:
     """Decide how far one anchor can be trusted."""
     if qid is None:
+        if ambiguous:
+            # The label names a question, and more than one of them: the paper
+            # numbers two sections alike and the student wrote no section letter.
+            # Nothing here is contradicted, so this is an absence of evidence and
+            # not evidence against — and the teacher is told the difference,
+            # since "this number does not match the writing beside it" would be
+            # a false statement about a label that may well be right.
+            return AnchorStatus.UNVERIFIED
         # The label names a question the paper does not contain. Strong evidence
         # the student mislabelled, and nothing to pin an alignment to regardless.
         return AnchorStatus.DISPUTED
