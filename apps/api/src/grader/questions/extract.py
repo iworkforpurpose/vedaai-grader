@@ -344,12 +344,24 @@ def mark_stems(questions: list[Question]) -> list[Question]:
     identical to a heading, and treating it as one removes the question the student
     actually answered.
     """
-    paths = {tuple(q.path) for q in questions}
+    # Keyed by section as well as path. A path is not an identity on a paper whose
+    # numbering restarts per section: both sections hold a ("2",), so keyed on the
+    # path alone section B's "2 (a)" extends section A's "2." and makes it a
+    # heading over parts that are not its own. The cost of that is not cosmetic —
+    # a stem is NOT_REQUIRED, so a question the student was actually asked drops
+    # out of absence reporting altogether.
+    paths = {(_section_of(q), tuple(q.path)) for q in questions}
+
+    def heads_some_parts(question: Question) -> bool:
+        section, path = _section_of(question), tuple(question.path)
+        return any(
+            other_section == section and len(p) > len(path) and p[: len(path)] == path
+            for other_section, p in paths
+        )
+
     return [
         q.model_copy(update={"is_stem": True})
-        if q.marks is None
-        and reads_as_a_heading(q.text)
-        and any(len(p) > len(q.path) and p[: len(q.path)] == tuple(q.path) for p in paths)
+        if q.marks is None and reads_as_a_heading(q.text) and heads_some_parts(q)
         else q
         for q in questions
     ]

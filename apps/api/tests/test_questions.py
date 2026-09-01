@@ -1151,6 +1151,48 @@ class TestStems:
         )
         assert mark_stems([leaf])[0].is_stem is False
 
+    def test_a_child_in_another_section_does_not_make_a_question_a_stem(self) -> None:
+        # Sections that restart their numbering both hold a question whose path is
+        # ("2",). Keyed on the path alone, section B's "2 (a)" extends section A's
+        # "2." and makes it look like a heading over parts it does not have — so a
+        # question the student was asked to answer becomes NOT_REQUIRED and drops
+        # out of absence reporting entirely.
+        #
+        # The same shape of fault as the anchor index: a path is not an identity
+        # unless the section comes with it.
+        a2 = Question(
+            qid="A/2",
+            label_raw="2.",
+            text="Answer the following:",
+            path=["2"],
+            print_order=0,
+            marks=None,
+            section_id="A",
+        )
+        b2 = Question(
+            qid="B/2",
+            label_raw="2.",
+            # Heading wording, so the only thing separating it from A/2 is which
+            # section its parts sit in. A/2 is worded identically.
+            text="Answer the following:",
+            path=["2"],
+            print_order=1,
+            marks=None,
+            section_id="B",
+        )
+        b2a = Question(
+            qid="B/2/a",
+            label_raw="(a)",
+            text="One.",
+            path=["2", "a"],
+            print_order=2,
+            marks=2,
+            section_id="B",
+        )
+        flagged = {q.qid: q for q in mark_stems([a2, b2, b2a])}
+        assert flagged["A/2"].is_stem is False, "its parts live in another section"
+        assert flagged["B/2"].is_stem is True, "this one really does head those parts"
+
     def test_flags_a_heading_with_children_and_no_marks(self) -> None:
         parent = Question(
             qid="A/2",
