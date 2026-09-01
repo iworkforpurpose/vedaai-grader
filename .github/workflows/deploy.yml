@@ -119,9 +119,6 @@ jobs:
           # `deploy.sh` refuses to release without it, so a missing secret is a
           # red build rather than an origin quietly open to the internet.
           ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
-          # Present means the task gets a tunnel sidecar and a stable HTTPS
-          # hostname; absent means it does not, and the task is unchanged.
-          TAILSCALE_SECRET_ARN: ${{ vars.TAILSCALE_SECRET_ARN }}
         run: |
           echo "deploying ${GITHUB_SHA} to ${AWS_REGION}"
           bash deploy/deploy.sh release
