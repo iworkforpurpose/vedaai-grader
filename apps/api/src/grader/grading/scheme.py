@@ -205,6 +205,23 @@ urban growth?"
 If you would have to guess which valid answer the student chose, the check is \
 wrong. Ask whether what they wrote is correct and sufficient instead.
 
+**Order the checks as a ladder, easiest first.** A real mark scheme is a ladder: one \
+mark for identifying the right thing, another for explaining it, another for \
+linking it to the question. Write them the same way, so that an answer which is \
+partly right meets the early checks and fails the later ones.
+
+  1. "Does the answer name the correct process?"          <- any partial answer has this
+  2. "Does it say what drives that process?"
+  3. "Does it link the process to the outcome the question asks about?"  <- complete only
+
+This is the difference between a scheme that grades and one that only passes or \
+fails. Two checks that each need most of the answer means a half-right answer \
+scores nothing, which no teacher would do — measured, 10 of 13 partially-correct \
+answers scored zero when the checks were written that way.
+
+So the first check must be one that **any** answer showing partial understanding \
+would meet. If every check requires the complete answer, split them differently.
+
 The checks must sum to exactly the marks available. Use half marks only if the \
 total forces it.
 
