@@ -40,8 +40,42 @@ _IDENTITY_FIELD = re.compile(
     r"class|section|semester|sem|branch|course|department|dept|"
     r"roll\s*(?:no|number)?|reg(?:ister|istration)?\s*(?:no|number)?|"
     r"enroll?ment(?:\s*no)?|admission\s*no|seat\s*no|"
-    r"subject|date|batch|div(?:ision)?"
+    r"subject|date|batch|div(?:ision)?|"
+    # A labelled page field, and it belongs here rather than with the positional
+    # rules below. On a real mathematics script "Page : 02" and "Page : 03" sat at
+    # y=0.129 and y=0.130 against a header band of 0.12 — outside it by one
+    # hundredth of the page — so every position-gated rule declined to look, and
+    # `_PAGE_NUMBER` would have refused them anyway because it requires the digits
+    # to follow "page" directly and these carry " : " between.
+    #
+    # Both became the *first line* of a block. That is worse than one stray line
+    # highlighted: anchors are read from a block's first line, so a header sitting
+    # there makes the student's own question number the second line and it is
+    # never read at all — which is the failure `_repeated_at_the_edge` was written
+    # to prevent, arriving by a different route.
+    #
+    # As a labelled field it needs no position at all, which is the point of this
+    # pattern: "Page : 3" is a header wherever it appears, and an answer that
+    # mentions a page does not punctuate it with a colon.
+    r"page\s*(?:no|number)?|p\.?\s*no"
     r")\s*[:\-–]\s*\S",
+    re.IGNORECASE,
+)
+
+#: A field label whose value recognition put on a different line.
+#:
+#: ``_IDENTITY_FIELD`` requires something after the colon, which is right for
+#: telling "Date: 4 March" from a sentence containing the word date. But a scan
+#: splits a boxed header down the middle: one real script gave ``Page :`` on its
+#: own line with the ``02`` beside it as a separate line, so the field matched
+#: nothing and led a block. A label with *no* value is not ambiguous — no answer
+#: consists of the word "Page" and a colon — so it needs no value to be trusted.
+_BARE_FIELD_LABEL = re.compile(
+    r"^\s*(?:name|candidate|class|section|semester|sem|branch|course|department"
+    r"|dept|roll\s*(?:no|number)?|reg(?:ister|istration)?\s*(?:no|number)?"
+    r"|enroll?ment(?:\s*no)?|admission\s*no|seat\s*no|subject|date|batch"
+    r"|div(?:ision)?|page\s*(?:no|number)?|p\.?\s*no)"
+    r"\s*[:\-–]?\s*$",
     re.IGNORECASE,
 )
 
@@ -71,15 +105,20 @@ def _at_page_edge(line: Line) -> bool:
     return line.box.y0 <= _EDGE_BAND or line.box.y0 >= 1.0 - _EDGE_BAND
 
 
-def is_furniture(line: Line) -> bool:
-    """Whether this line is a detail about the script rather than an answer."""
+def is_furniture(line: Line, *, has_writing_beside_it: bool = False) -> bool:
+    """Whether this line is a detail about the script rather than an answer.
+
+    ``has_writing_beside_it`` says another line shares this one's row further
+    right. It is what separates a page number from a question number written in
+    the margin — see the note on the page-number test below.
+    """
     text = line.text.strip()
     if not text:
         return True
 
     # A labelled identity field is unambiguous wherever it appears: no answer is
     # phrased "Roll No: 41".
-    if _IDENTITY_FIELD.search(text):
+    if _IDENTITY_FIELD.search(text) or _BARE_FIELD_LABEL.match(text):
         return True
 
     in_header = line.box.y0 <= _HEADER_BAND
@@ -90,7 +129,22 @@ def is_furniture(line: Line) -> bool:
     # deleted 190, 25, 15, 2 and 3 -- pieces of 5(26)+3P=190, 25x=230 and 198/15
     # -- out of the working, and the grader then read an answer with holes in its
     # arithmetic as the student's own mistake.
-    if (in_header or _at_page_edge(line)) and _PAGE_NUMBER.match(text):
+    #
+    # And a question number written in the margin is also a bare number near the
+    # top of a page, which is why the row test is here. On a three-page physics
+    # script the student's own "1", "3" and "5" each sat at y≈0.09 beside the
+    # first line of the answer they labelled, matched this pattern, and were
+    # deleted — so the strongest mapping signal available, the student saying
+    # which question this answers, was thrown away on every page.
+    #
+    # A page number sits alone on its row. A margin label has the answer it
+    # labels beside it. That is the whole difference, and it is geometric rather
+    # than textual, which is what makes it reliable on a bare digit.
+    if (
+        (in_header or _at_page_edge(line))
+        and _PAGE_NUMBER.match(text)
+        and not has_writing_beside_it
+    ):
         return True
 
     if not in_header:
@@ -156,9 +210,78 @@ def _repeated_at_the_edge(lines: list[Line]) -> set[str]:
     needed = max(2, len(pages) // 2)
     repeated: set[str] = set()
     for group in buckets.values():
-        if len({line.page for line in group}) >= needed:
+        if len({line.page for line in group}) < needed:
+            continue
+        # Position alone is not enough, and trusting it deleted real answers.
+        #
+        # A tidy script starts an answer at the top of each page, so "short text
+        # at the same spot on most pages" describes the *answers* as readily as
+        # the furniture. On the physics script that took out "Speed = distance /
+        # time" from page one and "R = V / I" from page three — the first line of
+        # two answers, and in both cases the line carrying the method mark. The
+        # teacher saw a highlight that began at "= 150 / 10".
+        #
+        # What furniture does and answers do not is repeat the same *words*. The
+        # docstring above is right that recognition mangles them — "Rdi No: 37",
+        # "RdiNo: 37", "Rdino: 3" — but mangled text still shares most of its
+        # character runs, while two unrelated first lines share none. Measured on
+        # exactly those examples: the furniture pairs score 0.224 to 1.000 on
+        # trigram similarity, and "Speed = distance / time" against "R = V / I"
+        # scores 0.000. The gap is not close.
+        if _looks_like_the_same_text(group):
             repeated.update(line.line_id for line in group)
     return repeated
+
+
+#: Trigram similarity above which two lines at the same spot are the same text.
+#:
+#: Low, because the whole difficulty is that furniture is the text recognition
+#: reads worst. It only has to clear zero: unrelated answer lines share no runs
+#: at all, and the worst genuine furniture pair measured on real output is 0.224.
+_SAME_TEXT = 0.15
+
+
+def _looks_like_the_same_text(group: list[Line]) -> bool:
+    """Whether any two lines in a positional group say the same thing.
+
+    Any pair rather than every pair, and the mangling is why: across four scanned
+    pages one roll-number box gave pairs from 1.000 down to 0.224, so requiring
+    all of them to agree would let the worst-read page acquit the group. One
+    clear pair is enough to establish that this position holds a repeated label.
+    """
+    from .similarity import CharacterTrigrams
+
+    measure = CharacterTrigrams()
+    texts = [line.text.strip() for line in group]
+    return any(
+        measure.score(texts[i], texts[j]) >= _SAME_TEXT
+        for i in range(len(texts))
+        for j in range(i + 1, len(texts))
+    )
+
+
+#: Share of the shorter box's height two lines must overlap to be one row.
+#: The same figure ``reading_order`` uses, and for the same reason: a margin
+#: number and the line it labels differ by a fraction of a line height.
+_SAME_ROW_OVERLAP = 0.5
+
+
+def _has_writing_to_the_right(line: Line, lines: list[Line]) -> bool:
+    """Whether another line shares this one's row, further right.
+
+    A page number is alone on its row; a question number written in the margin
+    has the answer it labels beside it.
+    """
+    for other in lines:
+        if other.line_id == line.line_id or other.page != line.page:
+            continue
+        if other.box.x0 <= line.box.x1:
+            continue
+        top, bottom = max(line.box.y0, other.box.y0), min(line.box.y1, other.box.y1)
+        shorter = min(line.box.y1 - line.box.y0, other.box.y1 - other.box.y0)
+        if shorter > 0 and (bottom - top) / shorter >= _SAME_ROW_OVERLAP:
+            return True
+    return False
 
 
 def strip(lines: list[Line]) -> tuple[list[Line], list[Line]]:
@@ -171,6 +294,8 @@ def strip(lines: list[Line]) -> tuple[list[Line], list[Line]]:
     answers: list[Line] = []
     details: list[Line] = []
     for line in lines:
-        detail = line.line_id in repeated or is_furniture(line)
+        detail = line.line_id in repeated or is_furniture(
+            line, has_writing_beside_it=_has_writing_to_the_right(line, lines)
+        )
         (details if detail else answers).append(line)
     return answers, details
