@@ -76,6 +76,7 @@ class Grader(Protocol):
         rubric: Rubric,
         index: LineIndex,
         line_ids: list[str],
+        scheme=None,
     ) -> QuestionGrade: ...
 
 
@@ -112,6 +113,7 @@ class RubricOnly:
         rubric: Rubric,
         index: LineIndex,
         line_ids: list[str],
+        scheme=None,
     ) -> QuestionGrade:
         return QuestionGrade(
             qid=question.qid,
@@ -159,6 +161,11 @@ JUDGEMENT_SCHEMA: dict = {
                         "whenever marks are awarded.",
                     },
                     "comment": {"type": "string"},
+                    "error": {
+                        "type": "string",
+                        "description": "Where marks are withheld, what specifically is "
+                        "wrong. Naming it is required; 'incomplete' is not naming it.",
+                    },
                 },
                 "required": ["index", "marks_awarded", "satisfied", "cited_line_ids"],
             },
@@ -173,6 +180,55 @@ JUDGEMENT_SCHEMA: dict = {
         },
     },
     "required": ["points", "uncertain"],
+}
+
+
+#: The response shape when the question came with a bank of binary checks.
+#:
+#: `met` is a nullable boolean on purpose. True earns the mark, False refuses it,
+#: and null is "unsure" — that mark is deferred to the teacher rather than guessed
+#: in either direction. A scalar `marks_awarded` is deliberately absent: asking for
+#: a number is what let a fluent wrong answer be talked into three marks, and
+#: rubric-conditioned grading is measured to agree with human markers on binary
+#: judgements and to degrade as granularity grows.
+CHECK_JUDGEMENT_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["checks", "feedback", "uncertain"],
+    "properties": {
+        "checks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["index", "met", "cited_line_ids", "error"],
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "1-based position of the check being answered.",
+                    },
+                    "met": {
+                        "type": ["boolean", "null"],
+                        "description": "true = yes, earns the mark. false = no. "
+                        "null = unsure, defer this mark to the teacher.",
+                    },
+                    "cited_line_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Line IDs evidencing the answer. Required when met "
+                        "is true.",
+                    },
+                    "error": {
+                        "type": ["string", "null"],
+                        "description": "When met is false, what specifically is missing or "
+                        "wrong. Naming it is required.",
+                    },
+                },
+            },
+        },
+        "feedback": {"type": ["string", "null"]},
+        "uncertain": {"type": "boolean"},
+    },
 }
 
 
@@ -215,6 +271,7 @@ class Claude:
         rubric: Rubric,
         index: LineIndex,
         line_ids: list[str],
+        scheme=None,
     ) -> QuestionGrade:
         # A drawing is not gradable from a transcription it does not have. Asking
         # anyway produces a confident zero for a correct answer.
@@ -240,7 +297,8 @@ class Claude:
                 {
                     "role": "user",
                     "content": prompt.build(
-                        question=question, rubric=rubric, index=index, line_ids=line_ids
+                        question=question, rubric=rubric, index=index,
+                        line_ids=line_ids, scheme=scheme,
                     ),
                 }
             ],
@@ -281,7 +339,8 @@ STRICT_JUDGEMENT_SCHEMA: dict = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["index", "marks_awarded", "satisfied", "cited_line_ids", "comment"],
+                "required": ["index", "marks_awarded", "satisfied", "cited_line_ids",
+                             "comment", "error"],
                 "properties": {
                     "index": {
                         "type": "integer",
@@ -296,6 +355,11 @@ STRICT_JUDGEMENT_SCHEMA: dict = {
                         "Required whenever marks are awarded.",
                     },
                     "comment": {"type": ["string", "null"]},
+                    "error": {
+                        "type": ["string", "null"],
+                        "description": "Where marks are withheld, what specifically is "
+                        "wrong. Naming it is required; 'incomplete' is not naming it.",
+                    },
                 },
             },
         },
@@ -342,6 +406,7 @@ class OpenAIGrader:
         rubric: Rubric,
         index: LineIndex,
         line_ids: list[str],
+        scheme=None,
     ) -> QuestionGrade:
         # A drawing is not gradable from a transcription it does not have. Asking
         # anyway produces a confident zero for a correct answer.
@@ -367,7 +432,8 @@ class OpenAIGrader:
                 {
                     "role": "user",
                     "content": prompt.build(
-                        question=question, rubric=rubric, index=index, line_ids=line_ids
+                        question=question, rubric=rubric, index=index,
+                        line_ids=line_ids, scheme=scheme,
                     ),
                 },
             ],
@@ -376,7 +442,9 @@ class OpenAIGrader:
                 "json_schema": {
                     "name": "judgement",
                     "strict": True,
-                    "schema": STRICT_JUDGEMENT_SCHEMA,
+                    "schema": CHECK_JUDGEMENT_SCHEMA
+                    if (scheme is not None and getattr(scheme, "usable", False))
+                    else STRICT_JUDGEMENT_SCHEMA,
                 },
             },
         )
@@ -384,6 +452,17 @@ class OpenAIGrader:
         content = completion.choices[0].message.content
         if not content:
             raise ValueError("the model returned no judgement")
+
+        if scheme is not None and getattr(scheme, "usable", False):
+            return assemble_checks(
+                question=question,
+                rubric=rubric,
+                bank=scheme,
+                index=index,
+                line_ids=line_ids,
+                judgement=json.loads(content),
+                graded_by=self.provenance,
+            )
 
         return assemble(
             question=question,
@@ -521,6 +600,11 @@ def assemble(
         # up for one point has said nothing trustworthy about the others.
         cited = [str(lid) for lid in raw.get("cited_line_ids", [])]
         comment = raw.get("comment")
+        # The named fault, put in front of the comment. A teacher checking a
+        # withheld mark wants "150/10 is 15, not 1.5" before the encouragement.
+        named = str(raw.get("error") or "").strip()
+        if named and awarded < criterion.marks:
+            comment = f"{named} — {comment}" if comment else named
         if not cited and (satisfied or awarded > 0):
             # Not shown as met either. "Satisfied, nought marks" recreates in the
             # other direction the contradiction the promotion exists to remove.
@@ -616,3 +700,169 @@ def _cited_share(points: list[RubricPoint]) -> float:
         return 0.8
     cited = sum(1 for p in awarded if p.cited_line_ids)
     return round(0.5 + 0.5 * (cited / len(awarded)), 2)
+
+
+def assemble_checks(
+    *,
+    question: Question,
+    rubric: Rubric,
+    bank,
+    index: LineIndex,
+    line_ids: list[str],
+    judgement: dict,
+    graded_by: str | None = None,
+) -> QuestionGrade:
+    """Turn binary check answers into a grade.
+
+    One rule per state, and each exists because of a measured failure.
+
+    **Yes earns the mark, and must cite a line.** Same as before: a mark with no
+    resolvable evidence is unfounded rather than small.
+
+    **No earns nothing, and must name the fault.** A refusal with no named fault is
+    not a judgement, it is a shrug — so it is treated as *unsure* rather than as a
+    zero. This is what stops the strictness that a model-written mark scheme
+    introduced, where the false-zero rate tripled because the marker withheld marks
+    it could not explain.
+
+    **Unsure defers the mark.** Neither awarded nor refused. It is reported as a
+    single named check for the teacher to settle, which is a smaller ask than
+    re-reading the answer, and it is the honest state for damaged transcription.
+
+    **An unverifiable check is credited.** Where the question refers to material the
+    paper never supplied, nothing downstream can confirm a quotation or a position.
+    The missing input is ours; the student does not lose a mark for it.
+    """
+    answers = {}
+    for raw in judgement.get("checks", []) or []:
+        if isinstance(raw, dict) and isinstance(raw.get("index"), int):
+            answers[raw["index"]] = raw
+
+    points: list[RubricPoint] = []
+    deferred: list[str] = []
+    credited_unverifiable: list[str] = []
+
+    for i, check in enumerate(bank.checks, start=1):
+        raw = answers.get(i) or {}
+        met = raw.get("met")
+        cited = [str(c) for c in (raw.get("cited_line_ids") or [])]
+        fault = str(raw.get("error") or "").strip()
+        point_id = f"{rubric.qid}#{i}"
+
+        if not check.verifiable and met is not True:
+            # Cannot be checked against material nobody supplied. Credited, and
+            # said out loud so the teacher knows which marks rest on it.
+            credited_unverifiable.append(point_id)
+            points.append(
+                RubricPoint(
+                    point_id=point_id,
+                    criterion=check.ask,
+                    marks_available=check.marks,
+                    marks_awarded=check.marks,
+                    satisfied=True,
+                    cited_line_ids=cited,
+                    comment="Given. This needs the passage or figure the question paper "
+                    "does not contain, so it could not be checked — read it yourself.",
+                )
+            )
+            continue
+
+        if met is True:
+            points.append(
+                RubricPoint(
+                    point_id=point_id,
+                    criterion=check.ask,
+                    marks_available=check.marks,
+                    marks_awarded=check.marks,
+                    satisfied=True,
+                    cited_line_ids=cited,
+                    comment=fault or None,
+                )
+            )
+            continue
+
+        if met is False and fault:
+            points.append(
+                RubricPoint(
+                    point_id=point_id,
+                    criterion=check.ask,
+                    marks_available=check.marks,
+                    marks_awarded=0.0,
+                    satisfied=False,
+                    cited_line_ids=cited,
+                    comment=fault,
+                )
+            )
+            continue
+
+        # Unsure, or a refusal with no fault named. Deferred either way.
+        deferred.append(point_id)
+        points.append(
+            RubricPoint(
+                point_id=point_id,
+                criterion=check.ask,
+                marks_available=check.marks,
+                marks_awarded=0.0,
+                satisfied=False,
+                cited_line_ids=cited,
+                comment="Not decided — this one needs your eye."
+                if met is None
+                else "Refused without a stated reason, so it was not applied. Check this one.",
+            )
+        )
+
+    # Validated over the points decided on evidence, not over all of them.
+    #
+    # A credited-unverifiable check has nothing to cite *by construction*: it was
+    # given precisely because the material needed to check it is absent. Passing it
+    # to a rule that requires a citation for any mark refused the whole question —
+    # on the physics paper every question came back "evidence did not check out"
+    # and `judged=False`, which read as the model failing when it was this function
+    # contradicting itself.
+    #
+    # The invariant that matters is unchanged: a mark awarded *on the evidence of
+    # the answer* must cite a line that resolves inside that answer. A mark given
+    # because we could not look is a different thing, and it is labelled as such in
+    # the comment rather than dressed up with evidence it does not have.
+    evidenced = [p for p in points if p.point_id not in credited_unverifiable]
+    problems = citations.check(evidenced, index, allowed_line_ids=set(line_ids))
+    if problems:
+        reason = "; ".join(str(p) for p in problems[:3])
+        return QuestionGrade(
+            qid=question.qid,
+            marks_available=rubric.marks_available,
+            marks_awarded=0.0,
+            rubric_points=_unjudged_points(
+                rubric, comment=f"Marking was refused — evidence did not check out ({reason})."
+            ),
+            confidence=0.0,
+            graded_by=graded_by,
+            graded_on_partial_text=True,
+        )
+
+    uncertain = bool(judgement.get("uncertain", False))
+    awarded = sum(p.marks_awarded for p in points)
+    settled = [p for p in points if p.point_id not in deferred]
+
+    return QuestionGrade(
+        qid=question.qid,
+        marks_available=rubric.marks_available,
+        marks_awarded=awarded,
+        rubric_points=points,
+        judged=True,
+        feedback=judgement.get("feedback"),
+        graded_by=graded_by,
+        # Confidence is the share of the marks that were actually settled. A
+        # question with a deferred check is not a confident grade however clean the
+        # rest of it looks, and a teacher deciding where to spend their attention
+        # needs that to be visible in the number.
+        confidence=0.35
+        if uncertain
+        else round(
+            (sum(p.marks_available for p in settled) / rubric.marks_available)
+            if rubric.marks_available
+            else 0.0,
+            2,
+        ),
+        graded_on_partial_text=uncertain or bool(deferred) or bool(credited_unverifiable),
+    )

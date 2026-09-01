@@ -41,7 +41,10 @@ class _CountingGrader:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def grade(self, *, question, rubric, index, line_ids):  # noqa: ANN001
+    # `scheme` is part of the Grader protocol: the correct answer, derived from the
+    # question before the script is read. Accepted and ignored here — this double
+    # counts calls, it does not mark.
+    async def grade(self, *, question, rubric, index, line_ids, scheme=None):  # noqa: ANN001
         self.calls += 1
         from vedaai_contracts import QuestionGrade
 
