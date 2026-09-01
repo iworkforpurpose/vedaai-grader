@@ -414,7 +414,7 @@ register_task() {
         { "name": "S3_PAGE_PREFIX", "value": "pages/" },
         { "name": "SUBMISSIONS_TABLE", "value": "${TABLE}" },
         { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
-        { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
+        { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-openai}" },
         { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" },
         { "name": "ACCESS_CODE", "value": "${ACCESS_CODE:-}" },
         { "name": "RATE_LIMIT_INGEST_PER_HOUR", "value": "${RATE_LIMIT_INGEST_PER_HOUR:-30}" },
