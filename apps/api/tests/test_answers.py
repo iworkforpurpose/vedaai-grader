@@ -285,6 +285,48 @@ class TestAnchorDetection:
 
         assert [a.claimed_qid for a in found] == ["A/2/a", "A/2/b"]
 
+    def test_a_written_label_resolves_within_its_own_section(self) -> None:
+        # A paper whose numbering restarts per section: Q1-Q2 carry no section,
+        # T1-T2 sit under "T". Both sections therefore contain a question whose
+        # path is ("2",), so a path-keyed index has two entries for one key and
+        # the later section silently wins.
+        #
+        # On the real mathematics paper that made every one of Q1-Q4 unreachable:
+        # the student wrote "Q4." above their own Q4 working and the anchor
+        # resolved to T/4 — a question they never attempted — then confirmed it
+        # and pinned the alignment to it. Their correct label was what moved the
+        # answer to the wrong question.
+        paper = [
+            question("1", "Q1", "A man buys five notebooks and three pens.", 0, ["1"]),
+            question("2", "Q2", "A father and his son have some coins each.", 1, ["2"]),
+            question("T/1", "T1", "AB is a line segment and P is its mid-point.", 2, ["1"]),
+            question("T/2", "T2", "Two isosceles triangles stand on the same base.", 3, ["2"]),
+        ]
+        lines = [line(1, "Q2. The father has 42 coins and the son has 30 coins.", y0=0.10)]
+        blocks = segment_blocks(lines, [])
+        found = anchors.detect(blocks, lines, paper)
+
+        assert found[0].claimed_qid == "2", "the paper printed this question as Q2"
+
+    def test_a_label_matching_two_sections_pins_nothing(self) -> None:
+        # The same paper, and a student who wrote a bare "2." with no section
+        # letter. That is genuinely ambiguous between Q2 and T2, and there is no
+        # evidence here to settle it. Picking one is fabricated certainty, and
+        # because a resolved anchor may pin the alignment, the fabrication would
+        # outrank both semantics and continuation.
+        paper = [
+            question("1", "Q1", "A man buys five notebooks and three pens.", 0, ["1"]),
+            question("2", "Q2", "A father and his son have some coins each.", 1, ["2"]),
+            question("T/1", "T1", "AB is a line segment and P is its mid-point.", 2, ["1"]),
+            question("T/2", "T2", "Two isosceles triangles stand on the same base.", 3, ["2"]),
+        ]
+        lines = [line(1, "2. 12A + 18B = 324, which is the second given equation.", y0=0.10)]
+        blocks = segment_blocks(lines, [])
+        found = anchors.detect(blocks, lines, paper)
+
+        assert found[0].claimed_qid is None, "ambiguous between Q2 and T2"
+        assert not found[0].may_pin
+
     def test_disputes_a_label_naming_no_question_on_the_paper(self) -> None:
         # Strong evidence of mislabelling, and nothing to pin an alignment to
         # regardless.
