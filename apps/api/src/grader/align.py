@@ -159,6 +159,15 @@ MATCH_MINIMUM = -0.35
 #: taken it settled for half as good.
 SETTLE_RATIO = 0.70
 
+#: How far a block's best question must beat the runner-up before the preference
+#: counts as clear enough to stand in for the relatedness floor.
+#:
+#: A multiple rather than a difference, because the absolute scores this applies
+#: to are tiny — 0.1555 against 0.0442 on the case it was measured from. A
+#: difference threshold that admitted that pair would admit almost anything at
+#: prose scale, where the same ratio sits between 0.44 and 0.12.
+_PREFERENCE_MARGIN = 2.0
+
 #: Share of substantive ink left unassigned that suppresses absence claims.
 #:
 #: When this much writing belongs to no block, some answer went unmapped and the
@@ -290,12 +299,24 @@ def align(
     # How well each block does against the best question on the whole paper.
     # Fixed before anything is claimed, so that what counts as "settling" does not
     # change as questions are taken.
-    block_best = {
-        block.block_id: max(
+    block_scores = {
+        block.block_id: sorted(
             (similarity.score(question.text, block.text) for question in questions),
-            default=0.0,
+            reverse=True,
         )
         for block in blocks
+    }
+    block_best = {
+        block_id: (scores[0] if scores else 0.0)
+        for block_id, scores in block_scores.items()
+    }
+    #: The second-best question for each block, or None when the paper holds only
+    #: one. It measures whether a block *prefers* somewhere, which is a different
+    #: question from how well it scores anywhere — and on damaged handwriting the
+    #: only one of the two that still carries signal.
+    block_runner_up = {
+        block_id: (scores[1] if len(scores) > 1 else None)
+        for block_id, scores in block_scores.items()
     }
 
     assignments: list[Assignment] = []
@@ -457,9 +478,39 @@ def align(
         # presented to a teacher as part of an answer.
         fit = _semantic(question, block, similarity)
         floor = float(getattr(similarity, "unrelated_below", 0.0) or 0.0)
-        if floor > 0.0 and fit < floor:
-            continue
         best = block_best.get(block.block_id, 0.0)
+        # Below the floor, join only where the block plainly *prefers* this
+        # question over every other on the paper.
+        #
+        # The floor catches writing that answers nothing — rough work, a note to
+        # the marker — and it has to, because such writing has no meaningful best
+        # and the noise will say yes to whatever sits above it. But it is an
+        # absolute threshold calibrated on prose: the note above quotes a real
+        # tail at 0.444, and a mathematics tail cannot reach it. On a real script
+        # the tail carrying "Value of a note book = 26, Value of a Pen = 20"
+        # scored 0.1555 against its own question — its best on that paper by a
+        # factor of 3.5, and nowhere near 0.30. Both repair paths refused it on
+        # the floor, and the fallback that places whatever is left applies no
+        # floor at all, so it went to a question about a father and his son's
+        # coins. The answer it belonged to was then marked zero for having nothing
+        # left on it.
+        #
+        # So preference stands in for the floor where the floor cannot reach:
+        # this question is the block's best, and beats the runner-up by a clear
+        # multiple. Rough work does not concentrate like that — it scores its
+        # small score against everything.
+        #
+        # With a single question on the paper there is no runner-up and no
+        # preference to measure, so the floor governs alone. That is the case the
+        # golden set covers, and relaxing it there would let rough work in.
+        runner_up = block_runner_up.get(block.block_id)
+        prefers_here = (
+            fit >= best
+            and runner_up is not None
+            and fit >= runner_up * _PREFERENCE_MARGIN
+        )
+        if floor > 0.0 and fit < floor and not prefers_here:
+            continue
         if best > 0.0 and fit < best * SETTLE_RATIO:
             # It prefers somewhere else clearly enough that this is a new answer,
             # not the rest of the one above.
