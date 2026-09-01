@@ -1239,3 +1239,81 @@ class TestMarkingFailuresAreNotFatal:
     def test_an_unrecognised_failure_still_says_something(self) -> None:
         _result, failures, _grader = self._run(ValueError("something odd"))
         assert "something odd" in failures[0]
+
+
+class TestASplitTheMarksCannotCarry:
+    """A counted request is only acted on when the marks can support it.
+
+    The even division always summed to the printed total, which is necessary and
+    was not sufficient. Where the count outruns the marks the remainder lands on
+    the first criterion and starves the rest — or goes negative, which
+    ``RubricPoint`` refuses, so the grade raises and the question reports "could
+    not be marked automatically" with nothing pointing at the paper as the cause.
+    """
+
+    def _question(self, text: str, marks: float | None) -> Question:
+        return Question(
+            qid="A/1", label_raw="1.", text=text, path=["1"], print_order=0, marks=marks
+        )
+
+    def test_six_items_worth_two_marks_is_not_split(self) -> None:
+        # Produced [-0.5, 0.5, 0.5, 0.5, 0.5, 0.5] before this. The negative is
+        # what made the whole question unmarkable rather than merely oddly split.
+        spec = rubric.derive(self._question("List six features of the plateau.", 2))
+        assert len(spec.criteria) == 1
+        assert spec.criteria[0].marks == 2.0
+        assert spec.marks_split_inferred is False
+
+    def test_four_items_worth_one_mark_is_not_split(self) -> None:
+        # Produced [1.0, 0.0, 0.0, 0.0] — three points the model was asked to
+        # judge that could not earn anything.
+        spec = rubric.derive(self._question("Give four examples of renewable energy.", 1))
+        assert [c.marks for c in spec.criteria] == [1.0]
+
+    @pytest.mark.parametrize(
+        ("text", "marks", "expected"),
+        [
+            ("State two conditions for total internal reflection.", 5, [2.5, 2.5]),
+            ("State two reasons why a government may impose a tax.", 3, [1.5, 1.5]),
+            ("Name three types of rainfall.", 3, [1.0, 1.0, 1.0]),
+            # Exactly at the floor: six half-marks is a real allocation.
+            ("List six features of the plateau.", 3, [0.5] * 6),
+        ],
+    )
+    def test_a_split_the_marks_do_support_still_happens(
+        self, text: str, marks: float, expected: list[float]
+    ) -> None:
+        spec = rubric.derive(self._question(text, marks))
+        assert [c.marks for c in spec.criteria] == expected
+        assert sum(c.marks for c in spec.criteria) == marks
+
+    def test_a_question_with_no_printed_marks_is_never_split(self) -> None:
+        # Nothing to divide. Six criteria worth nothing each is noise, not a rubric.
+        spec = rubric.derive(self._question("List six features of the plateau.", None))
+        assert len(spec.criteria) == 1
+
+    @pytest.mark.parametrize(
+        ("text", "marks"),
+        [
+            ("List six features of the plateau.", 2),
+            ("Give four examples of renewable energy.", 1),
+            ("Name three types of rainfall.", 3),
+            ("State two conditions for total internal reflection.", 5),
+        ],
+    )
+    def test_every_derived_criterion_survives_the_contract(
+        self, text: str, marks: float
+    ) -> None:
+        """The property that actually matters: a rubric must be constructible.
+
+        ``RubricPoint`` validates ``marks_available >= 0``, so a criterion the
+        contract rejects is a question that cannot be marked at all.
+        """
+        for i, criterion in enumerate(rubric.derive(self._question(text, marks)).criteria):
+            RubricPoint(
+                point_id=f"A/1#{i}",
+                criterion=criterion.criterion,
+                marks_available=criterion.marks,
+                marks_awarded=0.0,
+                satisfied=False,
+            )
