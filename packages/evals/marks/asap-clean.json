@@ -1,0 +1,38 @@
+{
+  "doc_id": "asap-clean",
+  "notes": "REAL student handwriting, held out. One page from data/asap/Handwritten ASAP SAS/prompt-3 (Gold & Zesch, ICFHR 2020), none of the four images build_full_papers.py already uses. Question 1 is the genuine ASAP-SAS set 3 prompt; questions 2 and 3 were added so a blank exists to be detected. The article extract is printed on the paper as material, which is the first time that path is tested on real handwriting. Marks were written from the dataset's own human transcription BEFORE any pipeline run, so this is truth about the writing and not about what was recognised. The ASAP human scores for these ids need a Kaggle login, so these are my marks against the article's two facts: what a specialist is and what a generalist is.",
+  "source": "read",
+  "total_low": 3,
+  "total_high": 3,
+  "questions": [
+    {
+      "qid": "1",
+      "label_raw": "1.",
+      "marks_available": 3,
+      "status": "answered",
+      "marks_awarded": 3,
+      "band_low": 3,
+      "band_high": 3,
+      "key": "Specialists depend on a narrow food source and a stable habitat -- the panda on bamboo, the koala on eucalyptus. Pythons are generalists: they tolerate a wide range of habitats, temperatures and foods, and do best in and around humans. One mark for the specialist constraint, one for both examples drawn from the article, one for the generalist contrast.",
+      "note": "Names the restricted eating habit, gives both examples from the article (bamboo, eucalyptus), calls them specialists, and contrasts the python as a generalist that adapts easily. All three points present. Spelling ('there environment') is not marked."
+    },
+    {
+      "qid": "2",
+      "label_raw": "2.",
+      "marks_available": 3,
+      "status": "unanswered",
+      "marks_awarded": 0,
+      "key": "Pythons spread in Florida because they are generalists: wide tolerance of habitat, temperature and diet, and they do best in and around humans.",
+      "note": "Not attempted. The script is one page and answers question 1 only."
+    },
+    {
+      "qid": "3",
+      "label_raw": "3.",
+      "marks_available": 3,
+      "status": "unanswered",
+      "marks_awarded": 0,
+      "key": "Released or escaped exotic pets can establish themselves where they do not belong and displace native species.",
+      "note": "Not attempted."
+    }
+  ]
+}

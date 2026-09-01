@@ -1,0 +1,20 @@
+furniture	Springfield Middle School
+furniture	Grade 8 · Reading and Science · Unit Assessment
+instruction	Time: 40 minutes Maximum Marks: 9
+instruction	Answer all questions. Each question carries 3 marks.
+instruction	Read the source below and answer the questions that follow.
+material	"The trade in exotic pets has grown quickly, and nowhere faster than in
+material	reptiles. Traders say a snake in a tank harms nobody. Biologists disagree:
+material	released or escaped, some of these animals thrive where they do not belong.
+material	The pythons now breeding in Florida are the example everyone reaches for.
+material	What makes them so successful is that they are generalists. A generalist
+material	tolerates a wide range of habitats, temperatures and foods, and does best in
+material	and around humans. A specialist does the opposite. It depends on a narrow
+material	food source and a stable place to live: the panda, which eats almost nothing
+material	but bamboo, or the koala bear, which eats eucalyptus leaves almost
+material	exclusively. Specialists are the first to suffer when their habitat shifts."
+material	· adapted from a magazine article on the pet trade
+question_start	1. Explain how pandas in China are similar to koalas in Australia and how they both are
+question_continuation	different from pythons. Support your response with information from the article.
+question_start	2. Using the article, explain why pythons have been able to spread in Florida.
+question_start	3. Give one reason a biologist might oppose the trade in exotic pets.

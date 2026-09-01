@@ -511,7 +511,12 @@ def question_lines(index: LineIndex, question: Question) -> list[Line]:
 #: Versailles, and the checks are derived from what the marker is shown.
 _REFERS_TO_MATERIAL = re.compile(
     r"\b(?:"
-    r"the (?:source|passage|extract|table|figure|diagram|sketch|graph|map|text)"
+    # "article" and "story" were missing, and a realistic paper found it at once:
+    # ASAP's own prompt ends "Support your response with information from the
+    # article", so the extract printed above it was attached to nothing and the
+    # marker was told the paper did not contain it.
+    r"the (?:source|passage|extract|table|figure|diagram|sketch|graph|map|text"
+    r"|article|story|poem|chart|data|information above|information below)"
     r"|(?:first|second|third|following|above|below|given)\s+(?:row|rows|column|columns)"
     r"|position\s+[A-Z]\b"
     r"|marked\s+(?:at|on)\b"

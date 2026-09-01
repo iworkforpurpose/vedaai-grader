@@ -142,10 +142,10 @@ _POINTS_AT_MATERIAL = re.compile(
     # rubric line and it opened a material scope that then swallowed "Each question
     # carries 4 marks" — so the paper's own denominators went missing and every
     # question on it was graded out of nothing.
-    r"read the (?:source|passage|extract|text)"
+    r"read the (?:source|passage|extract|text|article|story)"
     r"|read the following (?:source|passage|extract|text|table|figure|carefully and)"
-    r"|study the (?:source|passage|extract|sketch|figure|diagram|map|table|graph)"
-    r"|(?:the )?(?:table|figure|diagram|sketch|graph|map|source|passage|extract)\s+"
+    r"|study the (?:source|passage|extract|sketch|figure|diagram|map|table|graph|article)"
+    r"|(?:the )?(?:table|figure|diagram|sketch|graph|map|source|passage|extract|article)\s+"
     r"(?:below|above|given below)"
     r"|refer to the (?:table|figure|diagram|sketch|graph|map|source|passage)"
     r"|based on the (?:source|passage|extract|table|figure)"

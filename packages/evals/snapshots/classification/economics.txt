@@ -1,0 +1,19 @@
+furniture	Kendriya Vidyalaya
+furniture	Class 11 · Economics · Unit Test
+instruction	Time: 1 hour Maximum Marks: 20
+section_header	SECTION A
+instruction	(Each question carries 3 marks.)
+question_start	Q1. Define opportunity cost and give one example from daily life.
+question_start	Q2. Distinguish between a movement along a demand curve and a shift of it. [4]
+question_start	Q3. The table below shows the price and quantity demanded of wheat.
+material	Price (Rs/kg)
+material	Quantity (kg)
+material	10
+material	100
+material	12
+material	80
+material	14
+material	65
+question_start	Q3. Calculate the price elasticity of demand between the first and second rows.
+question_start	Q4. State two reasons why a government may impose a tax on a good.
+question_start	Q5. Explain why the supply curve normally slopes upward.

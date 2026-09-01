@@ -1,0 +1,10 @@
+furniture	Nehru Vidyalaya
+furniture	Class 10 · Physics · Class Test
+instruction	Time: 45 minutes Maximum Marks: 14
+instruction	Answer all questions. Show your working.
+question_start	1. A car travels 150 m in 10 s. Calculate its average speed. [2]
+question_start	2. State three properties of magnetic field lines. [3]
+question_start	3. Explain why a bird can sit safely on a high-voltage transmission wire. [3]
+question_start	4. Define resistance and state its SI unit. [2]
+question_start	5. A wire carries a current of 2 A when 12 V is applied. Calculate its resistance. [2]
+question_start	6. Give two uses of a convex mirror. [2]

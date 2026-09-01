@@ -1,0 +1,13 @@
+furniture	Holy Trinity School
+furniture	Class 10 · English Literature · Annual Examination
+instruction	Time: 2 hours Maximum Marks: 35
+instruction	Section A is compulsory. In Section B, answer any two of the three questions.
+section_header	SECTION A
+instruction	(Each question carries 5 marks.)
+question_start	1. How does the poet use the weather to reflect the speaker's state of mind?
+question_start	2. Describe the relationship between the two brothers as it changes across the story.
+section_header	SECTION B
+instruction	(Answer any two. Each question carries 5 marks.)
+question_start	3. Discuss the writer's attitude to the village, quoting one phrase in support.
+question_start	4. What is the effect of telling the story through a child's eyes?
+question_start	5. Comment on the ending. Is it hopeful or bleak? Give reasons.
