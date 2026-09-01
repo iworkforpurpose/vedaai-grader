@@ -71,7 +71,7 @@ CACHE = ROOT / "packages" / "generated" / ".scientsbank"
 #: Two, so that partial credit is expressible as one. A denominator of one would
 #: force every judgement to be all-or-nothing and would flatter the binary checks
 #: by removing the case they are least sure of.
-MARKS = 2.0
+MARKS = 2.0  # overridable with --marks; see the note above
 
 #: The ClassLabel order the dataset declares. Rows carry the *index*, not the
 #: name, and the first run silently sampled nothing because the code compared
@@ -311,6 +311,8 @@ def pct(v: float | None) -> str:
 
 
 async def main_async(args) -> int:
+    global MARKS
+    MARKS = args.marks
     rows = sample(load(args.split), args.n, args.seed)
     grader = select_grader()
     print(
@@ -371,6 +373,11 @@ def main(argv: list[str] | None = None) -> int:
                              "product does. 'reference' uses the teacher's answer too.")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--concurrency", type=int, default=6)
+    parser.add_argument("--marks", type=float, default=MARKS,
+                        help="Denominator per question. SciEntsBank prints none, so this "
+                             "is a choice: 2 is coarse for an 'explain' question and 3-5 "
+                             "is what a real paper carries. Reported, because a ladder of "
+                             "checks needs room and the denominator decides how much.")
     return asyncio.run(main_async(parser.parse_args(argv)))
 
 
