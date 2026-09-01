@@ -167,18 +167,43 @@ def struck_through(regions: list[InkRegion]) -> list[InkRegion]:
     return [r for r in regions if r.kind is InkRegionKind.STRUCK_THROUGH]
 
 
+#: Share of the page above which a region may no longer disqualify lines.
+#:
+#: The second half of the fault documented on ``ink._STRIKE_MAX_STROKE_HEIGHTS``,
+#: and kept as a separate guard on purpose. That one stops a page-sized region
+#: being *called* struck-through; this one stops any single region — however it
+#: came to be classified — from removing a whole page's writing from marking.
+#:
+#: The asymmetry is what justifies belt and braces here. Excluding a line the
+#: student did not cross out marks their answer as if they had never written it,
+#: which is a confident zero on work that was read at high confidence and is
+#: exactly the error a teacher will be challenged on and cannot explain. Failing
+#: to exclude an abandoned line lets a struck-out attempt reach the grader, which
+#: is worse marking but visible: the rubric citations show a teacher which lines
+#: were credited.
+#:
+#: A tenth of a page is far larger than any real crossing-out and far smaller than
+#: the 0.65-of-a-page blobs that caused the damage.
+_MAX_EXCLUDING_REGION_AREA = 0.10
+
+
 def lines_excluded_from_grading(regions: list[InkRegion], lines: list[Line]) -> set[str]:
     """Line IDs sitting inside struck-through or bleed-through ink.
 
     The grading guard. Without it, a student who wrote a wrong answer, crossed it
     out and wrote the correct one below can be marked on the version they
     explicitly abandoned — and the score gives the teacher no hint that happened.
+
+    Regions larger than a crossing-out could plausibly be are ignored here. See
+    ``_MAX_EXCLUDING_REGION_AREA``: on a real script two of them removed 63 of 119
+    lines, at a mean recognition confidence of 0.877.
     """
     excluded: set[str] = set()
     suspect = [
         r
         for r in regions
         if r.kind in {InkRegionKind.STRUCK_THROUGH, InkRegionKind.BLEED_THROUGH}
+        and r.box.area <= _MAX_EXCLUDING_REGION_AREA
     ]
     for line in lines:
         for region in suspect:
