@@ -13,6 +13,7 @@ import pytest
 from vedaai_contracts import BBox, DocumentKind, Line, LineRole, OcrEngine, Question
 
 from grader.questions import furniture, numbering, optionality, validate
+from grader.questions.expects import evidence_kind, expects_a_drawing
 from grader.questions.extract import extract, mark_stems, reads_as_a_heading
 from grader.reading_order import order_lines
 
@@ -696,10 +697,47 @@ class TestFurniture:
         assert role is LineRole.FURNITURE, text
 
     def test_a_mid_sentence_reference_to_another_page_is_not_a_header(self) -> None:
-        # "Refer to the graph on page 2" is question text. The marker rule is
+        # "Refer to the graph on page 2" is not furniture. The marker rule is
         # anchored to a delimiter at one end of the line for exactly this case.
+        #
+        # It is INSTRUCTION rather than QUESTION_CONTINUATION, which is a
+        # deliberate change and a genuinely ambiguous line. It could be the second
+        # line of a multi-line question, or a stem introducing the parts below it,
+        # and nothing in the line separates the two.
+        #
+        # The costs are not symmetric, and that decides it. Read as a stem, the
+        # question above loses one line of text. Read as a continuation, a question
+        # can absorb a whole source extract and then out-compete the question that
+        # extract belongs to — measured at eight marks on the history paper, where
+        # it presented as a marking failure rather than an extraction one.
         role = furniture.classify(
             line(1, "Refer to the graph on page 2 and answer the following.", y0=0.4),
+            repeated=set(),
+            previous_role=LineRole.QUESTION_START,
+        )
+        assert role is not LineRole.FURNITURE
+        assert role is LineRole.INSTRUCTION
+
+    def test_an_unlabelled_line_that_heads_the_parts_below_interrupts(self) -> None:
+        # The history-paper fault, at the unit level. A source instruction sitting
+        # between Q.3(b) and Q.4 must not become Q.3(b)'s text, or Q.3(b) inherits
+        # the source and wins the answer that belongs to Q.4.
+        #
+        # Singular "the question that follows" as the paper prints it; the plural
+        # matched before this and the singular did not, because the trailing word
+        # boundary falls inside "follows".
+        role = furniture.classify(
+            line(1, "Read the source below and answer the question that follows.", y0=0.4),
+            repeated=set(),
+            previous_role=LineRole.QUESTION_START,
+        )
+        assert role is LineRole.INSTRUCTION
+
+    def test_an_ordinary_continuation_still_continues(self) -> None:
+        # The guard on the rule above: only a line that points forward at parts
+        # interrupts. Ordinary prose under a question is still that question.
+        role = furniture.classify(
+            line(1, "The diagram is not drawn to scale.", y0=0.4),
             repeated=set(),
             previous_role=LineRole.QUESTION_START,
         )
@@ -1270,3 +1308,60 @@ class TestTheRealTwoPagePaper:
         labels = [q.label_raw for q in paper.questions]
         assert any(label.startswith("1.") for label in labels)
         assert any(label.startswith("11") for label in labels), "page 2 questions missing"
+
+
+class TestWhatAQuestionAsksFor:
+    """``evidence_kind``, and the two ways it used to be wrong.
+
+    It decides whether a text grader may judge an answer at all, so a wrong
+    answer here is not a wrong mark — it is a question silently never marked, or
+    a diagram confidently marked zero from a transcription it does not have.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # How a geography paper phrases its map question. No drawing verb
+            # appears in it, so this defaulted to RECALL — and an unlabelled map
+            # answer could then not even be placed, because a text-free block is
+            # refused unless the question expects a drawing.
+            "Mark and locate the following on the outline map of India.",
+            "On the given political map of India, mark the river Ganga.",
+            "Q1. Locate and label the Deccan Plateau on the map of India.",
+            "Show the position of the Tropic of Cancer on the outline map.",
+            # Ordinary drawing commands.
+            "Draw a labelled sketch of a meander showing the fastest flow.",
+            "Label the parts of a flower.",
+            "Construct a triangle ABC with AB = 5 cm.",
+            "Shade the region representing consumer surplus on the diagram.",
+        ],
+    )
+    def test_asking_for_ink_is_a_drawing(self, text: str) -> None:
+        assert expects_a_drawing(text) is True, text
+
+    @pytest.mark.parametrize(
+        ("text", "kind"),
+        [
+            # `diagram` was in the drawing verbs and is a noun, not a command, so
+            # every question that merely referred to a figure was routed to a
+            # person and scored zero.
+            ("The diagram shows a meander. Explain why deposition occurs.", "reasoning"),
+            ("Study the diagram and describe the process shown.", "reasoning"),
+            # A placement verb paired with an artwork, but describing rather than
+            # instructing. The compound rule reintroduced the same fault until the
+            # verb was anchored to the start of a clause.
+            ("The labels on the graph show rainfall. Describe the trend.", "reasoning"),
+            ("The shaded area on the figure shows forest cover. Explain why.", "reasoning"),
+            # Placement verbs are common words. Alone they must not mean drawing.
+            ("Name two trace elements needed by plants.", "recall"),
+            ("Indicate whether the statement is true or false.", "recall"),
+            # Substring matching fired inside ordinary words. "marks" is printed on
+            # nearly every question, and contains "mark".
+            ("Q2 carries 4 marks. State two reasons for the tax.", "recall"),
+            ("In the given figure, find the value of x.", "working"),
+            ("Distinguish between weathering and erosion.", "contrast"),
+        ],
+    )
+    def test_a_question_answered_in_words_stays_gradable(self, text: str, kind: str) -> None:
+        assert expects_a_drawing(text) is False, text
+        assert evidence_kind(text).value == kind, text

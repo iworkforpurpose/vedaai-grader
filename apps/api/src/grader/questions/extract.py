@@ -279,52 +279,11 @@ def extract(index: LineIndex) -> QuestionPaper:
     return paper
 
 
-#: A heading's text points forward at the parts beneath it. Matched together with
-#: a trailing colon, because that pairing is what separates a heading from a task
-#: whose marks happen to be itemised below it.
+#: Whether a line introduces other questions rather than asking one.
 #:
-#: Structure alone is not enough, and a real paper showed why. "3. Write a program
-#: that reads an array of 0s and 1s and prints the length of the longest run of
-#: 1s." carries no marks — they sit on its (a) and (b) — but it is the task, and
-#: calling it a heading would leave the question the student actually answered out
-#: of the candidate list. "2. Answer the following about the program you wrote for
-#: question 1:" is a heading, and the difference between them is not structural: it
-#: is that one is self-contained and the other is meaningless without its parts.
-_POINTS_AT_ITS_PARTS = re.compile(
-    r"\b(?:the following"
-    r"|both parts?|all parts?|each part"
-    r"|the (?:parts?|questions?)\s+(?:below|that follow|which follow|given below)"
-    r"|these questions?"
-    r")\b",
-    re.IGNORECASE,
-)
-
-#: A heading tells the student to answer what comes next. A task merely mentions
-#: it. This is what stands in for the colon when a paper does not use one.
-_INVITES_ANSWERS = re.compile(r"\b(?:answer|attempt|respond to)\b", re.IGNORECASE)
-
-
-def reads_as_a_heading(text: str) -> bool:
-    """Whether a question's text introduces other questions rather than asking one.
-
-    Pointing at the parts is necessary but never sufficient. "Balance the following
-    equation" points at something and is still a question, so a second signal has
-    to say that the parts are what gets answered.
-
-    A colon is one such signal. Requiring it was the whole rule, and a geography
-    paper ended the sentence instead: "Study the sketch of the river below and
-    answer the parts that follow." stayed an answerable question, sat in the
-    candidate list beside its own (i) and (ii), and took the answer to (ii) — which
-    was then reported uncertain on a question the student had answered in full.
-
-    The invitation is the other signal, and the more direct one: a heading asks the
-    student to *answer* what follows. "Balance the following equation." does not,
-    and stays a question whichever mark ends it.
-    """
-    stripped = text.strip()
-    if _POINTS_AT_ITS_PARTS.search(stripped) is None:
-        return False
-    return stripped.endswith(":") or _INVITES_ANSWERS.search(stripped) is not None
+#: Lives in ``furniture`` now, because classification needs it too and this module
+#: imports that one. Re-exported here because it was public API from here first.
+reads_as_a_heading = furniture.reads_as_a_heading
 
 
 def mark_stems(questions: list[Question]) -> list[Question]:
