@@ -144,7 +144,7 @@ def summarise(submission: dict) -> dict:
         "paper_lines": len(paper.get("lines") or []),
         "sheet_lines": len(sheet.get("lines") or []),
         "mapping": statuses,
-        "orphans": len(mapping.get("orphan_block_ids") or []),
+        "orphans": len(mapping.get("orphans") or []),
         "unassigned_ink": mapping.get("unassigned_ink_ratio"),
         "blocks": len(submission.get("blocks") or []),
         "marks": [grades.get("total_awarded"), grades.get("total_available")] if grades else None,
