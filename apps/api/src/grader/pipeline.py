@@ -370,10 +370,16 @@ def segment_answers(submission: Submission) -> list[str]:
         ]
 
     lines = submission.answer_sheet_lines.lines
-    blocks = answers_module.segment_blocks(lines, submission.ink_regions)
+    questions = submission.questions.questions if submission.questions else []
+
+    # The paper is passed to segmentation for the same reason it is passed to
+    # anchor detection below: a number the student wrote is only a question label
+    # if the paper has that question. Without it, algebra and a student's own
+    # sub-part numbering cut answers apart, and a boundary invented here cannot be
+    # undone by anything downstream.
+    blocks = answers_module.segment_blocks(lines, submission.ink_regions, questions)
     submission.blocks = blocks
 
-    questions = submission.questions.questions if submission.questions else []
     anchors = answers_module.detect(blocks, lines, questions)
     submission.anchors = anchors
 
