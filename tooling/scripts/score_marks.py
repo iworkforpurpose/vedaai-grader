@@ -109,19 +109,34 @@ def run_document(doc: str, *, engine: str, page_root: Path) -> Submission:
     if submission.answer_sheet_lines is None:
         return submission
 
-    grader = grading.select_grader()
     excluded = regions.lines_excluded_from_grading(
         submission.ink_regions, submission.answer_sheet_lines.lines
     )
-    submission.grades, failures = asyncio.run(
-        grading.grade_submission(
-            paper=submission.questions,
-            mapping=submission.mapping,
-            index=submission.answer_sheet_lines,
-            grader=grader,
-            excluded_line_ids=excluded,
-        )
-    )
+
+    async def mark():
+        """One loop per document, and the client closed inside it.
+
+        The grader is built here rather than outside so that its HTTP client
+        lives and dies with the loop it was used on. Built outside, it was
+        finalised by the garbage collector after ``asyncio.run`` had closed the
+        loop, which printed a bare ``RuntimeError: Event loop is closed`` above
+        otherwise correct output.
+        """
+        grader = grading.select_grader()
+        try:
+            return await grading.grade_submission(
+                paper=submission.questions,
+                mapping=submission.mapping,
+                index=submission.answer_sheet_lines,
+                grader=grader,
+                excluded_line_ids=excluded,
+            )
+        finally:
+            close = getattr(grader, "aclose", None)
+            if close is not None:
+                await close()
+
+    submission.grades, failures = asyncio.run(mark())
     submission.warnings.extend(f for f in failures if f not in submission.warnings)
     return submission
 

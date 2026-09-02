@@ -88,6 +88,14 @@ class DocRun:
     #: answers: a marker that varies is a property of the model and is handled by
     #: deferring, whereas a pipeline that varies is a bug.
     statuses: list[dict[str, str]] = field(default_factory=list)
+    #: Lines read off the answer sheet, and questions found in the paper, per
+    #: pass. Recorded because a document that read nothing scores zero, and zero
+    #: is indistinguishable in the report from a document the marker judged
+    #: harshly — which is not a hypothetical: a gate run with the OpenAI key
+    #: exported but not the AWS credentials left Textract unauthenticated, four
+    #: documents read nothing, and the output said "out of band" nine times.
+    lines_read: list[int] = field(default_factory=list)
+    questions_found: list[int] = field(default_factory=list)
 
     @property
     def median_awarded(self) -> dict[str, float]:
@@ -123,6 +131,12 @@ def evaluate(doc: str, *, engine: str, passes: int, pages: Path) -> DocRun:
         facts = facts_from(submission)
         run.reports.append(metrics.scoring_scores(truth, facts))
         run.statuses.append({qid: f.status for qid, f in facts.items()})
+        run.lines_read.append(
+            len(submission.answer_sheet_lines.lines) if submission.answer_sheet_lines else 0
+        )
+        run.questions_found.append(
+            len(submission.questions.questions) if submission.questions else 0
+        )
     return run
 
 
@@ -134,6 +148,23 @@ def failures_for(doc: str, run: DocRun, truth) -> list[Failure]:
 
     first = run.reports[0]
     out: list[Failure] = []
+
+    # Read nothing, mark nothing. Reported as its own failure and before the band,
+    # because a document that produced no lines has not been marked badly — it has
+    # not been marked, and calling that "out of band" sends the reader to the
+    # marker to look for a bug that is in the credentials or the recognizer.
+    if run.lines_read and min(run.lines_read) == 0:
+        out.append(
+            Failure(doc, "read nothing", "no lines came off the answer sheet — check "
+                    "the recognizer and its credentials, not the marking")
+        )
+    if run.questions_found and min(run.questions_found) == 0:
+        out.append(
+            Failure(doc, "no questions", "the question paper yielded none — check the "
+                    "recognizer and its credentials, not the marking")
+        )
+    if out:
+        return out
 
     # The band is checked against the median so that one noisy pass cannot fail a
     # document that is really inside it, nor pass one that is really outside.

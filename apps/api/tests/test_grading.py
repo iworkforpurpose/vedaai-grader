@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import pytest
 from vedaai_contracts import (
@@ -1317,3 +1318,291 @@ class TestASplitTheMarksCannotCarry:
                 marks_awarded=0.0,
                 satisfied=False,
             )
+
+
+class TestThePanel:
+    """The marker samples its judgement several times and votes.
+
+    The reason is a number rather than a preference. Over three identical passes
+    of nine documents and 45 scored questions, four questions came back with a
+    different mark (8.9%) and the worst moved 3 marks out of 5, while the
+    pipeline placed every answer identically every time. So the marker was the
+    only unstable component, and these are the properties of the fix.
+    """
+
+    @staticmethod
+    def _sample(*checks, feedback: str | None = None, uncertain: bool = False) -> dict:
+        return {
+            "checks": [
+                {
+                    "index": i + 1,
+                    "met": met,
+                    "cited_line_ids": list(cited),
+                    "error": error,
+                }
+                for i, (met, cited, error) in enumerate(checks)
+            ],
+            "feedback": feedback,
+            "uncertain": uncertain,
+        }
+
+    def test_two_of_three_settles_a_check(self) -> None:
+        voted = engine.vote_checks(
+            [
+                self._sample((True, ["L1"], None)),
+                self._sample((True, ["L2"], None)),
+                self._sample((False, [], "not stated")),
+            ],
+            need=2,
+        )
+        assert voted["checks"][0]["met"] is True
+
+    def test_a_split_defers_the_mark_instead_of_guessing(self) -> None:
+        """The whole point of the panel.
+
+        A check the samples cannot agree on is exactly the mark that was flipping
+        between runs. Deferred, it becomes one named thing for the teacher to
+        settle; guessed, it becomes a number that changes when they look again.
+        """
+        voted = engine.vote_checks(
+            [
+                self._sample((True, ["L1"], None)),
+                self._sample((False, [], "no unit given")),
+                self._sample((None, [], None)),
+            ],
+            need=2,
+        )
+        assert voted["checks"][0]["met"] is None
+
+    def test_a_deferred_check_keeps_the_fault_a_sample_named(self) -> None:
+        """Because a refusal with no named fault is downstream treated as a shrug.
+
+        Losing the wording here would silently convert a decided judgement into an
+        unsure one, which is the failure that tripled the false-zero rate when the
+        model wrote the mark scheme.
+        """
+        voted = engine.vote_checks(
+            [
+                self._sample((False, [], "no unit given")),
+                self._sample((True, ["L1"], None)),
+                self._sample((None, [], None)),
+            ],
+            need=2,
+        )
+        assert voted["checks"][0]["error"] == "no unit given"
+
+    def test_an_awarded_check_carries_every_line_its_voters_cited(self) -> None:
+        voted = engine.vote_checks(
+            [
+                self._sample((True, ["L1"], None)),
+                self._sample((True, ["L1", "L2"], None)),
+                self._sample((False, [], "wrong")),
+            ],
+            need=2,
+        )
+        assert voted["checks"][0]["cited_line_ids"] == ["L1", "L2"]
+
+    def test_a_refused_check_cites_nothing(self) -> None:
+        """Citations justify a mark, so a withheld mark has none to carry.
+
+        Left in, they were read by the citation check as evidence for a point that
+        was never credited, which is how a contradictory citation rule previously
+        invalidated whole questions.
+        """
+        voted = engine.vote_checks(
+            [
+                self._sample((False, ["L1"], "wrong")),
+                self._sample((False, ["L2"], "wrong")),
+                self._sample((True, ["L3"], None)),
+            ],
+            need=2,
+        )
+        assert voted["checks"][0]["cited_line_ids"] == []
+
+    def test_unanimity_defers_what_a_majority_would_settle(self) -> None:
+        assert (
+            engine.vote_checks(
+                [
+                    self._sample((True, ["L1"], None)),
+                    self._sample((True, ["L1"], None)),
+                    self._sample((False, [], "no")),
+                ],
+                need=3,
+            )["checks"][0]["met"]
+            is None
+        )
+
+    def test_a_check_only_one_sample_answered_is_still_reported(self) -> None:
+        """Never silently dropped.
+
+        A check missing from the output is a mark nobody decided and nobody sees,
+        which reads downstream as a question that was fully marked.
+        """
+        voted = engine.vote_checks(
+            [
+                self._sample((True, ["L1"], None), (True, ["L2"], None)),
+                self._sample((True, ["L1"], None)),
+                self._sample((True, ["L1"], None)),
+            ],
+            need=2,
+        )
+        assert [c["index"] for c in voted["checks"]] == [1, 2]
+        assert voted["checks"][1]["met"] is None
+
+    def test_damaged_transcription_needs_the_panel_to_agree_too(self) -> None:
+        one = self._sample((True, ["L1"], None), uncertain=True)
+        assert engine.vote_checks([one, one, self._sample((True, ["L1"], None))],
+                                  need=2)["uncertain"] is True
+        assert engine.vote_checks(
+            [one] + [self._sample((True, ["L1"], None))] * 2, need=2
+        )["uncertain"] is False
+
+    def test_the_agreement_threshold_follows_the_surviving_samples(self) -> None:
+        """A panel that shrinks must not turn unanimity into a single vote."""
+        assert engine._agreement(3) == 2
+        assert engine._agreement(1) == 1
+        assert engine._agreement(2) == 2
+
+    def test_the_seeds_are_the_same_every_run(self) -> None:
+        """Fixed, not random.
+
+        Where the provider honours a seed the panel is reproducible by
+        construction. Randomising here would make the marker less reproducible,
+        which is the opposite of why the panel exists.
+        """
+        assert engine._seeds(5) == engine._seeds(5)
+        assert len(set(engine._seeds(5))) == 5
+
+    def test_the_scalar_path_takes_a_whole_sample_not_a_blend(self) -> None:
+        """Marks and the comments justifying them are written together.
+
+        Recombining them point by point can produce a judgement whose comment
+        argues for a mark it did not award.
+        """
+        samples = [
+            {"points": [{"marks_awarded": 3.0, "comment": "three"}]},
+            {"points": [{"marks_awarded": 1.0, "comment": "one"}]},
+            {"points": [{"marks_awarded": 2.0, "comment": "two"}]},
+        ]
+        assert engine.median_sample(samples)["points"][0]["comment"] == "two"
+
+    def test_one_failed_call_costs_a_vote_and_not_the_question(self) -> None:
+        async def judge(seed: int) -> dict:
+            if seed == engine._seeds(3)[0]:
+                raise RuntimeError("upstream refused")
+            return {"checks": [], "feedback": None, "uncertain": False}
+
+        assert len(asyncio.run(engine._panel(judge, 3))) == 2
+
+    def test_every_call_failing_is_still_an_error(self) -> None:
+        async def judge(seed: int) -> dict:
+            raise RuntimeError("upstream refused")
+
+        with pytest.raises(RuntimeError, match="upstream refused"):
+            asyncio.run(engine._panel(judge, 3))
+
+    def test_a_grader_releases_its_http_client(self) -> None:
+        """So a harness marking several documents does not leak one per loop.
+
+        The symptom was a bare ``RuntimeError: Event loop is closed`` traceback
+        printed above correct output, with nothing in it naming this project: the
+        client was being finalised by the garbage collector after the loop it
+        belonged to had gone.
+        """
+        closed = []
+
+        class Client:
+            async def close(self) -> None:
+                closed.append(True)
+
+        grader = engine.OpenAIGrader(model="m", client=Client())
+        asyncio.run(grader.aclose())
+        assert closed == [True]
+
+    def test_closing_a_client_that_cannot_be_closed_is_not_an_error(self) -> None:
+        grader = engine.OpenAIGrader(model="m", client=object())
+        asyncio.run(grader.aclose())
+
+    def test_grading_one_question_really_asks_three_times(self) -> None:
+        """The panel is only a panel if it samples more than once.
+
+        Asserted at the client because every intermediate layer would look
+        identical if it collapsed to a single call — the marks would still be
+        produced, the tests above would still pass, and the instability the panel
+        exists to remove would be back with nothing reporting it.
+        """
+        seeds: list[int] = []
+
+        class Completions:
+            async def create(self, **kwargs):
+                seeds.append(kwargs["seed"])
+                return type(
+                    "R",
+                    (),
+                    {
+                        "choices": [
+                            type(
+                                "C",
+                                (),
+                                {
+                                    "message": type(
+                                        "M",
+                                        (),
+                                        {
+                                            "content": json.dumps(
+                                                {
+                                                    "points": [
+                                                        {
+                                                            "index": 1,
+                                                            "marks_awarded": 0.0,
+                                                            "satisfied": False,
+                                                            "cited_line_ids": [],
+                                                            "comment": None,
+                                                            "error": "not stated",
+                                                        }
+                                                    ],
+                                                    "feedback": None,
+                                                    "uncertain": False,
+                                                }
+                                            )
+                                        },
+                                    )()
+                                },
+                            )()
+                        ]
+                    },
+                )()
+
+        class Client:
+            chat = type("Chat", (), {"completions": Completions()})()
+
+        question = q("A/1", "1.", "State one cause of the war.", 1, marks=1)
+        lines = [line(0, "The alliance system.", y0=0.2)]
+        grader = engine.OpenAIGrader(model="m", client=Client())
+        asyncio.run(
+            grader.grade(
+                question=question,
+                rubric=rubric.derive(question),
+                index=index_of(*lines),
+                line_ids=[lines[0].line_id],
+            )
+        )
+        assert len(seeds) == engine.MARK_SAMPLES == 5
+        assert len(set(seeds)) == 5
+
+    def test_a_lone_sample_is_taken_greedily(self) -> None:
+        """Because noise with nothing to cancel against is just noise.
+
+        Temperature above zero is what buys a panel independent samples; with one
+        sample it buys only an unreproducible mark, which is the thing being
+        fixed.
+
+        Asserted through the helper rather than by reloading the module. Reloading
+        it replaces every class it defines, including ``GraderUnavailable``, so the
+        route that catches the old one stops recognising the new one and three
+        unrelated tests fail — which is exactly what the first version of this
+        test did.
+        """
+        assert engine._default_temperature(1) == 0.0
+        assert engine._default_temperature(5) == 0.7
+        assert engine.MARK_TEMPERATURE == 0.7
