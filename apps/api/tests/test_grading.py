@@ -1606,3 +1606,66 @@ class TestThePanel:
         assert engine._default_temperature(1) == 0.0
         assert engine._default_temperature(5) == 0.7
         assert engine.MARK_TEMPERATURE == 0.7
+
+
+class TestCitationRepair:
+    """A citation that names a real line by a different padding is not a lie.
+
+    Four marks were lost on a fully correct geography answer because the model
+    wrote ``as:00010`` for the line the index calls ``as:0010``. The answer named
+    a delta, named it correctly, and cited the sentence that said so. The ID did
+    not match a string, so the whole question was refused and the teacher was
+    told the citation was invented — a lost mark and a false accusation in one.
+    """
+
+    @staticmethod
+    def _index(count: int):
+        return index_of(*(line(i, f"sentence {i}", y0=0.1 + i * 0.04) for i in range(1, count + 1)))
+
+    def test_a_number_padded_to_the_wrong_width_still_names_its_line(self) -> None:
+        assert citations.resolve("as:00010", self._index(12)) == "as:0010"
+
+    def test_an_exact_citation_is_untouched(self) -> None:
+        assert citations.resolve("as:0007", self._index(12)) == "as:0007"
+
+    def test_a_line_that_does_not_exist_is_left_to_be_refused(self) -> None:
+        """The repair must not become a way for a fabrication to pass.
+
+        Left unchanged rather than dropped, so the citation check still sees it,
+        still refuses the mark, and still says which ID did not resolve.
+        """
+        assert citations.resolve("as:0099", self._index(12)) == "as:0099"
+
+    def test_a_citation_pointing_at_another_document_is_not_repaired(self) -> None:
+        """Prefixes are not interchangeable.
+
+        ``qp:`` is the question paper. Repairing across the prefix would let a
+        grade cite the printed question as evidence of the student's answer,
+        which is the second thing the citation check exists to stop.
+        """
+        assert citations.resolve("qp:0010", self._index(12)) == "qp:0010"
+
+    def test_a_non_numeric_tail_is_left_alone(self) -> None:
+        assert citations.resolve("as:tenth", self._index(12)) == "as:tenth"
+
+    def test_repair_preserves_order_and_repetition(self) -> None:
+        found = citations.resolve_all(["as:00003", "as:0001", "as:00003"], self._index(12))
+        assert found == ["as:0003", "as:0001", "as:0003"]
+
+    def test_the_repaired_citation_passes_the_check_it_used_to_fail(self) -> None:
+        """The property that matters, asserted end to end.
+
+        Before the repair this exact point produced "no such line — the citation
+        was invented" and took the question's whole mark with it.
+        """
+        index = self._index(12)
+        point = RubricPoint(
+            point_id="2/ii#1",
+            criterion="Does the answer name the process?",
+            marks_available=1.0,
+            marks_awarded=1.0,
+            satisfied=True,
+            cited_line_ids=citations.resolve_all(["as:00010"], index),
+        )
+        allowed = {ln.line_id for ln in index.lines}
+        assert citations.check([point], index, allowed_line_ids=allowed) == []

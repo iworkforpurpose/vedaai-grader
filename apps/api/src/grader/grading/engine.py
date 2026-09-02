@@ -859,7 +859,7 @@ def assemble(
         # were evidenced. An invented or out-of-scope line id is the other thing
         # entirely, and still refuses the question below: a model making evidence
         # up for one point has said nothing trustworthy about the others.
-        cited = [str(lid) for lid in raw.get("cited_line_ids", [])]
+        cited = citations.resolve_all(raw.get("cited_line_ids") or [], index)
         comment = raw.get("comment")
         # The named fault, put in front of the comment. A teacher checking a
         # withheld mark wants "150/10 is 15, not 1.5" before the encouragement.
@@ -1006,7 +1006,7 @@ def assemble_checks(
     for i, check in enumerate(bank.checks, start=1):
         raw = answers.get(i) or {}
         met = raw.get("met")
-        cited = [str(c) for c in (raw.get("cited_line_ids") or [])]
+        cited = citations.resolve_all(raw.get("cited_line_ids") or [], index)
         fault = str(raw.get("error") or "").strip()
         point_id = f"{rubric.qid}#{i}"
 
