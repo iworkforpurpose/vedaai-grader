@@ -34,6 +34,54 @@ class CitationProblem:
         return f"{self.point_id} cites {self.line_id}: {self.reason}"
 
 
+def resolve(line_id: str, index: LineIndex) -> str:
+    """The line a citation means, canonicalised where that is unambiguous.
+
+    Exact matches pass through, and so does anything unresolvable — a citation
+    that names no line must still reach :func:`check` and be refused, because
+    that refusal is what stops a fabricated justification being displayed.
+
+    Between those two sits one repair, and it exists because of four marks lost
+    on a correct answer. Line IDs are zero-padded to a fixed width, and the model
+    wrote ``as:00010`` for a line the index calls ``as:0010`` — the same number,
+    padded to five digits instead of four. Nothing was invented and nothing was
+    misread; the answer named a delta and named it correctly. But the ID did not
+    match a string, so the citation check refused the whole question and the
+    teacher was shown "the citation was invented", which was both a lost mark and
+    a false accusation.
+
+    So a numeric suffix is compared as a number rather than as text, and only
+    where exactly one known line answers to it. Two candidates, a different
+    prefix, or a non-numeric tail are all left alone for the check to reject: a
+    repair that guesses is worse than a refusal, because it puts a mark behind
+    the wrong sentence.
+    """
+    known = {line.line_id for line in index.lines}
+    if line_id in known:
+        return line_id
+
+    prefix, separator, tail = line_id.rpartition(":")
+    if not separator or not tail.isdigit():
+        return line_id
+
+    wanted = int(tail)
+    matches = {
+        candidate
+        for candidate in known
+        if (parts := candidate.rpartition(":"))[0] == prefix
+        and parts[2].isdigit()
+        and int(parts[2]) == wanted
+    }
+    if len(matches) == 1:
+        return matches.pop()
+    return line_id
+
+
+def resolve_all(line_ids: list[str], index: LineIndex) -> list[str]:
+    """:func:`resolve` over a citation list, order and duplicates preserved."""
+    return [resolve(str(line_id), index) for line_id in line_ids]
+
+
 def check(
     points: list[RubricPoint],
     index: LineIndex,
