@@ -222,8 +222,34 @@ answers scored zero when the checks were written that way.
 So the first check must be one that **any** answer showing partial understanding \
 would meet. If every check requires the complete answer, split them differently.
 
-The checks must sum to exactly the marks available. Use half marks only if the \
-total forces it.
+**Write only the checks a real mark scheme would contain, and weight them.** The \
+checks must sum to the marks available — but the *number* of checks is decided by \
+the question, not by the total. A check may be worth 2 or 3 marks. Two or three \
+checks on a five-mark question is normal and correct.
+
+This is measured, not stylistic. When the count was pinned to the total, a \
+five-mark question got five checks: the model wrote the two or three the mark \
+scheme really contains and then invented the rest to fill the number. The \
+inventions were always of the same kind, and always refusable:
+
+  NOT: "Does the answer provide a conclusion that summarizes the interpretation?"
+  NOT: "Does the answer link the changes to the overall themes of the story?"
+  NOT: "Does the answer explain how the reasons relate to the overall tone?"
+  NOT: "Does the answer provide a clear explanation linking the similarities and \
+differences to the information from the article?"
+
+No mark scheme asks for a summarising conclusion, or for a link to "the overall \
+theme", or for an explanation of an explanation. Each of those cost a student a \
+mark on an answer a teacher gave full marks to: "comment on the ending, is it \
+hopeful or bleak, give reasons" was marked 2 of 5 against a human's 5 of 5, and \
+three of the five checks were requirements nobody set.
+
+So: one check per distinct thing the answer must contain, and nothing else. If \
+the question supports three checks and carries five marks, give them 2, 2 and 1 — \
+weight the rungs, do not add rungs. Use half marks only where the split forces it.
+
+A test before you write each check: could you point at the phrase in the question, \
+or the line in a published mark scheme, that requires this? If not, delete it.
 
 `needs_material` is almost always **false**. Set it true only when the check \
 genuinely cannot be answered by reading the student's answer, because it depends \
