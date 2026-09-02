@@ -83,6 +83,11 @@ class DocRun:
     doc: str
     reports: list[metrics.ScoringReport] = field(default_factory=list)
     error: str | None = None
+    #: The mapping status per question, one dict per pass. Compared across passes
+    #: to separate a flaky *marker* from a flaky *pipeline*. They need different
+    #: answers: a marker that varies is a property of the model and is handled by
+    #: deferring, whereas a pipeline that varies is a bug.
+    statuses: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def median_awarded(self) -> dict[str, float]:
@@ -115,7 +120,9 @@ def evaluate(doc: str, *, engine: str, passes: int, pages: Path) -> DocRun:
         except Exception as exc:  # noqa: BLE001 - one document must not stop the gate
             run.error = f"{type(exc).__name__}: {exc}"
             return run
-        run.reports.append(metrics.scoring_scores(truth, facts_from(submission)))
+        facts = facts_from(submission)
+        run.reports.append(metrics.scoring_scores(truth, facts))
+        run.statuses.append({qid: f.status for qid, f in facts.items()})
     return run
 
 
@@ -166,6 +173,20 @@ def failures_for(doc: str, run: DocRun, truth) -> list[Failure]:
             )
         )
 
+    # A pipeline that places an answer differently between identical runs is a
+    # bug, not model variance, and it must be reported apart from the marks.
+    if len(run.statuses) > 1:
+        drifted = [
+            qid
+            for qid in run.statuses[0]
+            if len({st.get(qid) for st in run.statuses}) > 1
+        ]
+        if drifted:
+            out.append(
+                Failure(doc, "placement drifted", f"status changed across passes: "
+                        f"{', '.join(sorted(drifted))}")
+            )
+
     wide = {q: s for q, s in run.spreads.items() if s > MAX_SPREAD}
     if wide:
         out.append(
@@ -194,10 +215,12 @@ def main(argv: list[str] | None = None) -> int:
 
     all_failures: list[Failure] = []
     rows: list[tuple[str, str, str, str]] = []
+    runs: dict[str, DocRun] = {}
 
     for doc in documents:
         truth = marks_mod.find(doc, extra_roots=SOURCES)
         run = evaluate(doc, engine=args.engine, passes=args.passes, pages=args.pages)
+        runs[doc] = run
         problems = failures_for(doc, run, truth)
         all_failures.extend(problems)
 
@@ -219,6 +242,38 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n  {'document':16}{'marks':>7}{'truth (band)':>16}   result")
     for doc, got, want, verdict in rows:
         print(f"  {doc:16}{got:>7}{want:>16}   {verdict}")
+
+    # The reproducibility picture over every scored question, not only the ones
+    # that broke the threshold. Without the denominator a count of flaky questions
+    # says nothing about whether the product is flaky.
+    every: list[float] = []
+    placement_stable = True
+    for run in runs.values():
+        every.extend(run.spreads.values())
+        if len(run.statuses) > 1:
+            for qid in run.statuses[0]:
+                if len({st.get(qid) for st in run.statuses}) > 1:
+                    placement_stable = False
+    if every:
+        buckets = {"0": 0, "0.5": 0, "1": 0, ">1": 0}
+        for value in every:
+            if value == 0:
+                buckets["0"] += 1
+            elif value <= 0.5:
+                buckets["0.5"] += 1
+            elif value <= 1:
+                buckets["1"] += 1
+            else:
+                buckets[">1"] += 1
+        n = len(every)
+        print(f"\n  REPRODUCIBILITY over {args.passes} identical passes, {n} scored questions")
+        print(f"    identical every pass   {buckets['0']:>3}   {buckets['0'] / n * 100:5.1f}%")
+        print(f"    moved up to 0.5        {buckets['0.5']:>3}   {buckets['0.5'] / n * 100:5.1f}%")
+        print(f"    moved 1 mark           {buckets['1']:>3}   {buckets['1'] / n * 100:5.1f}%")
+        print(f"    moved more than 1      {buckets['>1']:>3}   {buckets['>1'] / n * 100:5.1f}%")
+        unstable = buckets["1"] + buckets[">1"]
+        print(f"    UNREPRODUCIBLE         {unstable:>3}   {unstable / n * 100:5.1f}%")
+        print(f"    placement identical every pass: {placement_stable}")
 
     if not all_failures:
         print(f"\n  GATE PASSED — {len(documents)} document(s), every property held.")
