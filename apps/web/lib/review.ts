@@ -488,17 +488,54 @@ export function scoreTone(grade: QuestionGrade | undefined): ScoreTone {
    * question nobody had looked at — which is how "the second question does not get
    * scored" was reported, when in fact it had been scored zero every time.
    */
-  if (!grade.judged) return "none";
-  if (grade.marks_awarded <= 0) return "zero";
-  if (grade.marks_awarded >= grade.marks_available) return "pass";
+  // A teacher's own mark is a decision whatever the marker did, including on a
+  // question it declined to judge. That is the case the correction exists for.
+  if (!grade.judged && !grade.teacher_decided) return "none";
+  if (grade.marks_final <= 0) return "zero";
+  if (grade.marks_final >= grade.marks_available) return "pass";
   return "partial";
 }
 
 /** The pill's text, or null when there is nothing to show. */
 export function scoreLabel(grade: QuestionGrade | undefined): string | null {
   if (!grade || grade.marks_available <= 0) return null;
-  const trim = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-  return `${trim(grade.marks_awarded)} / ${trim(grade.marks_available)}`;
+  return `${trimMark(grade.marks_final)} / ${trimMark(grade.marks_available)}`;
+}
+
+/** A mark as a teacher writes it: 3, not 3.0. */
+export function trimMark(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/**
+ * What the marker proposed, where a teacher has since said otherwise.
+ *
+ * Shown rather than discarded. A teacher who corrects a mark and then returns to
+ * the script needs to see that they corrected it, and what from — otherwise the
+ * only way to tell an edited mark from an accepted one is to remember.
+ */
+export function proposedMark(grade: QuestionGrade | undefined): string | null {
+  if (!grade || !grade.teacher_decided) return null;
+  return `${trimMark(grade.marks_awarded)} proposed`;
+}
+
+/**
+ * The mark a teacher may type, parsed, or `undefined` when it is not one.
+ *
+ * Empty clears the correction and restores the proposal, which is why the
+ * cleared case is `null` and a refusal is `undefined` — three outcomes, and
+ * collapsing any two of them loses either "they said zero" or "they said
+ * nothing".
+ */
+export function parseMark(
+  raw: string,
+  available: number,
+): number | null | undefined {
+  const text = raw.trim();
+  if (!text) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < 0 || value > available) return undefined;
+  return value;
 }
 
 /**

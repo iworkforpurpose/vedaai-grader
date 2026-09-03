@@ -242,6 +242,38 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
     }
   }
 
+  /*
+   * Record what a teacher says an answer is worth.
+   *
+   * Not applied optimistically, unlike a move. A move is the teacher restating
+   * something they can see on the page and the server cannot refuse on grounds
+   * they do not already know; a mark can be refused for carrying more than the
+   * paper prints, and showing it as accepted first would mean showing a total
+   * that never existed. The round trip is one field on one question, so the wait
+   * is short and the number that appears is the number that was stored.
+   */
+  async function correctMark(qid: string, marks: number | null): Promise<void> {
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/submissions/${submission.submission_id}/grades/${encodeURIComponent(qid)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ marks }),
+        },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+        setNotice(body?.detail ?? "That mark could not be saved.");
+        return;
+      }
+      setSubmission((await response.json()) as Submission);
+    } catch {
+      setNotice("That mark could not be saved — the service could not be reached.");
+    }
+  }
+
   async function proposeMarks(): Promise<void> {
     setMarking(true);
     setNotice(null);
@@ -426,6 +458,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
                 onMoveBlock={(blockId) =>
                   setPlacing({ blockId, from: row.question.label_raw })
                 }
+                onCorrectMark={(marks) => correctMark(row.question.qid, marks)}
               />
             ))}
           </div>

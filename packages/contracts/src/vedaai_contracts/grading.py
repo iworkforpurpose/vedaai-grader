@@ -82,16 +82,49 @@ class QuestionGrade(BaseModel):
         "than presented at face value.",
     )
 
+    teacher_marks: float | None = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "What a teacher decided this answer was worth, where they said so.\n\n"
+            "Beside `marks_awarded` rather than replacing it, on purpose. The whole "
+            "product is a proposal a person checks, and a correction that overwrote "
+            "the proposal would destroy the only record of what was corrected — which "
+            "is the evidence that says whether the marker is getting better or worse. "
+            "Marking varies by about a mark between runs and the model is wrong "
+            "outright on some answers; both are facts a teacher needs to be able to "
+            "act on and this project needs to be able to measure.\n\n"
+            "None means the teacher has not said. Zero means they said zero, and the "
+            "two are entirely different claims."
+        ),
+    )
+
+    @computed_field
+    @property
+    def marks_final(self) -> float:
+        """The mark that counts: the teacher's where they gave one."""
+        return self.marks_awarded if self.teacher_marks is None else self.teacher_marks
+
+    @computed_field
+    @property
+    def teacher_decided(self) -> bool:
+        return self.teacher_marks is not None
+
     @computed_field
     @property
     def fraction(self) -> float | None:
         if self.marks_available <= 0:
             return None
-        return self.marks_awarded / self.marks_available
+        return self.marks_final / self.marks_available
 
     @computed_field
     @property
     def needs_review(self) -> bool:
+        # A question a person has already ruled on is not waiting for one. Leaving
+        # it in the review count would send a teacher back to the work they just
+        # did, which is the fastest way to make a review queue worth ignoring.
+        if self.teacher_decided:
+            return False
         return self.graded_on_partial_text or self.confidence < 0.6
 
 
@@ -113,7 +146,25 @@ class GradeResult(BaseModel):
     @computed_field
     @property
     def total_awarded(self) -> float:
+        """The script's total, counting a teacher's corrections."""
+        return sum(g.marks_final for g in self.grades)
+
+    @computed_field
+    @property
+    def total_proposed(self) -> float:
+        """What the marker proposed, before any correction.
+
+        Kept beside the total rather than derived away: the gap between the two is
+        the measurement of how good the marker is on real scripts, and it is the
+        only such measurement that does not need somebody to write truth down
+        first.
+        """
         return sum(g.marks_awarded for g in self.grades)
+
+    @computed_field
+    @property
+    def corrected_count(self) -> int:
+        return sum(1 for g in self.grades if g.teacher_decided)
 
     @computed_field
     @property

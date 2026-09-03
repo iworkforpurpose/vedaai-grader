@@ -1969,6 +1969,76 @@ body::before {
   white-space: nowrap;
 }
 
+/*
+ * The pill is a control, not a label.
+ *
+ * A mark is a proposal and the teacher decides, so the number is where the
+ * decision is made. Rendered as a `button` for that reason — it is reachable by
+ * keyboard and announced as pressable, which a `span` with a click handler is
+ * not.
+ *
+ * `font: inherit` because a button does not inherit one, and without it the
+ * three pills that are buttons sat a size smaller than the ones that are not.
+ */
+button.score {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.score:hover {
+  filter: brightness(0.96);
+}
+
+/*
+ * A mark a person set, marked as theirs.
+ *
+ * The same signal the mapping uses for a teacher-placed answer: returning to a
+ * script a week later, "did I change this or did the model?" is a question the
+ * screen should answer without being asked. A ring rather than a different
+ * colour, so the three tones keep meaning what they mean.
+ */
+.score[data-corrected] {
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+/*
+ * Editing, in place.
+ *
+ * Sized to the pill it replaces rather than to its content, so the row does not
+ * reflow the instant a teacher clicks a number — a card that changes width under
+ * the pointer is how a click lands on the wrong thing.
+ */
+.score-edit {
+  /*
+   * Close to the pill it replaces, so clicking a mark does not shove the row.
+   * Not identical: "2 / 2" is wider than the "2" a teacher types, and a field
+   * sized to the shorter string would look like it could not hold the number.
+   */
+  width: 4.25rem;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--body-solid);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
+/*
+ * One ring, not two.
+ *
+ * A default outline sits outside a border that is already there, and the pair
+ * read as a double frame on a shape this small. The border takes the colour and
+ * a soft halo does the work an outline would.
+ */
+.score-edit:focus {
+  outline: none;
+  border-color: #34ac15;
+  box-shadow: 0 0 0 3px rgb(52 172 21 / 0.18);
+}
+
 /* Exactly the three the frame defines. */
 .score[data-tone="pass"] { background: rgb(69 181 41 / 0.1); color: #34ac15; }
 .score[data-tone="partial"] { background: rgb(255 153 0 / 0.1); color: #e3600f; }

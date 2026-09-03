@@ -49,6 +49,17 @@ class Throttle:
         self._now = now or time.monotonic
         self._seen: dict[str, deque[float]] = {}
 
+    def forget(self) -> None:
+        """Drop every caller's history.
+
+        For tests. These limiters are module-level singletons with a one-hour
+        window, so without this every case in a file shares one allowance and the
+        thirty-first upload in the file fails — as a 429 whose body has no
+        `submission_id`, which reads as the upload endpoint being broken rather
+        than as the suite having outgrown its budget.
+        """
+        self._seen.clear()
+
     def check(self, key: str) -> float | None:
         """Record a call, or say how many seconds until one would be allowed.
 

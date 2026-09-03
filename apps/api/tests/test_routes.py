@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from grader import storage
+from grader import routes, storage
 from grader import store as store_module
 from grader.main import app
 from grader.ocr import PaddleOcrEngine, TextractEngine
@@ -38,6 +38,14 @@ def client(tmp_path, monkeypatch) -> TestClient:
     # credentials at all it would be selected and then fail against the network.
     monkeypatch.setattr(PaddleOcrEngine, "available", lambda self: False)
     monkeypatch.setattr(TextractEngine, "available", lambda self: False)
+
+    # The rate limiters are module-level singletons with a one-hour window, so
+    # every case in this file spends from one allowance. Left alone, the file
+    # silently acquires a maximum length: the thirty-first upload fails with a 429
+    # whose body has no `submission_id`, and the case that happens to be
+    # thirty-first is the one that looks broken.
+    routes._INGEST.forget()
+    routes._REMARK.forget()
     pages = PageStore(root=tmp_path / "pages")
     submissions = SubmissionStore()
     monkeypatch.setattr(storage, "store", pages)
@@ -522,3 +530,154 @@ class TestUploadRouting:
         )
         assert response.status_code == 422
         assert "not an upload key" in response.json()["detail"]
+
+
+class TestCorrectingAMark:
+    """The deciding half of "the product proposes and a person decides".
+
+    Until this existed an answer could be moved to a different question but a
+    mark could only be read. Marking varies by about a mark between runs and is
+    wrong outright on some answers, so a teacher meeting one had no move except
+    to distrust the whole script.
+    """
+
+    def _marked(self, client: TestClient, monkeypatch) -> tuple[str, str, float]:
+        """A submission with grades on it, and one question to correct.
+
+        Marked by the rubric-only path, which awards nothing. That is the right
+        fixture here: correcting a mark is most valuable exactly where the marker
+        declined to give one, and it keeps these cases off a paid API.
+        """
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        submission_id = _submission_ready_to_mark(client)
+        body = client.post(f"/submissions/{submission_id}/grades").json()
+        grade = next(g for g in body["grades"]["grades"] if g["marks_available"] > 0)
+        return submission_id, grade["qid"], grade["marks_available"]
+
+    def test_records_what_the_teacher_said(self, client: TestClient, monkeypatch) -> None:
+        submission_id, qid, available = self._marked(client, monkeypatch)
+
+        response = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": available}
+        )
+
+        assert response.status_code == 200
+        grade = next(g for g in response.json()["grades"]["grades"] if g["qid"] == qid)
+        assert grade["teacher_marks"] == available
+        assert grade["marks_final"] == available
+        assert grade["teacher_decided"] is True
+
+    def test_keeps_the_proposal_beside_the_correction(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        """The gap between the two is the only measurement of the marker that
+        needs nobody to write truth down first."""
+        submission_id, qid, available = self._marked(client, monkeypatch)
+        before = next(
+            g for g in client.get(f"/submissions/{submission_id}").json()["grades"]["grades"]
+            if g["qid"] == qid
+        )
+
+        body = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": available}
+        ).json()
+
+        grade = next(g for g in body["grades"]["grades"] if g["qid"] == qid)
+        assert grade["marks_awarded"] == before["marks_awarded"]
+
+    def test_the_total_counts_the_correction(self, client: TestClient, monkeypatch) -> None:
+        submission_id, qid, available = self._marked(client, monkeypatch)
+        proposed = client.get(f"/submissions/{submission_id}").json()["grades"]
+
+        body = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": available}
+        ).json()
+
+        assert body["grades"]["total_proposed"] == proposed["total_proposed"]
+        assert body["grades"]["total_awarded"] >= proposed["total_awarded"]
+        assert body["grades"]["corrected_count"] == 1
+
+    def test_zero_is_a_decision_and_not_an_absence(self, client: TestClient, monkeypatch) -> None:
+        """None means the teacher has not said. Zero means they said zero."""
+        submission_id, qid, _ = self._marked(client, monkeypatch)
+
+        body = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": 0}
+        ).json()
+
+        grade = next(g for g in body["grades"]["grades"] if g["qid"] == qid)
+        assert grade["teacher_marks"] == 0
+        assert grade["teacher_decided"] is True
+
+    def test_null_restores_the_proposal(self, client: TestClient, monkeypatch) -> None:
+        submission_id, qid, available = self._marked(client, monkeypatch)
+        client.patch(f"/submissions/{submission_id}/grades/{qid}", json={"marks": available})
+
+        body = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": None}
+        ).json()
+
+        grade = next(g for g in body["grades"]["grades"] if g["qid"] == qid)
+        assert grade["teacher_marks"] is None
+        assert grade["marks_final"] == grade["marks_awarded"]
+
+    def test_a_mark_the_paper_cannot_carry_is_refused(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        """Clamped to the paper, exactly as a model's marks are.
+
+        A teacher typing 50 into a 5-mark question has made a slip, and a total
+        exceeding the paper is noticed a long way downstream.
+        """
+        submission_id, qid, available = self._marked(client, monkeypatch)
+
+        response = client.patch(
+            f"/submissions/{submission_id}/grades/{qid}", json={"marks": available + 45}
+        )
+
+        assert response.status_code == 422
+        assert "marks" in response.json()["detail"]
+
+    def test_a_negative_mark_is_refused(self, client: TestClient, monkeypatch) -> None:
+        submission_id, qid, _ = self._marked(client, monkeypatch)
+
+        assert (
+            client.patch(
+                f"/submissions/{submission_id}/grades/{qid}", json={"marks": -1}
+            ).status_code
+            == 422
+        )
+
+    def test_correcting_a_question_that_is_not_there_is_a_404(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        submission_id, _, _ = self._marked(client, monkeypatch)
+
+        assert (
+            client.patch(
+                f"/submissions/{submission_id}/grades/Z%2F99", json={"marks": 1}
+            ).status_code
+            == 404
+        )
+
+    def test_correcting_before_marking_says_so(self, client: TestClient, monkeypatch) -> None:
+        submission_id = upload(client).json()["submission_id"]
+
+        response = client.patch(
+            f"/submissions/{submission_id}/grades/A%2F1", json={"marks": 1}
+        )
+
+        assert response.status_code == 409
+        assert "not been marked" in response.json()["detail"]
+
+    def test_re_marking_does_not_undo_it(self, client: TestClient, monkeypatch) -> None:
+        """Re-marking is what a teacher does after correcting a mapping, so it is
+        exactly when their earlier corrections are most likely to be lost."""
+        submission_id, qid, available = self._marked(client, monkeypatch)
+        client.patch(f"/submissions/{submission_id}/grades/{qid}", json={"marks": available})
+
+        body = client.post(f"/submissions/{submission_id}/grades").json()
+
+        grade = next(g for g in body["grades"]["grades"] if g["qid"] == qid)
+        assert grade["teacher_marks"] == available

@@ -17,8 +17,11 @@ import {
   isTeacherPlaced,
   movableBlocks,
   orphanHighlightByPage,
+  parseMark,
+  proposedMark,
   questionAtPoint,
   splitLabel,
+  scoreLabel,
   scoreTone,
   STATUS,
   summarize,
@@ -703,20 +706,30 @@ describe("stems", () => {
 
 
 describe("scoreTone and a decided zero", () => {
-  const grade = (over: Partial<QuestionGrade>): QuestionGrade =>
-    ({
+  const grade = (over: Partial<QuestionGrade>): QuestionGrade => {
+    const base = {
       qid: "A/2",
       marks_available: 4,
       marks_awarded: 0,
       rubric_points: [],
       feedback: null,
-      graded_by: "openai:gpt-4o-mini",
+      graded_by: "openai:gpt-4.1",
       judged: false,
       confidence: 0,
       graded_on_partial_text: false,
+      teacher_marks: null,
       fraction: 0,
       ...over,
-    }) as QuestionGrade;
+    };
+    // `marks_final` and `teacher_decided` are computed by the contract, so the
+    // fixture derives them the same way rather than letting a case set them to
+    // something the server could never send.
+    return {
+      ...base,
+      marks_final: base.teacher_marks ?? base.marks_awarded,
+      teacher_decided: base.teacher_marks !== null,
+    } as QuestionGrade;
+  };
 
   it("shows a marker's zero as a zero", () => {
     // The bug this guards: a zero cites nothing, because citations evidence marks
@@ -736,6 +749,59 @@ describe("scoreTone and a decided zero", () => {
 
   it("treats a question worth no marks as unscored even when judged", () => {
     expect(scoreTone(grade({ judged: true, marks_available: 0 }))).toBe("none");
+  });
+
+  it("shows the teacher's mark rather than the one proposed", () => {
+    expect(scoreTone(grade({ judged: true, marks_awarded: 0, teacher_marks: 4 }))).toBe(
+      "pass",
+    );
+    expect(scoreLabel(grade({ judged: true, marks_awarded: 0, teacher_marks: 3 }))).toBe(
+      "3 / 4",
+    );
+  });
+
+  it("scores a question the marker declined once a teacher rules on it", () => {
+    // The case the correction exists for. An unjudged question wears the neutral
+    // chip; a teacher's own mark is a decision whatever the marker managed.
+    expect(scoreTone(grade({ judged: false }))).toBe("none");
+    expect(scoreTone(grade({ judged: false, teacher_marks: 2 }))).toBe("partial");
+  });
+
+  it("keeps the proposal visible once it has been corrected", () => {
+    expect(proposedMark(grade({ judged: true, marks_awarded: 1 }))).toBeNull();
+    expect(proposedMark(grade({ judged: true, marks_awarded: 1, teacher_marks: 4 }))).toBe(
+      "1 proposed",
+    );
+  });
+});
+
+describe("parseMark", () => {
+  it("reads a mark a teacher typed", () => {
+    expect(parseMark("3", 4)).toBe(3);
+    expect(parseMark(" 2.5 ", 4)).toBe(2.5);
+  });
+
+  it("reads zero as zero rather than as nothing", () => {
+    // The distinction the whole field rests on: null means the teacher has not
+    // said, 0 means they said zero.
+    expect(parseMark("0", 4)).toBe(0);
+  });
+
+  it("reads empty as clearing the correction", () => {
+    expect(parseMark("", 4)).toBeNull();
+    expect(parseMark("   ", 4)).toBeNull();
+  });
+
+  it("refuses a mark the paper cannot carry", () => {
+    // Refused here as well as on the server, so the teacher is not told after a
+    // round trip that the number they can see is impossible.
+    expect(parseMark("5", 4)).toBeUndefined();
+    expect(parseMark("-1", 4)).toBeUndefined();
+  });
+
+  it("refuses anything that is not a number", () => {
+    expect(parseMark("four", 4)).toBeUndefined();
+    expect(parseMark("3/4", 4)).toBeUndefined();
   });
 });
 
