@@ -256,10 +256,33 @@ async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
 
   // Both at once. They are independent objects and the sheet is much the larger of
   // the two, so waiting for the paper first would add its latency for nothing.
-  await Promise.all([
-    send(mode.slots.question_paper!, paper),
-    send(mode.slots.answer_sheet!, sheet),
-  ]);
+  try {
+    await Promise.all([
+      send(mode.slots.question_paper!, paper),
+      send(mode.slots.answer_sheet!, sheet),
+    ]);
+  } catch (error) {
+    /*
+     * The bucket would not take it, so send the files through the service instead.
+     *
+     * This is not defensive padding. The signed destination depends on the
+     * bucket's CORS rules allowing the method being used, and those rules live in
+     * infrastructure that is deployed separately from this code — so there is a
+     * window, on any change to how uploads are signed, where the app is new and
+     * the bucket is not. Without this the window is a hard failure on the first
+     * screen of the product.
+     *
+     * The direct path is not a lesser fallback; it is the other supported
+     * environment, and it is what every deployment without object storage uses.
+     * What it costs is the host's request-body limit — an API gateway in front of
+     * this service caps requests at 10 MB against the 40 MB the service accepts —
+     * so a large script will still fail, and will say so.
+     */
+    if (!(error instanceof Error) || !error.message.startsWith("Uploading")) throw error;
+    body.append("question_paper", paper);
+    body.append("answer_sheet", sheet);
+    return body;
+  }
 
   body.append("question_paper_key", mode.slots.question_paper!.key);
   body.append("answer_sheet_key", mode.slots.answer_sheet!.key);
@@ -287,7 +310,11 @@ async function send(
   for (const [name, value] of Object.entries(slot.fields)) form.append(name, value);
   form.append("file", file);
 
-  const response = await fetch(slot.url, { method: "POST", body: form });
+  const response = await fetch(slot.url, { method: "POST", body: form }).catch(
+    // A blocked preflight rejects rather than resolving, and the caller needs to
+    // tell that apart from a genuine failure to reach the service.
+    () => ({ ok: false, status: 0 }) as Response,
+  );
   if (!response.ok) {
     // Named as an upload failure rather than folded into "cannot reach the
     // service", because the destination is a different host and the fix is
