@@ -252,7 +252,11 @@ class SemanticSimilarity:
     #: handwritten C scored 0.148 to 0.154 on every block; the same paper against
     #: its own answers scored 0.536 to 0.779. The gap is wide enough that a
     #: threshold in the middle separates them without touching a real match.
-    unrelated_below = 0.30
+    #:
+    #: This is the calibration of the *embedding* measure, and it is only the right
+    #: threshold while the embedding measure is the one answering. See the
+    #: ``unrelated_below`` property below for what happens when it is not.
+    EMBEDDING_FLOOR = 0.30
 
     def __init__(self, *, embed: Callable[[list[str]], list[list[float]]] | None = None,
                  fallback: Similarity | None = None,
@@ -291,6 +295,35 @@ class SemanticSimilarity:
         # text and near zero for unrelated, but is not guaranteed non-negative.
         # Clamped because the aligner's weights assume a score in [0, 1].
         return max(0.0, min(1.0, dot / (norm_a * norm_b)))
+
+    @property
+    def unrelated_below(self) -> float:
+        """The floor for whichever measure is currently answering.
+
+        The protocol requires the scorer that knows the scale to supply the
+        threshold, precisely because the scales are nothing like each other:
+        unrelated trigram pairs sit near zero and a genuine trigram match may only
+        reach 0.3, while embeddings put unrelated pairs at 0.15 and matches above
+        0.5. A constant in the aligner would be wrong for one of them.
+
+        This class is two measures wearing one name. When the provider fails,
+        ``score`` returns a value from ``self._fallback`` — and for a long time
+        this attribute kept reporting the embedding calibration anyway. The result
+        was not a slightly worse mapping; it was no mapping at all. The aligner
+        reads this floor (``align.py:888``), finds every trigram score beneath it,
+        marks every question-block pair unrelated, and sets the entire score matrix
+        to negative infinity. The only move the alignment has left is to skip every
+        block, so every answer on the sheet becomes an orphan.
+
+        Measured across five papers: 24 answers placed with no key configured at
+        all, 17 with a key present and failing. A broken key was worse than no key,
+        which is not a failure mode anyone would think to look for.
+
+        So the floor follows the measure. Degrading costs meaning, which is the
+        honest price of an outage; it must not also cost placement, which is
+        geometry and structure and does not depend on the provider at all.
+        """
+        return self._fallback.unrelated_below if self.degraded else self.EMBEDDING_FLOOR
 
     @property
     def degraded(self) -> bool:
