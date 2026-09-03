@@ -19,6 +19,7 @@ accidental one look identical in a summary and completely different in the diff.
 from __future__ import annotations
 
 import pytest
+
 from vedaai_evals import classification
 
 

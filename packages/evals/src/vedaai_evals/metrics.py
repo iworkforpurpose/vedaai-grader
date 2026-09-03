@@ -755,7 +755,7 @@ def _mean(values: list[float]) -> float | None:
 
 
 def scoring_scores(
-    truth: "object",
+    truth: object,
     facts: dict[str, GradedFact],
 ) -> ScoringReport:
     """Score a run's marks against mark truth.

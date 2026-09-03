@@ -61,7 +61,16 @@ class BBox(BaseModel):
     # -- construction from foreign coordinate systems ----------------------
 
     @classmethod
-    def from_pixels(cls, x0: float, y0: float, x1: float, y1: float, *, width: int, height: int) -> BBox:
+    def from_pixels(
+        cls,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        *,
+        width: int,
+        height: int,
+    ) -> BBox:
         """Build from pixel coordinates on a page of the given rendered size.
 
         This is the *only* sanctioned entry point for OCR engine output. Every
