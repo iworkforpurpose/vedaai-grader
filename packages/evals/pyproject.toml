@@ -21,6 +21,12 @@ ocr-local = ["paddlepaddle>=3.3", "paddleocr>=3.7"]
 # a different product: every published mapping figure was measured that way
 # before this was noticed, and the report now says which one ran.
 semantic = ["openai>=1.50"]
+# Needed to read a scanned answer sheet, which is what the deployed service does.
+# Without boto3 `select_engine` cannot build the Textract engine, transcription
+# returns nothing, and a scanned document scores zero — which the gate reports as
+# a marking catastrophe rather than as a missing dependency. Four of its nine
+# documents are scans, and all four read as total failures until this was added.
+aws = ["boto3>=1.35"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../contracts", editable = true }

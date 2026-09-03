@@ -35,6 +35,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages" / "evals" / "src"))
 sys.path.insert(0, str(ROOT / "apps" / "api" / "src"))
 
+# The repository's `.env`, before `grader` is imported. Both the scorer and the
+# grader are selected from the environment at import time, so a load placed with
+# the imports below would silently leave this run measuring word overlap and
+# marking nothing. Absent is fine; nothing here is overridden if already set.
+from vedaai_evals.env import load_repo_env  # noqa: E402
+
+load_repo_env()
+
 from grader import grading, pipeline, regions, render  # noqa: E402
 from grader.ocr import PdfTextLayerEngine  # noqa: E402
 from grader.storage import PageStore  # noqa: E402

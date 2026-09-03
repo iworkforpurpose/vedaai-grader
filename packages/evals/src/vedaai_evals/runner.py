@@ -18,19 +18,32 @@ real pages that nobody has drawn yet.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from grader import pipeline, regions, render
-from grader.ocr import PdfTextLayerEngine
-from grader.storage import PageStore
-from grader.store import SubmissionStore
-from vedaai_contracts import AnswerStatus, DocumentKind, PageBox, Submission
+from .env import load_repo_env
 
-from . import metrics
-from .generate import adopt_real_pages, generate_all
-from .schema import GoldenSample, load_set
+# Before `grader` is imported, not after. `default_similarity` is built at import
+# time from whatever the environment held then, so a load placed with the other
+# imports below would leave the scorer degraded while appearing to have worked.
+load_repo_env()
+
+from grader import pipeline, regions, render  # noqa: E402
+from grader.ocr import PdfTextLayerEngine  # noqa: E402
+from grader.storage import PageStore  # noqa: E402
+from grader.store import SubmissionStore  # noqa: E402
+from vedaai_contracts import (  # noqa: E402
+    AnswerStatus,
+    DocumentKind,
+    PageBox,
+    Submission,
+)
+
+from . import metrics  # noqa: E402
+from .generate import adopt_real_pages, generate_all  # noqa: E402
+from .schema import GoldenSample, load_set  # noqa: E402
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[3] / "generated"
 
@@ -274,6 +287,34 @@ def report(
     out("" if matches_production else "   <- NOT what the service uses")
     out("\n")
 
+    # A mismatch here used to be a line of text on a page of numbers, and a line
+    # of text does not stop anybody quoting the numbers under it. It has already
+    # been read past once, at a cost of three points of accuracy and a revert.
+    #
+    # So it fails the run — but only when a key is present, which is the case
+    # where the mismatch is a misconfiguration rather than a fact about the
+    # machine. With no key at all the fallback is the designed behaviour: the
+    # whole pipeline is meant to run with no credentials, and a developer
+    # checking a geometry change should not be stopped by an absent secret. They
+    # get the banner instead.
+    if not matches_production:
+        if os.getenv("OPENAI_API_KEY", "").strip():
+            problems.append(
+                (
+                    "harness",
+                    f"scored with {scorer} while a key is present — the service uses "
+                    "SemanticSimilarity, so these mapping figures are not its "
+                    "figures. Install the 'semantic' extra.",
+                )
+            )
+        else:
+            out(
+                "                           No OPENAI_API_KEY, so mapping below is\n"
+                "                           scored by word overlap. The service scores\n"
+                "                           by meaning. Do not quote these as its\n"
+                "                           numbers.\n"
+            )
+
     extractions = [s.extraction for s in scores if s.extraction is not None]
     if extractions:
         f1 = sum(e.f1 for e in extractions) / len(extractions)
@@ -436,6 +477,16 @@ def report(
         )
 
     out("\n")
+
+    # Why the run failed, printed at the bottom where the exit code is decided.
+    # Truth problems are reported at the top before any number is shown; a
+    # harness problem is found while reporting, so without this the process would
+    # exit non-zero with the reason scrolled off above the figures.
+    if problems:
+        out("  RUN FAILED\n")
+        for where, problem in problems:
+            out(f"    {where}: {problem}\n")
+        out("\n")
     return 1 if problems else 0
 
 
