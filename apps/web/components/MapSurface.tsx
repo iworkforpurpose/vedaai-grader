@@ -10,6 +10,7 @@ import {
   isTeacherPlaced,
   movableBlocks,
   citationHighlight,
+  classifyNotices,
   gradeFor,
   highlightByPage,
   questionAtPoint,
@@ -21,6 +22,7 @@ import { useNarrow } from "@/lib/breakpoints";
 import { crossFade } from "@/lib/transitions";
 import { LoadingStage } from "./LoadingStage";
 import { ProcessingStage } from "./ProcessingStage";
+import { RunNotices } from "./RunNotices";
 import { QuestionCard } from "./QuestionCard";
 import { SheetView } from "./SheetView";
 
@@ -297,6 +299,11 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
 
   const allExpanded = expanded.size >= rows.length && rows.length > 0;
 
+  // Every screen state below shows these. The complete branch is the one that
+  // matters: a run that finished while silently degraded used to look exactly
+  // like one that worked.
+  const notices = classifyNotices(submission);
+
   if (submission.status === "failed") {
     /*
      * `error` before `warnings`, because it is the more specific field and the
@@ -306,16 +313,30 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
      * about a document that was perfectly readable.
      */
     return (
-      <LoadingStage
-        title="This one could not be read"
-        note="Nothing was kept — try uploading again."
-        detail={submission.error ?? submission.warnings[0]}
-      />
+      <>
+        <LoadingStage
+          title="This one could not be read"
+          note="Nothing was kept — try uploading again."
+          detail={submission.error ?? submission.warnings[0]}
+        />
+        {/* And everything else it said. `warnings[0]` above is the headline; a
+            run that produced four of them showed one, and which one was an
+            accident of the order they happened to be appended in. */}
+        <RunNotices notices={notices.slice(1)} />
+      </>
     );
   }
 
   if (submission.status === "processing") {
-    return <ProcessingStage submissionId={submission.submission_id} />;
+    return (
+      <>
+        <ProcessingStage submissionId={submission.submission_id} />
+        {/* Warnings accrue during ingest, which finishes long before marking
+            does. A teacher watching the spinner can already be told that the
+            answers were placed by wording rather than by meaning. */}
+        <RunNotices notices={notices} />
+      </>
+    );
   }
 
   return (
@@ -426,6 +447,8 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
             )}
             {marks.rubricOnly && <> · marks not proposed, rubric only</>}
           </p>
+
+          <RunNotices notices={notices} />
 
           {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
 

@@ -2401,6 +2401,67 @@ button.score:hover {
   opacity: 0;
 }
 
+/*
+ * What went wrong with this run.
+ *
+ * Above the question list because these are facts about the whole run — a
+ * caveat attached to one question reads as a fault in that answer.
+ *
+ * Three channels rather than hue alone: a left rule at the severity's own
+ * colour, a glyph on the two that ask to be looked at, and the text itself,
+ * which always says what happened. The status chips a few rules down already
+ * take this approach and the comment there explains why; the same reasoning
+ * applies harder here, because this is the element that exists to be noticed.
+ */
+.notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: var(--sp-2) 0;
+}
+
+.notice {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 3px solid currentColor;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.notice-mark {
+  flex: none;
+  font-weight: 700;
+  line-height: inherit;
+}
+
+/* A stage did not run. What is on screen is not a weaker version of the right
+   answer; it is a different thing. */
+.notice[data-severity="blocking"] {
+  background: #ffe9e2;
+  color: #c0350a;
+}
+
+/* The run completed by a lesser route, and the numbers are worth less than
+   they look. */
+.notice[data-severity="degraded"] {
+  background: rgb(255 153 0 / 0.1);
+  color: #e3600f;
+}
+
+/* Real, worth reading, not a reason to distrust the screen. */
+.notice[data-severity="informational"] {
+  background: var(--chip);
+  color: var(--body-solid);
+}
+
+.notice[data-severity="informational"] .notice-mark {
+  opacity: 0.5;
+}
+
 /* The mapped answer. Green in the frame, with a tab carrying the question label —
    the tab is what makes a highlight self-describing when several are visible.
  *
