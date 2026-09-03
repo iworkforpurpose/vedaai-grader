@@ -61,13 +61,78 @@ class PdfTextLayerEngine:
                 return []
 
             words = pdf_page.get_text("words")
-            return _group_into_lines(words, page_w, page_h)
+            hidden = _invisible_regions(pdf_page)
+            return _group_into_lines(words, page_w, page_h, hidden)
         finally:
             doc.close()
 
 
+#: A font size at or below this is not text anybody is meant to read.
+_INVISIBLE_SIZE = 1.0
+
+#: How close to white a fill has to be before it is treated as invisible on a
+#: white page. Papers do print in colour, and only invisibility is suspicious, so
+#: this is deliberately tight: a pale grey watermark is still readable and still
+#: read.
+_WHITE = 0.98
+
+
+def _invisible_regions(pdf_page) -> list[tuple[float, float, float, float]]:
+    """Boxes holding text a person looking at this page would not see.
+
+    The question paper is fully attacker-controlled and its text reaches a marking
+    model. Pages are rasterised before recognition precisely so a text layer never
+    gets there — but a paper that *has* a text layer takes the direct path, which
+    is exact and free and what every typed paper uses. On that path the only thing
+    dropped was a glyph lying outside the page rectangle.
+
+    So white-on-white text and text set at a hundredth of a point were extracted as
+    ordinary question text and pasted into the prompt, with nothing about the
+    resulting question looking wrong to anyone reading the paper.
+
+    Reported by box rather than by string so the caller can drop the words that
+    fall inside one, without this function needing to know how words are grouped.
+    """
+    regions: list[tuple[float, float, float, float]] = []
+    try:
+        blocks = pdf_page.get_text("dict").get("blocks", [])
+    except Exception:  # noqa: BLE001 - a page that will not describe itself is read as-is
+        return regions
+
+    for block in blocks:
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if not str(span.get("text", "")).strip():
+                    continue
+                size = float(span.get("size", 0.0) or 0.0)
+                colour = int(span.get("color", 0) or 0)
+                channels = ((colour >> 16) & 255, (colour >> 8) & 255, colour & 255)
+                white = all(c / 255.0 >= _WHITE for c in channels)
+                if size <= _INVISIBLE_SIZE or white:
+                    regions.append(tuple(span["bbox"]))  # type: ignore[arg-type]
+    return regions
+
+
+def _inside_any(
+    box: tuple[float, float, float, float],
+    regions: list[tuple[float, float, float, float]],
+) -> bool:
+    """Whether a word's box sits within one of the invisible spans.
+
+    Centre-in-box rather than full containment: the span box and the word box come
+    from two different extractions of the same glyphs and agree to within rounding,
+    not exactly.
+    """
+    cx = (box[0] + box[2]) / 2.0
+    cy = (box[1] + box[3]) / 2.0
+    return any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in regions)
+
+
 def _group_into_lines(
-    words: list[tuple], page_w: float, page_h: float
+    words: list[tuple],
+    page_w: float,
+    page_h: float,
+    hidden: list[tuple[float, float, float, float]] | None = None,
 ) -> list[TranscribedLine]:
     """Group word tuples into lines using PyMuPDF's block and line numbering.
 
@@ -85,6 +150,10 @@ def _group_into_lines(
         # Drop glyphs outside the page. This is where off-page hidden text is
         # discarded, and it also removes bleed from malformed documents.
         if w[_X1] <= 0 or w[_Y1] <= 0 or w[_X0] >= page_w or w[_Y0] >= page_h:
+            continue
+
+        # Text a reader cannot see is not this paper's content, whatever it says.
+        if hidden and _inside_any((w[_X0], w[_Y0], w[_X1], w[_Y1]), hidden):
             continue
 
         buckets.setdefault((int(w[_BLOCK]), int(w[_LINE])), []).append(w)
