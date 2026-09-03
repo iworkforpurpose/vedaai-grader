@@ -631,6 +631,73 @@ class TestSemanticSimilarity:
         assert len(attempts) == 2, "the provider must be tried again once the wait is over"
         assert similarity.degraded is False
 
+    def test_a_degraded_scorer_reports_the_scale_it_is_actually_scoring_on(self) -> None:
+        """The score and the floor must come from the same measure.
+
+        This is the most expensive defect this module has had, and it is invisible
+        from inside: when the provider fails, `score` returns a trigram value from
+        the fallback while `unrelated_below` stays at the embedding calibration of
+        0.30. The aligner reads that floor (align.py:888), finds every raw score
+        below it, marks every question-block pair unrelated, and sets the whole
+        matrix to -inf — after which the only legal move left in the alignment is
+        to skip every block, and every answer becomes an orphan.
+
+        Measured across the five fresh papers: 24 answers placed with no key at
+        all, 17 with a key present and failing. A broken key is worse than none,
+        which is the shape of a bug nobody would guess at.
+
+        The protocol says this explicitly (see `Similarity.unrelated_below`): the
+        measure that knows the scale supplies the threshold. A scorer that swaps
+        its measure has to swap its threshold with it.
+        """
+        from grader.answers.similarity import SemanticSimilarity, StrongerOf
+
+        def broken(texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("no network")
+
+        similarity = SemanticSimilarity(embed=broken)
+        similarity.score("Define refraction of light.", "Refraction bends light.")
+
+        assert similarity.degraded is True
+        assert similarity.unrelated_below == StrongerOf().unrelated_below
+
+    def test_a_working_scorer_keeps_its_own_calibration(self) -> None:
+        """The embedding floor is measured and must survive a healthy run.
+
+        0.30 sits between unrelated pairs at 0.148-0.154 and real matches at
+        0.536-0.779. Dropping it to the surface scale would let a script of
+        handwritten C match an essay about pandas, which is the fault the floor
+        was added to stop.
+        """
+        from grader.answers.similarity import SemanticSimilarity
+
+        similarity = SemanticSimilarity(embed=lambda texts: [[1.0, 0.0] for _ in texts])
+        similarity.score("Define refraction.", "Refraction bends light.")
+
+        assert similarity.degraded is False
+        assert similarity.unrelated_below == 0.30
+
+    def test_the_floor_returns_when_the_provider_does(self) -> None:
+        """The scorer is shared across submissions, so this cannot latch."""
+        from grader.answers.similarity import SemanticSimilarity
+
+        clock = [0.0]
+        attempts: list[int] = []
+
+        def flaky(texts: list[str]) -> list[list[float]]:
+            attempts.append(len(attempts))
+            if len(attempts) == 1:
+                raise RuntimeError("no network")
+            return [[1.0, 0.0] for _ in texts]
+
+        similarity = SemanticSimilarity(embed=flaky, now=lambda: clock[0])
+        similarity.score("Define refraction.", "Refraction bends light.")
+        assert similarity.unrelated_below == 0.0
+
+        clock[0] += 3600.0
+        similarity.score("Name the process.", "It is transpiration.")
+        assert similarity.unrelated_below == 0.30
+
     def test_a_failure_is_reported_rather_than_absorbed(self) -> None:
         # Falling back is right; falling back quietly is not. A mapping placed by
         # spelling is a materially different product from one placed by meaning,
