@@ -1,10 +1,18 @@
 {
   "CORSRules": [
     {
-      "AllowedMethods": ["PUT"],
-      "AllowedOrigins": ["REPLACE_ORIGINS"],
-      "AllowedHeaders": ["*"],
-      "ExposeHeaders": ["ETag"],
+      "AllowedMethods": [
+        "POST"
+      ],
+      "AllowedOrigins": [
+        "REPLACE_ORIGINS"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "ExposeHeaders": [
+        "ETag"
+      ],
       "MaxAgeSeconds": 3000
     }
   ]

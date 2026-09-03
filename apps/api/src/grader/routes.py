@@ -89,6 +89,7 @@ def _enforce(throttle: Throttle, request: Request, *, doing: str) -> None:
 
 @router.post("/uploads", tags=["submissions"])
 def start_upload(
+    request: Request,
     question_paper_name: Annotated[str, Body(embed=True)] = "question_paper.pdf",
     answer_sheet_name: Annotated[str, Body(embed=True)] = "answer_sheet.pdf",
 ) -> dict:
@@ -104,6 +105,14 @@ def start_upload(
     development case: there is nothing to presign, so the client posts the file to
     `/submissions` itself. Two paths, one per environment that exists.
     """
+    # Throttled on the same allowance as ingest, and for a stronger reason than
+    # ingest has. Every call here mints two presigned PUT URLs against the
+    # operator's bucket; unthrottled, this was an unauthenticated write primitive
+    # that could be issued in a loop. Counted against the same budget because two
+    # URLs are one intent to upload, and a caller who exhausts it has not been
+    # denied anything they could legitimately have used.
+    _enforce(_INGEST, request, doing="uploads")
+
     if not uploads.available():
         return {"mode": "direct"}
 
@@ -660,10 +669,16 @@ def get_page_image(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # `private`, not `public`. These are photographs of a named student's
+    # handwriting, served from an endpoint with no authentication beyond the
+    # access code, and `public, max-age=31536000` authorised every shared cache
+    # and intermediary between here and the browser to keep a copy for a year.
+    # The content is still immutable — the key is a content hash — so the
+    # browser's own cache does the work the long max-age was there for.
     return Response(
         content=data,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={"Cache-Control": "private, max-age=3600, immutable"},
     )
 
 

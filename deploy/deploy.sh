@@ -107,9 +107,9 @@ release_image() {
 }
 
 # ── bootstrap ────────────────────────────────────────────────────────────────
-# CORS, so the browser may PUT its own upload.
+# CORS, so the browser may POST its own upload.
 #
-# Without this the presigned PUT fails a preflight and the browser reports it as a
+# Without this the presigned POST fails a preflight and the browser reports it as a
 # network error with no detail — which reads as broken upload code rather than a
 # missing bucket rule.
 #
@@ -232,7 +232,7 @@ bucket_cors() {
   case "${origins}" in https://*) : ;; *) origins="" ;; esac
   if [ -z "${origins}" ]; then
     echo "REFUSING: no app origin, and a wildcard would let any page on the" >&2
-    echo "  internet PUT into ${BUCKET}. Run 'deploy/gateway.sh create', or set" >&2
+    echo "  internet POST into ${BUCKET}. Run 'deploy/gateway.sh create', or set" >&2
     echo "  WEB_ORIGINS to the origin serving the app." >&2
     return 1
   fi
@@ -241,7 +241,7 @@ import json, sys
 origins = [o.strip() for o in sys.argv[1].split(",") if o.strip()]
 assert origins, "no origins"
 print(json.dumps({"CORSRules": [{
-    "AllowedMethods": ["PUT"],
+    "AllowedMethods": ["POST"],
     "AllowedOrigins": origins,
     "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag"],
@@ -251,7 +251,7 @@ PYCORS
   aws s3api put-bucket-cors --bucket "${BUCKET}" \
     --cors-configuration "file:///tmp/${APP}-cors.json"
   rm -f "/tmp/${APP}-cors.json"
-  echo "  CORS allows PUT from: ${origins}"
+  echo "  CORS allows POST from: ${origins}"
 }
 
 bootstrap() {
