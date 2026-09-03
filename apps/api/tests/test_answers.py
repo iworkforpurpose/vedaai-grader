@@ -839,3 +839,78 @@ class TestScriptDetails:
         blocks = segment_blocks(lines, [])
         assert len(blocks) == 1
         assert "Name" not in blocks[0].text
+
+
+class TestAnchorThresholdsFollowTheScorer:
+    """Confirming a written question number, on whichever scale is answering.
+
+    `anchors` had two absolute constants applied to whatever `Similarity` happened
+    to be live, and the protocol exists precisely to stop that: the measure that
+    knows its scale supplies the threshold. Applied to the wrong scale, both
+    constants failed — and they failed in opposite directions, which is why
+    neither showed up as a single wrong number.
+    """
+
+    def _bank(self, score: float, floor: float, confident: float = 1.0):
+        """A scorer that returns one score and declares its own band."""
+
+        class Fixed:
+            unrelated_below = floor
+            confident_above = confident
+
+            def score(self, a: str, b: str) -> float:
+                return score
+
+        return Fixed()
+
+    def test_confirmation_requires_clearing_the_scorers_own_floor(self) -> None:
+        """A pair the measure itself calls unrelated must not confirm a label.
+
+        `_SEMANTIC_CONFIRM` was 0.18 while the embedding scorer's own unrelated
+        floor is 0.30. So a pair the model classified as unrelated — squarely
+        inside the 0.148-0.154 noise band it was calibrated against — confirmed
+        the label anyway, and a confirmed anchor pins the alignment with
+        `W_LABEL = 3.0` authority. Confirmation was weaker than the aligner's own
+        bar for two texts being related at all.
+        """
+        from grader.answers.anchors import semantic_confirms
+
+        embedding = dict(floor=0.30, confident=0.55)
+        assert semantic_confirms(0.20, self._bank(0.20, **embedding)) is False
+        assert semantic_confirms(0.55, self._bank(0.55, **embedding)) is True
+
+    def test_a_scorer_with_no_floor_still_has_a_bar(self) -> None:
+        """Trigrams declare a floor of zero, which is not an invitation.
+
+        `CharacterTrigrams` scores nonzero on any two English texts, so a bar of
+        literally zero would confirm every label on every prose answer. The rule
+        keeps its shape — a share of the range above the floor — so a scorer that
+        declares no floor still has to clear a quarter of its scale.
+        """
+        from grader.answers.anchors import semantic_confirms
+
+        trigram = dict(floor=0.0, confident=0.30)
+        assert semantic_confirms(0.02, self._bank(0.02, **trigram)) is False
+        assert semantic_confirms(0.25, self._bank(0.25, **trigram)) is True
+
+    def test_the_rival_margin_scales_with_the_measure(self) -> None:
+        """An absolute margin cannot contradict a label on a surface scorer.
+
+        `_RIVAL_MARGIN` was 0.12 on a scale where word overlap "returns exactly
+        zero for every pairing" on real handwriting and trigram spreads between
+        questions are hundredths. A 0.12 gap essentially never occurred, so
+        `_outscored_by_a_rival` returned False for practically every anchor and
+        `_decide`'s only route to DISPUTED became dead code — the mislabelled
+        defence this module was written for silently stopped existing.
+        """
+        from grader.answers.anchors import rival_margin
+
+        for floor, confident in [(0.30, 0.55), (0.0, 0.30)]:
+            margin = rival_margin(self._bank(0.0, floor=floor, confident=confident))
+            band = confident - floor
+            assert 0.0 < margin < band, (
+                f"a margin of {margin} on a band of {band} is either unreachable "
+                "or meaningless"
+            )
+        # And the concrete regression: 0.12 exceeded the whole trigram band.
+        assert rival_margin(self._bank(0.0, floor=0.0, confident=0.30)) < 0.12

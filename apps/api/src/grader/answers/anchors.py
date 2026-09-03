@@ -35,13 +35,28 @@ from vedaai_contracts import Anchor, AnchorStatus, AnswerBlock, Line, Question
 from ..questions.numbering import detect_section_prefixes, parse_label
 from .similarity import Similarity, default_similarity
 
-#: Semantic agreement at or above this confirms an anchor.
+#: How far above a scorer's own unrelated floor an agreement must sit before it
+#: confirms an anchor, as a share of the range that remains.
 #:
-#: Low by the standards of sentence similarity, and deliberately so. Lexical
+#: A share rather than a number, because the number was wrong on both scales at
+#: once and in opposite directions.
+#:
+#: It was 0.18 absolute. Against embeddings, whose own unrelated floor is 0.30,
+#: that confirmed pairs the model had classified as unrelated — inside the
+#: 0.148-0.154 band it was calibrated on — and a confirmed anchor pins the
+#: alignment with ``W_LABEL = 3.0``. Confirmation was a weaker claim than the
+#: aligner's own bar for two texts being related at all.
+#:
+#: Against trigrams, whose floor is zero and which score nonzero on any two
+#: English texts, 0.18 is close to noise on prose and unreachable on a symbolic
+#: answer like ``R=V/I``. The same constant was simultaneously too permissive and
+#: too strict.
+#:
+#: Low by the standards of sentence similarity, and still deliberately so: lexical
 #: overlap between a question and its answer is modest even when they plainly
-#: correspond, so a high bar would refuse to confirm correct labels — and the
-#: cost of that is losing a reliable signal, not gaining safety.
-_SEMANTIC_CONFIRM = 0.18
+#: correspond, so a high bar refuses correct labels, and the cost of that is
+#: losing a reliable signal rather than gaining safety.
+_CONFIRM_SHARE_OF_RANGE = 0.25
 
 #: How much better another question must score before the written label is
 #: treated as contradicted.
@@ -57,7 +72,45 @@ _SEMANTIC_CONFIRM = 0.18
 #: question markedly better than the one the student named, the label is
 #: suspect. If nothing matches well, the measure is simply uninformative and
 #: says nothing either way.
-_RIVAL_MARGIN = 0.12
+#: Expressed as a share of the usable range for the same reason as above. It was
+#: 0.12 absolute, on a scale where word overlap "returns exactly zero for every
+#: pairing" on real handwriting and trigram spreads between questions are
+#: hundredths. A 0.12 gap essentially never occurred, so ``_outscored_by_a_rival``
+#: returned False for practically every anchor and ``_decide``'s only route to
+#: DISPUTED became dead code — the mislabelled-answer defence this module was
+#: written for had silently stopped existing.
+_RIVAL_SHARE_OF_RANGE = 0.15
+
+
+def _band(similarity: Similarity) -> tuple[float, float]:
+    """The range of scores this measure actually uses: noise floor to match floor.
+
+    Not floor-to-one. A measure's ceiling is where *it* puts a genuine match, and
+    the two scorers here disagree by a factor of nearly three about where that is —
+    embeddings at 0.55, trigrams at 0.30. Deriving a threshold from ``1 - floor``
+    is right for one and three times too wide for the other, which is exactly how
+    an absolute margin of 0.12 came to be unreachable on the surface scorers.
+    """
+    floor = float(getattr(similarity, "unrelated_below", 0.0) or 0.0)
+    confident = float(getattr(similarity, "confident_above", 1.0) or 1.0)
+    return floor, max(floor, confident) - floor
+
+
+def semantic_confirms(agreement: float, similarity: Similarity) -> bool:
+    """Whether an agreement is strong enough to confirm a written label."""
+    floor, band = _band(similarity)
+    return agreement >= floor + band * _CONFIRM_SHARE_OF_RANGE
+
+
+def rival_margin(similarity: Similarity) -> float:
+    """How much better a rival question must score to contradict a label.
+
+    Always smaller than the band the measure works in, so it is reachable on every
+    scale. An absolute 0.12 was larger than the whole trigram spread between two
+    questions, so nothing ever cleared it.
+    """
+    _floor, band = _band(similarity)
+    return band * _RIVAL_SHARE_OF_RANGE
 
 #: A block shorter than this carries too little text for similarity to mean
 #: anything. "The watt." is a correct answer and an unusable embedding.
@@ -120,7 +173,9 @@ def detect(
         agreement = _semantic_agreement(candidate.block, question, similarity)
         consistent = order_ok[index]
         outscored = _outscored_by_a_rival(candidate.block, qid, questions, similarity)
-        status = _decide(qid, agreement, consistent, outscored, ambiguous=ambiguous)
+        status = _decide(
+            qid, agreement, consistent, outscored, similarity, ambiguous=ambiguous
+        )
 
         anchors.append(
             Anchor(
@@ -267,10 +322,11 @@ def _outscored_by_a_rival(
         return False
 
     claimed_score = similarity.score(claimed.text, block.text)
+    margin = rival_margin(similarity)
     for question in questions:
         if question.qid == qid:
             continue
-        if similarity.score(question.text, block.text) - claimed_score >= _RIVAL_MARGIN:
+        if similarity.score(question.text, block.text) - claimed_score >= margin:
             return True
     return False
 
@@ -342,6 +398,7 @@ def _decide(
     agreement: float | None,
     consistent: bool,
     outscored_by_a_rival: bool,
+    similarity: Similarity,
     *,
     ambiguous: bool = False,
 ) -> AnchorStatus:
@@ -364,7 +421,7 @@ def _decide(
         # position offers no support. This is the mislabelled case.
         return AnchorStatus.DISPUTED
 
-    if agreement is not None and agreement >= _SEMANTIC_CONFIRM:
+    if agreement is not None and semantic_confirms(agreement, similarity):
         return AnchorStatus.CONFIRMED
 
     if consistent:
