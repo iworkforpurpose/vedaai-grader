@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 from vedaai_contracts import AnswerStatus
+
 from vedaai_evals import metrics
 from vedaai_evals.marks import MarkSet, MarkTruth
 

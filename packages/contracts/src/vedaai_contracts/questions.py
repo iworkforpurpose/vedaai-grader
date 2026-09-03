@@ -171,7 +171,10 @@ class Question(BaseModel):
     section_id: str | None = None
     stem_ref: str | None = None
     choice_group: str | None = None
-    marks: int | None = Field(default=None, description="Printed marks, used as the grading denominator.")
+    marks: int | None = Field(
+        default=None,
+        description="Printed marks, used as the grading denominator.",
+    )
 
     line_ids: list[str] = Field(default_factory=list)
     geometry: list[PageBox] = Field(default_factory=list)
