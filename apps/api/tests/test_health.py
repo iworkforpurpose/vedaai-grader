@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from vedaai_contracts.geometry import RENDER_DPI
 
 from grader.main import app
+
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(app)
 
 
 def test_health_reports_the_geometry_contract() -> None:
@@ -119,3 +125,65 @@ class TestCrossOriginAccess:
         finally:
             monkeypatch.delenv("WEB_ORIGINS", raising=False)
             importlib.reload(main_module)
+
+
+class TestHealthSaysWhetherMarkingWillRun:
+    """The signal whose absence let a deploy go green with marking dead.
+
+    `/health` reported render DPI, contract count, upload cap and store
+    durability — everything except the one thing a submission is judged on. It
+    returns 200 with no API key configured, in which case `select_grader` falls
+    back to `RubricOnly` and every question comes back zero with a warning nobody
+    reads. The deploy pipeline asserts only that this endpoint answers 200, so a
+    rotated key, a dropped secret ARN or an empty account all ship green.
+
+    That is not hypothetical. It is what happened: the account ran out of credit,
+    the deploy reported success, and the live service marked nothing while telling
+    teachers "3 of 6 answered · rubric only".
+    """
+
+    def test_it_reports_that_nothing_will_be_marked(self, client, monkeypatch) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        body = client.get("/health").json()
+
+        assert body["grading"]["configured"] is False
+        assert body["grading"]["engine"] == "rubric_only"
+        assert body["grading"]["model"] is None
+
+    def test_it_names_the_model_that_will_mark(self, client, monkeypatch) -> None:
+        """A mark is only checkable if you know what made it — and that has to be
+        answerable before a script is uploaded, not only afterwards from a grade."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("GRADER_PROVIDER", "openai")
+
+        body = client.get("/health").json()
+
+        assert body["grading"]["configured"] is True
+        assert body["grading"]["engine"] == "openai"
+        assert body["grading"]["model"]
+
+    def test_it_reports_which_scorer_will_place_answers(self, client, monkeypatch) -> None:
+        """The other half of the same question.
+
+        Placement degrades to word overlap without a key, which is a materially
+        different product, and until now nothing outside a finished submission
+        said which one was running.
+        """
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        assert client.get("/health").json()["similarity"] == "lexical"
+
+    def test_asking_does_not_cost_a_request_to_the_provider(self, client) -> None:
+        """A health check runs every thirty seconds against a paid API."""
+        import grader.answers.similarity as sim
+
+        calls: list[int] = []
+        original = sim._openai_embed
+        sim._openai_embed = lambda texts: calls.append(1) or [[1.0] for _ in texts]
+        try:
+            client.get("/health")
+        finally:
+            sim._openai_embed = original
+
+        assert calls == []
