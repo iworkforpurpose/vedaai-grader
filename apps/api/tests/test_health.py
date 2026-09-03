@@ -187,3 +187,109 @@ class TestHealthSaysWhetherMarkingWillRun:
             sim._openai_embed = original
 
         assert calls == []
+
+
+class TestProvingTheMarkerCanActuallyMark:
+    """A key that exists is not a provider that answers.
+
+    The first version of this check asked `select_grader` whether a grader could
+    be *built*, and a grader is built from a key being present. So a deployment
+    whose provider account had run out of credit reported
+
+        "grading": {"configured": true, "engine": "openai", "model": "gpt-4.1"}
+
+    and the release passed — while every submission came back zeros with
+    "the provider is rate limiting or the account is out of credit" buried in a
+    warnings list nobody reads. That is the exact failure the check was added for,
+    and it walked straight through it.
+
+    So readiness is two questions, not one. Is a marker configured, which is free
+    to answer and safe on a probe that runs every thirty seconds. And does the
+    provider answer, which costs a request and therefore happens only when asked
+    for, once per release, cached.
+    """
+
+    def test_the_cheap_check_does_not_claim_the_provider_answers(
+        self, client, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("GRADER_PROVIDER", "openai")
+
+        grading = client.get("/health").json()["grading"]
+
+        assert grading["configured"] is True
+        assert grading["reachable"] is None, (
+            "the default probe must not imply a provider it never contacted"
+        )
+
+    def test_the_deep_check_reports_a_provider_that_refuses(
+        self, client, monkeypatch
+    ) -> None:
+        from grader import main as main_module
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        main_module.forget_reachability()
+
+        async def refuses(_grader):
+            raise RuntimeError("You have no credits remaining.")
+
+        monkeypatch.setattr(main_module, "_ask_the_provider", refuses)
+        body = client.get("/health?deep=1").json()
+
+        assert body["grading"]["reachable"] is False
+        assert "credits" in body["grading"]["detail"]
+
+    def test_the_deep_check_reports_a_provider_that_answers(
+        self, client, monkeypatch
+    ) -> None:
+        from grader import main as main_module
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        main_module.forget_reachability()
+
+        async def answers(_grader):
+            return None
+
+        monkeypatch.setattr(main_module, "_ask_the_provider", answers)
+        body = client.get("/health?deep=1").json()
+
+        assert body["grading"]["reachable"] is True
+        assert body["grading"]["detail"] is None
+
+    def test_the_answer_is_cached_so_a_probe_cannot_become_a_bill(
+        self, client, monkeypatch
+    ) -> None:
+        """A liveness probe that spends money per call is one somebody turns off."""
+        from grader import main as main_module
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        main_module.forget_reachability()
+        calls: list[int] = []
+
+        async def answers(_grader):
+            calls.append(1)
+
+        monkeypatch.setattr(main_module, "_ask_the_provider", answers)
+        for _ in range(5):
+            client.get("/health?deep=1")
+
+        assert len(calls) == 1
+
+    def test_an_unconfigured_marker_is_not_asked(self, client, monkeypatch) -> None:
+        """There is nothing to ask, and `configured: false` already answers it."""
+        from grader import main as main_module
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        main_module.forget_reachability()
+        calls: list[int] = []
+
+        async def answers(_grader):
+            calls.append(1)
+
+        monkeypatch.setattr(main_module, "_ask_the_provider", answers)
+        body = client.get("/health?deep=1").json()
+
+        assert body["grading"]["configured"] is False
+        assert body["grading"]["reachable"] is False
+        assert calls == []
