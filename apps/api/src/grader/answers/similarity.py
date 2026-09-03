@@ -62,6 +62,21 @@ class Similarity(Protocol):
     #: unchanged.
     unrelated_below: float
 
+    #: The score at which this measure calls a pair a genuine match.
+    #:
+    #: The other end of the same problem, needed for the same reason. A floor says
+    #: where noise stops; it says nothing about where the scale *ends*, and these
+    #: scales end in very different places — the comment above says so itself:
+    #: embeddings put a match near 0.7 while trigrams may only reach 0.3.
+    #:
+    #: A threshold derived from ``1.0 - unrelated_below`` is therefore right for
+    #: embeddings and three times too wide for trigrams. That is how an absolute
+    #: rival margin of 0.12 came to be unreachable on the surface scorers, leaving
+    #: the mislabelled-answer defence as dead code whenever the provider was down.
+    #: With both ends declared, a threshold is a share of the range a measure
+    #: actually uses, and is correct on every measure.
+    confident_above: float
+
     def score(self, a: str, b: str) -> float: ...
 
 
@@ -87,6 +102,10 @@ class LexicalOverlap:
     #: routinely zero — that is the limitation this class is documented as having —
     #: so its absolute value cannot say whether a pair is unrelated.
     unrelated_below = 0.0
+
+    #: Measured on this module's own examples, where a correct answer scores 0.000
+    #: to 0.236 against its question. A third of the scale is a strong match here.
+    confident_above = 0.30
 
 
     def score(self, a: str, b: str) -> float:
@@ -154,6 +173,11 @@ class CharacterTrigrams:
     #: this measure usable, and it discards the absolute value anyway.
     unrelated_below = 0.0
 
+    #: The class docstring records that trigrams score nonzero on any two
+    #: English texts and that a genuine match may only reach 0.3. That is the
+    #: ceiling this measure works against, not 1.0.
+    confident_above = 0.30
+
 
     def score(self, a: str, b: str) -> float:
         first = character_ngrams(a)
@@ -189,6 +213,9 @@ class StrongerOf:
     """
 
     unrelated_below = 0.0
+
+    #: The maximum of two measures that share a ceiling, so it shares it too.
+    confident_above = 0.30
 
     def __init__(self) -> None:
         self._word = LexicalOverlap()
@@ -258,6 +285,10 @@ class SemanticSimilarity:
     #: ``unrelated_below`` property below for what happens when it is not.
     EMBEDDING_FLOOR = 0.30
 
+    #: The bottom of the measured match band: real answers scored 0.536 to 0.779
+    #: against their own question on the deployed service.
+    EMBEDDING_CONFIDENT = 0.55
+
     def __init__(self, *, embed: Callable[[list[str]], list[list[float]]] | None = None,
                  fallback: Similarity | None = None,
                  now: Callable[[], float] | None = None) -> None:
@@ -324,6 +355,13 @@ class SemanticSimilarity:
         geometry and structure and does not depend on the provider at all.
         """
         return self._fallback.unrelated_below if self.degraded else self.EMBEDDING_FLOOR
+
+    @property
+    def confident_above(self) -> float:
+        """The match band's floor, for whichever measure is answering."""
+        return (
+            self._fallback.confident_above if self.degraded else self.EMBEDDING_CONFIDENT
+        )
 
     @property
     def degraded(self) -> bool:
