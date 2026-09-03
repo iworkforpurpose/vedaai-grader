@@ -3,8 +3,9 @@
 import type { AnswerBlock } from "@/lib/contracts";
 import { blockPreview } from "@/lib/review";
 import type { QuestionRow } from "@/lib/review";
-import { feedbackFor, scoreLabel, scoreTone, splitLabel } from "@/lib/review";
+import { feedbackFor, parseMark, proposedMark, scoreLabel, scoreTone, splitLabel, trimMark } from "@/lib/review";
 import type { QuestionGrade, RubricPoint } from "@/lib/contracts";
+import { useState } from "react";
 import { ChevronDownIcon } from "./icons";
 
 /**
@@ -33,6 +34,7 @@ export function QuestionCard({
   movable,
   onPlaceHere,
   onMoveBlock,
+  onCorrectMark,
 }: {
   row: QuestionRow;
   /** Position in the list, for the entrance stagger. */
@@ -51,7 +53,10 @@ export function QuestionCard({
   movable: readonly AnswerBlock[];
   onPlaceHere: () => void;
   onMoveBlock: (blockId: string) => void;
+  /** What the teacher says this is worth. Null clears their correction. */
+  onCorrectMark: (marks: number | null) => void;
 }): React.JSX.Element {
+  const [editing, setEditing] = useState<string | null>(null);
   const tone = scoreTone(grade);
   const label = scoreLabel(grade);
   const feedback = feedbackFor(grade);
@@ -97,10 +102,82 @@ export function QuestionCard({
             <span className="score" data-tone="target">
               Place here
             </span>
+          ) : editing !== null && grade ? (
+            /*
+             * The pill becomes the field, in place.
+             *
+             * A separate editor somewhere else on the card would make the teacher
+             * look away from the number they are changing. Committing on blur as
+             * well as on Enter is deliberate: a mark typed and then clicked away
+             * from has been decided, and losing it would be the interface
+             * discarding a judgement.
+             */
+            <input
+              className="score score-edit"
+              type="text"
+              inputMode="decimal"
+              autoFocus
+              aria-label={`Marks out of ${trimMark(grade.marks_available)}`}
+              value={editing}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => setEditing(event.target.value)}
+              onBlur={() => {
+                const marks = parseMark(editing, grade.marks_available);
+                setEditing(null);
+                if (marks !== undefined) onCorrectMark(marks);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                // Escape abandons rather than commits, which is the only way to
+                // back out of a mistyped mark without saving it first.
+                if (event.key === "Escape") {
+                  setEditing(null);
+                  event.stopPropagation();
+                }
+              }}
+            />
           ) : label && tone !== "none" ? (
-            <span className="score" data-tone={tone}>
+            <button
+              type="button"
+              className="score"
+              data-tone={tone}
+              data-corrected={grade?.teacher_decided || undefined}
+              title={proposedMark(grade) ?? "Click to change this mark"}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing(grade ? trimMark(grade.marks_final) : "");
+              }}
+            >
               {label}
-            </span>
+            </button>
+          ) : grade && grade.marks_available > 0 ? (
+            /*
+             * Unmarked, and still correctable.
+             *
+             * This is the case the whole feature is for: the marker declined —
+             * the writing was crossed out, the transcription was unreadable, the
+             * provider was down — and a teacher looking at the page can see what
+             * it is worth. Leaving this pill inert would mean the one question
+             * most needing a person is the one they cannot answer.
+             */
+            <button
+              type="button"
+              className="score"
+              data-tone="none"
+              data-status={row.status}
+              title={row.presentation.hint ?? "Click to set this mark"}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing("");
+              }}
+            >
+              {row.presentation.needsAttention && (
+                <span className="score-mark" aria-hidden="true">
+                  !
+                </span>
+              )}
+              {row.presentation.label}
+            </button>
           ) : (
             <span
               className="score"

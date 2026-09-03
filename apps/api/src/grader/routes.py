@@ -540,6 +540,20 @@ async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None
         submission.ink_regions, submission.answer_sheet_lines.lines
     )
 
+    # What a teacher decided, before it is thrown away and re-derived.
+    #
+    # Re-marking is what a teacher does *after* correcting a mapping, so it is
+    # precisely the moment their earlier corrections are most likely to be lost,
+    # and losing one silently is worse than not offering the feature: the number
+    # they fixed goes back to the number they rejected, on a screen that gives no
+    # sign anything changed. The mapping's own `teacher_override` is preserved
+    # for the same reason.
+    decided = {
+        g.qid: g.teacher_marks
+        for g in (submission.grades.grades if submission.grades else [])
+        if g.teacher_marks is not None
+    }
+
     submission.grades, marking_failures = await grading.grade_submission(
         paper=submission.questions,
         mapping=submission.mapping,
@@ -547,9 +561,84 @@ async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None
         grader=grader,
         excluded_line_ids=excluded,
     )
+    if decided:
+        submission.grades.grades = [
+            g.model_copy(update={"teacher_marks": decided[g.qid]})
+            if g.qid in decided
+            else g
+            for g in submission.grades.grades
+        ]
     for failure in marking_failures:
         if failure not in submission.warnings:
             submission.warnings.append(failure)
+
+
+@router.patch(
+    "/submissions/{submission_id}/grades/{qid:path}",
+    response_model=Submission,
+    tags=["submissions"],
+)
+def set_teacher_marks(
+    submission_id: str,
+    qid: str,
+    store: StoreDep,
+    marks: Annotated[
+        float | None,
+        Body(
+            embed=True,
+            description="What the teacher says this answer is worth. Null clears the "
+            "correction and restores the proposed mark.",
+        ),
+    ] = None,
+) -> Submission:
+    """Record what a teacher decided one answer was worth.
+
+    The product proposes and a person decides, and until now the deciding half
+    had nowhere to go: an answer could be moved to a different question, but a
+    mark could only be read. Marking varies by about a mark between runs and is
+    wrong outright on some answers, so a teacher meeting one had no move except
+    to distrust the whole script.
+
+    The proposal is kept beside the correction rather than overwritten. It is the
+    only record of what was corrected, which is the evidence for whether the
+    marker is improving, and it costs one nullable field to keep.
+
+    Not throttled. It calls nothing, costs nothing, and rate-limiting the one
+    action that repairs a wrong mark would be the wrong thing to make scarce.
+    """
+    submission = store.get(submission_id)
+    if submission is None:
+        raise HTTPException(status_code=404, detail=f"No submission {submission_id!r}")
+    if submission.grades is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This submission has not been marked, so there is no mark to correct.",
+        )
+
+    grade = next((g for g in submission.grades.grades if g.qid == qid), None)
+    if grade is None:
+        raise HTTPException(
+            status_code=404, detail=f"No question {qid!r} in this submission."
+        )
+
+    # Clamped to the paper, exactly as a model's marks are. A teacher typing 50
+    # into a 5-mark question has made a slip, and a total that exceeds the paper
+    # is the kind of wrong that is noticed a long way downstream.
+    if marks is not None and not 0.0 <= marks <= grade.marks_available:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This question carries {grade.marks_available:g} marks, so "
+                f"{marks:g} is not a mark it can be given."
+            ),
+        )
+
+    submission.grades.grades = [
+        g.model_copy(update={"teacher_marks": marks}) if g.qid == qid else g
+        for g in submission.grades.grades
+    ]
+    _store_or_conflict(store, submission)
+    return submission
 
 
 @router.get("/pages/{key:path}", tags=["pages"])
