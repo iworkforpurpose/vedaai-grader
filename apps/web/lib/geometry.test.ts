@@ -7,6 +7,7 @@ import {
   firstPage,
   groupByPage,
   mergeOverlapping,
+  stackEdges,
 } from "./geometry";
 
 function box(x0: number, y0: number, x1: number, y1: number): BBox {
@@ -98,6 +99,22 @@ describe("mergeOverlapping", () => {
     box: { x0, y0, x1, y1 },
   });
 
+  it("keeps the rows of one highlight apart when they only touch", () => {
+    // The mapper draws a multi-line answer as one row per line of writing, each
+    // extended to meet the row below so the run reads as a single connected
+    // shape. Those rows share an edge and share no area, and that distinction is
+    // load-bearing: collapsing them would restore the single rectangle the row
+    // shape exists to replace, and would do it silently, in the browser, where
+    // no eval metric can see it.
+    const rows = [
+      at(0.12, 0.2, 0.78, 0.23),
+      at(0.12, 0.23, 0.78, 0.27),
+      at(0.12, 0.27, 0.55, 0.3),
+    ];
+
+    expect(mergeOverlapping(rows)).toHaveLength(3);
+  });
+
   it("collapses a band drawn inside another band", () => {
     // The reported bug: a wide band with a tighter one nested in it, which reads
     // as the sheet being highlighted twice.
@@ -153,5 +170,58 @@ describe("mergeOverlapping", () => {
 
   it("returns an empty list unchanged", () => {
     expect(mergeOverlapping([])).toEqual([]);
+  });
+});
+
+describe("stackEdges", () => {
+  const at = (x0: number, y0: number, x1: number, y1: number, page = 0) => ({
+    page,
+    box: { x0, y0, x1, y1 },
+  });
+
+  it("names the outer rows of one answer so only its corners are rounded", () => {
+    expect(
+      stackEdges([
+        at(0.12, 0.2, 0.78, 0.23),
+        at(0.12, 0.23, 0.78, 0.27),
+        at(0.12, 0.27, 0.55, 0.3),
+      ]),
+    ).toEqual(["top", "middle", "bottom"]);
+  });
+
+  it("leaves a single box alone", () => {
+    expect(stackEdges([at(0.12, 0.2, 0.78, 0.23)])).toEqual(["only"]);
+  });
+
+  it("does not join two regions separated by paper", () => {
+    // An answer at the top of the page and another at the bottom. Rounding them
+    // as one shape would claim the empty half between them.
+    expect(
+      stackEdges([at(0.12, 0.1, 0.78, 0.13), at(0.12, 0.7, 0.78, 0.73)]),
+    ).toEqual(["only", "only"]);
+  });
+
+  it("does not join two columns that merely sit level with each other", () => {
+    // The code page. These share no width, so they are two shapes whatever their
+    // vertical extents do.
+    expect(
+      stackEdges([at(0.1, 0.2, 0.4, 0.23), at(0.6, 0.23, 0.9, 0.26)]),
+    ).toEqual(["only", "only"]);
+  });
+
+  it("keeps pages apart", () => {
+    // A continuation is a new shape on the next page, however the numbers line
+    // up: the bottom of page 0 does not touch the top of page 1.
+    expect(
+      stackEdges([at(0.12, 0.9, 0.78, 1.0, 0), at(0.12, 0.0, 0.78, 0.1, 1)]),
+    ).toEqual(["only", "only"]);
+  });
+
+  it("reports edges in the order it was given, not in reading order", () => {
+    // The caller pairs these with its own list by index, so a sort inside must
+    // not leak out. Given bottom-first, the answer is still bottom-first.
+    expect(
+      stackEdges([at(0.12, 0.23, 0.78, 0.27), at(0.12, 0.2, 0.78, 0.23)]),
+    ).toEqual(["bottom", "top"]);
   });
 });

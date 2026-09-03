@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { animateScrollTo, isStillLoading } from "@/lib/motion";
 import type { InkRegion, Page, PageBox } from "@/lib/contracts";
-import { boxToStyle, pointerToNormalized } from "@/lib/geometry";
+import type { StackEdge } from "@/lib/geometry";
+import { boxToStyle, pointerToNormalized, stackEdges } from "@/lib/geometry";
 import { API_BASE } from "@/lib/api";
 import {
   ChevronLeftIcon,
@@ -254,8 +255,13 @@ export function SheetView({
                 />
               ))}
 
-            {(highlights.get(index) ?? []).map((pageBox, i) => (
-              <span key={`${index}-${i}`} className="hl" style={boxToStyle(pageBox.box)}>
+            {renderHighlight(highlights.get(index) ?? []).map(({ pageBox, edge }, i) => (
+              <span
+                key={`${index}-${i}`}
+                className="hl"
+                data-edge={edge}
+                style={boxToStyle(pageBox.box)}
+              >
                 {/*
                  * The tab carries the question label, which is what makes a
                  * highlight self-describing when more than one is on screen.
@@ -300,4 +306,20 @@ function offsetWithin(scroller: HTMLElement, target: HTMLElement, y: number): nu
   const rect = target.getBoundingClientRect();
   const top = scroller.scrollTop + (rect.top - host.top) + rect.height * y;
   return Math.max(0, top - INSET);
+}
+
+/**
+ * Pair each highlight box with its place in the shape it belongs to.
+ *
+ * A multi-line answer is one box per row of writing. The rows have to be styled
+ * as a single outline, or the shape that was introduced to stop a teacher seeing
+ * stripes puts the stripes straight back as three rounded pills with rules
+ * between them. `stackEdges` decides that from geometry alone, which keeps the
+ * decision testable outside the DOM like everything else in `lib/`.
+ */
+function renderHighlight(
+  boxes: readonly PageBox[],
+): { pageBox: PageBox; edge: StackEdge }[] {
+  const edges = stackEdges(boxes);
+  return boxes.map((pageBox, i) => ({ pageBox, edge: edges[i] ?? "only" }));
 }

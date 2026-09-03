@@ -2332,14 +2332,41 @@ body::before {
 }
 
 /* The mapped answer. Green in the frame, with a tab carrying the question label —
-   the tab is what makes a highlight self-describing when several are visible. */
+   the tab is what makes a highlight self-describing when several are visible.
+ *
+ * Drawn as a fill rather than as an outlined box, because an answer is one box
+ * per row of writing and an outline cannot be shared between them. Three rows
+ * each carrying their own 2px border read as three stacked pills with rules
+ * across the middle of the answer — the same barcode a teacher reported about
+ * the old per-line shape, arriving by a different route. Borders only on the
+ * outer edges were tried too and leave a visible step where one row is shorter
+ * than the one above it.
+ *
+ * A fill has no such seam: consecutive rows share an edge exactly, so the shape
+ * closes itself and reads as selected text. It is also what every document
+ * viewer does with a selection, which is the thing this is.
+ */
 .hl {
   position: absolute;
-  border: 2px solid #3dd218;
   border-radius: var(--r-lg);
-  background: rgb(94 255 53 / 0.1);
+  background: rgb(94 255 53 / 0.3);
   pointer-events: none;
 }
+
+/* Only the outer corners of a stack are rounded. A row in the middle of an
+   answer has no corner of its own to round. */
+.hl[data-edge="top"] {
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.hl[data-edge="middle"] {
+  border-radius: 0;
+}
+
+.hl[data-edge="bottom"] {
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+
 
 /*
  * The label sits on the box's top-left corner, above the border.
@@ -2365,7 +2392,12 @@ body::before {
 
 /* One pulse on arrival, so the eye is told where to look after a long scroll. */
 @media (prefers-reduced-motion: no-preference) {
-  .hl {
+  /*
+   * Once per answer, not once per row. A stack of rows each pulsing its own ring
+   * paints a glow along every internal edge, which is the seam the fill exists to
+   * remove. The first row carries it for the whole shape.
+   */
+  .hl:not([data-edge="middle"]):not([data-edge="bottom"]) {
     animation: hl-arrive 620ms var(--ease-out);
   }
 }
@@ -2401,9 +2433,19 @@ body::before {
   white-space: nowrap;
 }
 
+/*
+ * Untranscribed ink is a different claim — "there is writing here we could not
+ * read" — and it keeps the dashed outline it always had.
+ *
+ * The width is stated here now. It used to be inherited from `.hl`, which no
+ * longer carries a border at all: a mapped answer is drawn as a fill so that its
+ * rows form one shape. An inherited border-width of zero would have left this
+ * marker invisible, which is the one thing it must not be, since it is what
+ * sends a teacher to look at writing the recognizer missed.
+ */
 .hl[data-kind="ink"] {
-  border-color: var(--hl-stroke-ink);
-  border-style: dashed;
+  border: 2px dashed var(--hl-stroke-ink);
+  border-radius: var(--r-lg);
   background: var(--hl-fill-ink);
 }
 

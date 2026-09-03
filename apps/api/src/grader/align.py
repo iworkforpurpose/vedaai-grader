@@ -1626,11 +1626,134 @@ def _highlight(blocks: list[AnswerBlock]) -> Highlight | None:
 
     merged: list[PageBox] = []
     for page, page_boxes in sorted(per_page.items()):
-        for run in _runs(page_boxes):
-            merged.append(PageBox(page=page, box=BBox.union_all(run)))
+        # Rows first, then bands. A recognizer returns a margin number as its own
+        # box beside the sentence it labels, and those two are one row of writing
+        # however little horizontal extent they share — so they have to be joined
+        # before anything asks whether one run continues another, which is a
+        # question about lines and not about fragments of a line.
+        for run in _runs(_rows(page_boxes)):
+            merged.extend(PageBox(page=page, box=box) for box in _band_shape(run))
 
     derived = "ink_regions" if all(b.is_text_free for b in blocks) else "ocr_lines"
     return Highlight(boxes=merged, derived_from=derived)
+
+
+#: How much two boxes must overlap vertically to be the same row of writing.
+#:
+#: Recognizers split one visual line into several boxes often — a margin number
+#: beside its sentence, a word set slightly higher than its neighbours, a
+#: fragment returned separately. Those are one row and must be unioned before any
+#: vertical reasoning happens, or the row below gets its boundary set against
+#: half of the row above.
+_SAME_ROW_OVERLAP = 0.5
+
+#: The widest space that may sit between two fragments of one row, as a share of
+#: the page.
+#:
+#: Same-row is necessary and not sufficient. A margin number sits a few
+#: hundredths of a page from the sentence it labels and belongs to it. The left
+#: and right columns of a page of handwritten code also share a row, and joining
+#: those paints the empty middle — measured, one page-wide box covered 0.77 of a
+#: sheet to mark 0.28 of writing. The gap is what tells them apart, and 0.08 is
+#: about one indent: wider than any margin, narrower than any column.
+_ROW_GAP_MAX = 0.08
+
+
+def _band_shape(run: list[BBox]) -> list[BBox]:
+    """One band of writing, drawn as the shape a text selection has.
+
+    A run of lines was previously drawn as a single rectangle around all of them,
+    and that rectangle is mostly paper. Ruled writing leaves a gap of about
+    four-fifths of a line between one line and the next, and the last line of a
+    paragraph ends wherever the sentence ended, so a box around five lines of
+    prose covers roughly twice the area of the writing inside it. Measured
+    against the lines a teacher can see, the single rectangle scores 0.535 and
+    not one answer in the golden set reaches 0.75.
+
+    The opposite shape — one rectangle per line — was tried and rejected for a
+    reason that has nothing to do with area. A teacher reported ten stripes down
+    a page of ruled paper, because consecutive line boxes have visible gaps
+    between them and read as ten separate marks rather than as one answer.
+
+    Both complaints are satisfied at once by the shape every document viewer
+    already uses for selected text: one box per row, each extended vertically to
+    meet its neighbour so the run renders as a single connected shape with no
+    gaps, while each row keeps its own left and right edge so a short final line
+    does not drag a rectangle of blank paper across the page.
+
+    The two published highlight numbers move in opposite directions here, as they
+    always do — this covers the writing far better and the enclosing region
+    slightly less well. That is the trade the region metric exists to make
+    visible, and it is made deliberately: a teacher looks at the writing.
+    """
+    rows = sorted(run, key=lambda b: b.y0)
+    if len(rows) <= 1:
+        return rows
+
+    # Each row grows down to meet the next, and the boundary is the midpoint of
+    # the gap so neither row claims more of it than the other. Rows that already
+    # overlap keep the same rule, which simply moves their shared edge to the
+    # middle of the overlap rather than letting them double-count it.
+    # Horizontally, the same shape again: a selection runs to the right margin on
+    # every row but the last, and starts at the left margin on every row but the
+    # first. Only the two ends are ragged, because only the two ends are actually
+    # ragged in the writing. Keeping every row's own edges was measured and reads
+    # worse in both senses — it saws a notch out of the middle of a paragraph
+    # wherever a recognizer returned a short box, and it gives up a fifth of the
+    # enclosing region for a gain in writing coverage that the ends alone already
+    # buy.
+    left = min(row.x0 for row in rows)
+    right = max(row.x1 for row in rows)
+
+    shaped: list[BBox] = []
+    for index, row in enumerate(rows):
+        first, last = index == 0, index == len(rows) - 1
+        top = row.y0 if first else (rows[index - 1].y1 + row.y0) / 2
+        bottom = row.y1 if last else (row.y1 + rows[index + 1].y0) / 2
+        shaped.append(
+            BBox(
+                x0=row.x0 if first else left,
+                y0=min(top, row.y0),
+                x1=row.x1 if last else right,
+                y1=max(bottom, row.y1),
+            )
+        )
+    return shaped
+
+
+def _rows(boxes: list[BBox]) -> list[BBox]:
+    """One box per row of writing on a page, top to bottom.
+
+    Every open row is offered the box rather than only the most recent one, for
+    the same reason ``_runs`` does it: two columns interleave when sorted by
+    height, and comparing against the last row only would put the left column's
+    second line on the right column's first.
+    """
+    rows: list[BBox] = []
+    for box in sorted(boxes, key=lambda b: (b.y0, b.x0)):
+        for index, row in enumerate(rows):
+            if _same_row(row, box):
+                rows[index] = BBox.union_all([row, box])
+                break
+        else:
+            rows.append(box)
+    return sorted(rows, key=lambda b: (b.y0, b.x0))
+
+
+def _same_row(a: BBox, b: BBox) -> bool:
+    """Whether two boxes are fragments of one line of writing.
+
+    Vertical overlap says they sit at the same height; the horizontal gap says
+    whether they are one line or two things that happen to be level.
+    """
+    overlap = min(a.y1, b.y1) - max(a.y0, b.y0)
+    if overlap <= 0:
+        return False
+    shorter = min(a.y1 - a.y0, b.y1 - b.y0)
+    if shorter <= 0 or overlap / shorter < _SAME_ROW_OVERLAP:
+        return False
+    gap = max(a.x0, b.x0) - min(a.x1, b.x1)
+    return gap <= _ROW_GAP_MAX
 
 
 def _runs(boxes: list[BBox]) -> list[list[BBox]]:
