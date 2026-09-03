@@ -47,7 +47,6 @@ Three rules make it safe rather than merely stricter:
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 
@@ -339,31 +338,57 @@ async def derive(
     return bank if bank.usable else None
 
 
+def _model() -> str:
+    """Which model writes the checks.
+
+    Follows the marker by default. The checks are the mark scheme, so a weak model
+    writing them limits a strong model marking against them — the measured failure
+    was checks that demanded content the question never asked for, and no marker
+    can award a mark a check refuses. ``MARK_CHECKS_MODEL`` exists to separate the
+    two when that is the experiment being run.
+    """
+    from .engine import DEFAULT_MODELS
+
+    return (
+        os.getenv("MARK_CHECKS_MODEL")
+        or os.getenv("GRADER_MODEL")
+        or DEFAULT_MODELS["openai"]
+    )
+
+
 async def _ask(
     question: Question, rubric: Rubric, *, reference: str = "", client=None
 ) -> dict:
+    from . import sampling
+
+    owned = None
     if client is None:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI()
+        owned = client = AsyncOpenAI()
 
-    completion = await client.chat.completions.create(
-        model=os.getenv("MARK_CHECKS_MODEL") or os.getenv("GRADER_MODEL") or "gpt-4o-mini",
-        temperature=0.0,
-        seed=20240817,
-        messages=[
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": _user_message(question, rubric, reference)},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "check_bank", "strict": True, "schema": BANK_SCHEMA},
-        },
-    )
-    content = completion.choices[0].message.content
-    if not content:
-        raise ValueError("no checks returned")
-    return json.loads(content)
+    try:
+        return await sampling.structured_completion(
+            client,
+            model=_model(),
+            system=SYSTEM,
+            user=_user_message(question, rubric, reference),
+            schema_name="check_bank",
+            schema=BANK_SCHEMA,
+            # Zero, and no panel. One bank is derived per question and reused for
+            # every script in the class, so a bank that varied would make two
+            # students marked an hour apart incomparable in a way no downstream
+            # vote could repair.
+            temperature=0.0,
+            seed=20240817,
+        )
+    finally:
+        # Closed because this function owns it. Left open, the client is collected
+        # later against an event loop that no longer exists, and a harness that
+        # marks nine documents with one `asyncio.run` each buries its own report
+        # under a screen of "Event loop is closed" tracebacks.
+        if owned is not None:
+            await owned.close()
 
 
 def _assemble(question: Question, rubric: Rubric, raw: dict) -> CheckBank:

@@ -20,17 +20,26 @@ matters more with two providers than it did with one: a mark is only checkable i
 you know what made it, and a small model and a large one are not interchangeable
 evidence.
 
-**On using a small model here.** It is a reasonable thing to try, and the reason is
-structural rather than optimistic. This task is not a reasoning showcase — it is
-"read a rubric, read numbered lines, decide, and cite the line IDs" — and the two
-ways a weak model fails it are both already contained. Malformed output is
-prevented by asking for a schema rather than for prose. Invented citations are
-caught by validation, which refuses the grade instead of displaying it, so the
-failure mode is *no mark* rather than a wrong one.
+**On using a small model here, and why it stopped.** It was a reasonable thing to
+try, and the reason was structural rather than optimistic. This task is not a
+reasoning showcase — it is "read a rubric, read numbered lines, decide, and cite
+the line IDs" — and the two ways a weak model fails it are both already
+contained. Malformed output is prevented by asking for a schema rather than for
+prose. Invented citations are caught by validation, which refuses the grade
+instead of displaying it, so the failure mode is *no mark* rather than a wrong
+one.
 
 What is not contained is judgement: deciding whether a student's own words satisfy
 a criterion, in text a recognizer has already damaged. Nothing in the architecture
-can rescue that, and it is the part worth measuring before trusting the numbers.
+rescues that, and the gate eventually measured it — five of nine documents outside
+the mark range a teacher would defend, every one of them under-marking. The
+default moved up and three of the five came back inside. See ``DEFAULT_MODELS``
+for the table.
+
+That leaves the architecture doing what it was built to do and the model doing
+what only a model can. It is also why the provider and model are recorded on every
+grade: a mark is only checkable if you know what made it, and a small model and a
+large one are not interchangeable evidence.
 """
 
 from __future__ import annotations
@@ -43,18 +52,52 @@ from typing import Protocol
 
 from vedaai_contracts import LineIndex, Question, QuestionGrade, RubricPoint
 
-from . import citations, prompt
+from . import citations, prompt, sampling
 from .rubric import Rubric
 
 #: Default model per provider, used when GRADER_MODEL names none.
 #:
-#: OpenAI's default is the small one deliberately. Marking is a short, highly
-#: constrained call — a rubric, a few lines, a schema to fill — and the expensive
-#: part of a large model is capability this task mostly does not use. If it proves
-#: not good enough, that shows up in the grades rather than in the bill.
+#: OpenAI's default used to be ``gpt-4o-mini``, on the argument that marking is a
+#: short, highly constrained call — a rubric, a few lines, a schema to fill — and
+#: that the expensive part of a large model is capability this task mostly does
+#: not use. The argument ended by saying that if it proved not good enough, that
+#: would show up in the grades rather than in the bill.
+#:
+#: It showed up in the grades. Measured on the gate, one pass, nine documents
+#: whose defensible mark range was written down before any run:
+#:
+#: ===============  =============  ===========  =========
+#: document         truth (band)   gpt-4o-mini  gpt-4.1
+#: ===============  =============  ===========  =========
+#: history          20 (15-20)     17           18
+#: geography        15 (13-15)     15           15
+#: english          20 (16-20)     15  FAIL     20
+#: economics        13 (11-13)     10  FAIL     10  FAIL
+#: physics           5  (4-7)       3  FAIL      6
+#: math-paper       15 (14-17)      7  FAIL     10  FAIL
+#: asap-clean        3  (3-3)       2  FAIL      3
+#: asap-middling     2  (2-3)       3            3
+#: asap-worst        3  (3-3)       3            3
+#: ===============  =============  ===========  =========
+#:
+#: Five documents outside their band become two, and every one of the five was
+#: *under* marking — the small model withholding marks a teacher gave. That is
+#: the failure this package cannot contain by construction: malformed output is
+#: prevented by demanding a schema, and invented citations are refused by
+#: validation, but whether a student's own wording satisfies a criterion is
+#: judgement, and nothing in the architecture substitutes for it.
+#:
+#: `physics` is the check on the other direction. It is the one paper in the set
+#: answered badly on purpose, and it lands at 6 against a truth of 5 in a band of
+#: 4-7 — so the larger model is not simply more generous, which would have shown
+#: here first.
+#:
+#: The two that remain are not marking faults. `economics` loses three marks to a
+#: margin label the student wrote against the wrong question, and `math-paper` to
+#: handwritten mathematics that recognition cannot read.
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
-    "openai": "gpt-4o-mini",
+    "openai": "gpt-4.1",
 }
 
 #: Explicit provider choice. With nothing set, whichever key is present is used —
@@ -682,40 +725,29 @@ class OpenAIGrader:
         )
 
     async def _judge(self, message: str, *, binary: bool, seed: int) -> dict:
-        """One member of the panel."""
-        completion = await self._client.chat.completions.create(
+        """One member of the panel.
+
+        Temperature and seed are asked for and given up if the model refuses
+        them. Marking the same script twice must give the same marks: temperature
+        was once unset, the API default is 1.0, and re-marking one submission five
+        times produced totals of 3, 3, 2, 2 and 0. The seed asks the provider for
+        reproducible sampling — best-effort rather than guaranteed, which is why
+        the panel exists at all, and the seeds being fixed is what keeps the panel
+        itself reproducible.
+
+        A reasoning model accepts neither, and refusing the whole request over an
+        optimisation would mark nothing at all. See ``sampling``.
+        """
+        return await sampling.structured_completion(
+            self._client,
             model=self.model,
-            # Marking the same script twice must give the same marks.
-            #
-            # This was unset, and the API default is 1.0 — so re-marking one
-            # submission five times produced totals of 3, 3, 2, 2 and 0. A teacher
-            # cannot check a mark that changes when they look again, and it makes
-            # every accuracy figure measured through this path noise.
-            #
-            # A seed as well, which asks the provider for reproducible sampling.
-            # Best-effort rather than guaranteed, which is why the panel exists;
-            # the seeds being fixed is what keeps the panel itself reproducible.
+            system=prompt.SYSTEM,
+            user=message,
+            schema_name="judgement",
+            schema=CHECK_JUDGEMENT_SCHEMA if binary else STRICT_JUDGEMENT_SCHEMA,
             temperature=MARK_TEMPERATURE,
             seed=seed,
-            messages=[
-                {"role": "system", "content": prompt.SYSTEM},
-                {"role": "user", "content": message},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "judgement",
-                    "strict": True,
-                    "schema": CHECK_JUDGEMENT_SCHEMA if binary
-                    else STRICT_JUDGEMENT_SCHEMA,
-                },
-            },
         )
-
-        content = completion.choices[0].message.content
-        if not content:
-            raise ValueError("the model returned no judgement")
-        return json.loads(content)
 
     @property
     def provenance(self) -> str:
