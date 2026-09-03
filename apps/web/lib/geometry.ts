@@ -145,3 +145,57 @@ function union(a: BBox, b: BBox): BBox {
     y1: Math.max(a.y1, b.y1),
   };
 }
+
+/** Where one box sits in a stack of boxes that together form one highlight. */
+export type StackEdge = "only" | "top" | "middle" | "bottom";
+
+/**
+ * Which edges of each box are the outside of the shape it belongs to.
+ *
+ * A multi-line answer arrives as one box per row of writing, each extended to
+ * meet the row below it. Styled independently they read as a stack of separate
+ * pills with rules between them, which is the barcode a teacher already
+ * complained about — the shape changed, and drawing it row by row would put the
+ * old complaint straight back. Styled as one shape they read as selected text.
+ *
+ * So this reports, per box, whether it opens the shape, continues it, closes it,
+ * or stands alone, and the stylesheet rounds only the outer corners.
+ *
+ * Two boxes are in the same stack when one's bottom edge is the other's top edge
+ * and they overlap horizontally. Touching rather than overlapping is exactly the
+ * relation the mapper produces and the one `mergeOverlapping` deliberately does
+ * not collapse, so the two agree by construction.
+ */
+export function stackEdges(boxes: readonly PageBox[]): StackEdge[] {
+  const edges: StackEdge[] = boxes.map(() => "only");
+
+  for (const [, group] of groupByPage(boxes.map((box, index) => ({ ...box, index })))) {
+    const ordered = [...group].sort((a, b) => a.box.y0 - b.box.y0);
+    for (let i = 0; i < ordered.length; i += 1) {
+      const here = ordered[i];
+      if (!here) continue;
+      const above = i > 0 ? ordered[i - 1] : undefined;
+      const below = ordered[i + 1];
+      const joinsAbove = above !== undefined && touches(above.box, here.box);
+      const joinsBelow = below !== undefined && touches(here.box, below.box);
+
+      edges[here.index] =
+        joinsAbove && joinsBelow
+          ? "middle"
+          : joinsBelow
+            ? "top"
+            : joinsAbove
+              ? "bottom"
+              : "only";
+    }
+  }
+
+  return edges;
+}
+
+/** Whether `lower` continues `upper`: sharing an edge and some width. */
+function touches(upper: BBox, lower: BBox): boolean {
+  const SHARED_EDGE = 1e-6;
+  if (Math.abs(lower.y0 - upper.y1) > SHARED_EDGE) return false;
+  return Math.min(upper.x1, lower.x1) > Math.max(upper.x0, lower.x0);
+}

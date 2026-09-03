@@ -273,11 +273,37 @@ class TestHighlightShape:
     covers far too much: on a page of handwritten code it painted the whole sheet,
     including the empty half, to mark writing down one side.
 
-    So lines that sit under one another and overlap at all become one band, and
-    writing somewhere else on the page gets a band of its own. On ruled prose that
-    is a single rectangle; on the code page it stays as separate regions, because
-    there the separation is real.
+    Both complaints are about the same thing and neither is about the box count:
+    a highlight must read as **one connected shape per region of writing**, and it
+    must not paint paper the student did not write on. A single rectangle satisfies
+    the first and fails the second; one rectangle per line satisfies the second and
+    fails the first.
+
+    So the shape is the one a text selection has: one box per row, each extended to
+    meet the row below it so there is no gap to see, with only the first and last
+    row ragged. These tests assert the *region* count and the absence of gaps
+    inside a region, which is what a teacher actually looks at. Asserting the box
+    count instead is what they used to do, and it pinned the shape rather than the
+    property.
     """
+
+    def _regions(self, boxes: list[BBox]) -> list[list[BBox]]:
+        """The boxes grouped into connected shapes, which is what is seen."""
+        regions: list[list[BBox]] = []
+        for box in sorted(boxes, key=lambda b: (b.y0, b.x0)):
+            for region in regions:
+                touches = any(
+                    box.y0 <= other.y1 + 1e-9
+                    and box.y1 >= other.y0 - 1e-9
+                    and min(box.x1, other.x1) > max(box.x0, other.x0)
+                    for other in region
+                )
+                if touches:
+                    region.append(box)
+                    break
+            else:
+                regions.append([box])
+        return regions
 
     def _boxes(self, lines: list[tuple[float, float, float, float]]) -> list[BBox]:
         from grader.align import _highlight
@@ -297,19 +323,42 @@ class TestHighlightShape:
         assert highlight is not None
         return [pb.box for pb in highlight.boxes]
 
-    def test_ruled_prose_becomes_one_band(self) -> None:
-        # Five lines of ordinary handwriting: a wide gap between them, because
-        # ruled paper is written on every other line, and a ragged right edge.
-        ruled = [
-            (0.12, 0.20, 0.78, 0.222),
-            (0.12, 0.24, 0.74, 0.262),
-            (0.12, 0.28, 0.81, 0.302),
-            (0.12, 0.32, 0.69, 0.342),
-            (0.12, 0.36, 0.55, 0.382),
-        ]
-        assert len(self._boxes(ruled)) == 1
+    #: Five lines of ordinary handwriting: a wide gap between them, because ruled
+    #: paper is written on every other line, and a ragged right edge.
+    RULED = [
+        (0.12, 0.20, 0.78, 0.222),
+        (0.12, 0.24, 0.74, 0.262),
+        (0.12, 0.28, 0.81, 0.302),
+        (0.12, 0.32, 0.69, 0.342),
+        (0.12, 0.36, 0.55, 0.382),
+    ]
 
-    def test_writing_elsewhere_on_the_page_keeps_its_own_band(self) -> None:
+    def test_ruled_prose_reads_as_one_region(self) -> None:
+        assert len(self._regions(self._boxes(self.RULED))) == 1
+
+    def test_ruled_prose_has_no_gap_a_teacher_could_see(self) -> None:
+        """The stripes complaint, stated as the property behind it.
+
+        Ten rectangles down a page were reported as unreadable because of the
+        white between them, not because of their number. So this asserts the
+        white is gone: every row's bottom edge is the next row's top edge.
+        """
+        boxes = sorted(self._boxes(self.RULED), key=lambda b: b.y0)
+        assert len(boxes) > 1, "five lines should not collapse to one rectangle"
+        for above, below in zip(boxes, boxes[1:], strict=False):
+            assert above.y1 == pytest.approx(below.y0)
+
+    def test_ruled_prose_does_not_paint_the_paper_past_the_last_word(self) -> None:
+        """The other half of the trade, and the reason for the shape.
+
+        The last line stops at 0.55 while the paragraph reaches 0.81. A single
+        rectangle round the whole run paints that quarter of the page as though
+        the student had written on it.
+        """
+        boxes = sorted(self._boxes(self.RULED), key=lambda b: b.y0)
+        assert boxes[-1].x1 == pytest.approx(0.55)
+
+    def test_writing_elsewhere_on_the_page_keeps_its_own_region(self) -> None:
         # Two runs with half a page between them. One rectangle covering both would
         # paint everything in between, including another question's answer.
         split = [
@@ -319,9 +368,10 @@ class TestHighlightShape:
             (0.12, 0.74, 0.74, 0.762),
         ]
         boxes = self._boxes(split)
-        assert len(boxes) == 2
+        regions = self._regions(boxes)
+        assert len(regions) == 2
         assert max(b.y1 for b in boxes) - min(b.y0 for b in boxes) > 0.6
-        assert all(b.y1 - b.y0 < 0.1 for b in boxes), "neither band spans the gap"
+        assert all(b.y1 - b.y0 < 0.1 for b in boxes), "no band spans the gap"
 
     def test_a_column_beside_another_is_not_swallowed(self) -> None:
         # The code page: writing down the left of the sheet and more down the
@@ -332,7 +382,29 @@ class TestHighlightShape:
             (0.60, 0.20, 0.90, 0.222),
             (0.60, 0.24, 0.88, 0.262),
         ]
-        assert len(self._boxes(columns)) == 2
+        regions = self._regions(self._boxes(columns))
+        assert len(regions) == 2
+        assert all(max(b.x1 for b in r) - min(b.x0 for b in r) < 0.4 for r in regions)
+
+    def test_one_line_is_still_one_box(self) -> None:
+        """Nothing to join, so nothing is invented around it."""
+        assert len(self._boxes([(0.12, 0.20, 0.78, 0.222)])) == 1
+
+    def test_fragments_of_one_line_become_one_row(self) -> None:
+        """A recognizer splitting a line must not create a row boundary.
+
+        A margin number returned separately from the sentence beside it sits on
+        the same row. Treating it as its own row would set the next row's top
+        edge against the number rather than against the writing.
+        """
+        boxes = self._boxes(
+            [
+                (0.04, 0.200, 0.07, 0.222),  # the margin number
+                (0.12, 0.201, 0.78, 0.223),  # the sentence beside it
+                (0.12, 0.240, 0.74, 0.262),  # the line below
+            ]
+        )
+        assert len(boxes) == 2
 
 
 class TestGapsAndOrphans:
