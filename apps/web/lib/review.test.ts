@@ -12,6 +12,7 @@ import {
   blocksOf,
   buildRows,
   citationHighlight,
+  classifyNotices,
   gradeFor,
   highlightByPage,
   isTeacherPlaced,
@@ -910,5 +911,80 @@ describe("splitLabel", () => {
   it("does not clip a label it cannot parse", () => {
     const { badge } = splitLabel("Question the First!!", ["1"]);
     expect(badge.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("classifyNotices", () => {
+  const submission = (warnings: string[], error: string | null = null) =>
+    ({ warnings, error } as unknown as Submission);
+
+  it("says nothing about a clean run", () => {
+    expect(classifyNotices(submission([]))).toEqual([]);
+  });
+
+  it("treats a stage that did not run as blocking", () => {
+    // The exact string routes.py appends when the provider refuses. This is the
+    // one that was on the payload of a live run while the screen said
+    // "3 of 6 answered · rubric only" and explained nothing.
+    const notices = classifyNotices(
+      submission([
+        "Answers were not marked: the provider is rate limiting or the account is out of credit.",
+      ]),
+    );
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.severity).toBe("blocking");
+    expect(notices[0]?.text).toContain("out of credit");
+  });
+
+  it("treats a lesser route as degraded", () => {
+    // pipeline.py emits this when embeddings are unreachable. Placement by
+    // spelling is a materially different product from placement by meaning.
+    const notices = classifyNotices(
+      submission([
+        "Answers were matched by wording rather than by meaning for this submission, " +
+          "because the language service could not be reached.",
+      ]),
+    );
+
+    expect(notices[0]?.severity).toBe("degraded");
+  });
+
+  it("keeps an ordinary observation informational", () => {
+    const notices = classifyNotices(
+      submission(["2 region(s) of writing match no question on the paper."]),
+    );
+
+    expect(notices[0]?.severity).toBe("informational");
+  });
+
+  it("puts the submission's own error first", () => {
+    const notices = classifyNotices(
+      submission(["1 region(s) of writing match no question."], "Ingest failed: boom"),
+    );
+
+    expect(notices[0]).toEqual({ severity: "blocking", text: "Ingest failed: boom" });
+    expect(notices).toHaveLength(2);
+  });
+
+  it("shows every warning, not the first one", () => {
+    // The failed branch rendered `warnings[0]`. A run with four warnings showed
+    // one, and which one was an accident of the order they were appended in.
+    const notices = classifyNotices(
+      submission([
+        "Answers were matched by wording rather than by meaning.",
+        "37% of the writing on this sheet could not be matched to any question.",
+        "2 region(s) of writing match no question on the paper.",
+        "Answers were not marked: the account is out of credit.",
+      ]),
+    );
+
+    expect(notices).toHaveLength(4);
+    expect(notices.map((n) => n.severity)).toEqual([
+      "degraded",
+      "degraded",
+      "informational",
+      "blocking",
+    ]);
   });
 });

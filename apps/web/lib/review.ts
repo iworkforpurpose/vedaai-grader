@@ -117,6 +117,95 @@ export function buildRows(submission: Submission): QuestionRow[] {
   });
 }
 
+export type NoticeSeverity = "blocking" | "degraded" | "informational";
+
+export interface Notice {
+  severity: NoticeSeverity;
+  text: string;
+}
+
+/**
+ * What went wrong with this run, phrased for the person reading the marks.
+ *
+ * The pipeline produces a careful vocabulary for its own limits — the answers
+ * were placed by wording rather than by meaning, nothing was marked because the
+ * provider refused, some writing could not be placed so no absence is claimed,
+ * a page may be missing — and the review screen rendered exactly none of it.
+ * `submission.warnings` was read in two places: a debug route nothing links to,
+ * and the failed-submission branch, which shows `warnings[0]` and only when the
+ * run failed outright.
+ *
+ * So a run that completed while silently degraded looked identical to one that
+ * worked. Observed live: four warnings on the payload, including "answers were
+ * not marked: the provider is out of credit", and a screen that said
+ * "3 of 6 answered · rubric only" with no explanation available anywhere.
+ *
+ * Severity decides placement and tone, not whether something is shown. Nothing
+ * here is filtered out — the whole failure of the previous behaviour was deciding
+ * on the teacher's behalf that they did not need to know.
+ */
+export function classifyNotices(submission: Submission): Notice[] {
+  const notices: Notice[] = [];
+
+  // The submission failed outright. Its own error is the most specific thing
+  // available and goes first.
+  if (submission.error) {
+    notices.push({ severity: "blocking", text: submission.error });
+  }
+
+  for (const warning of submission.warnings ?? []) {
+    notices.push({ severity: severityOf(warning), text: warning });
+  }
+
+  return notices;
+}
+
+/**
+ * How loudly to say one warning.
+ *
+ * Matched on the phrases the pipeline actually emits rather than on a code,
+ * because there is no code — the warnings are prose assembled at the point of
+ * failure, and inventing a taxonomy in the contract to serve this display would
+ * be a larger change than the display is worth. The tests pin the real strings.
+ *
+ * `blocking` means a whole stage did not run: nothing was marked, nothing
+ * matched, no questions were extracted. The result on screen is not a weaker
+ * version of the right answer, it is a different thing.
+ *
+ * `degraded` means the run completed by a lesser route and the numbers are worth
+ * less than they look.
+ *
+ * `informational` is everything else — real, worth reading, not a reason to
+ * distrust the screen.
+ */
+function severityOf(warning: string): NoticeSeverity {
+  const text = warning.toLowerCase();
+  const blocking = [
+    "were not marked",
+    "not marked automatically",
+    "none of the writing",
+    "no questions were extracted",
+    "could not be located",
+    "nothing was transcribed",
+  ];
+  if (blocking.some((phrase) => text.includes(phrase))) return "blocking";
+
+  const degraded = [
+    "rather than by meaning",
+    "less reliable",
+    "could not be read",
+    "could not be matched",
+    "no question is reported as unanswered",
+    "appears to be missing",
+    "page may be missing",
+    "multiple columns",
+    "straightened before reading",
+  ];
+  if (degraded.some((phrase) => text.includes(phrase))) return "degraded";
+
+  return "informational";
+}
+
 export interface ReviewSummary {
   total: number;
   answered: number;
