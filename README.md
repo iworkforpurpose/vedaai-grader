@@ -6,7 +6,8 @@ clicking a question highlights the exact region of the sheet that answers it.
 
 Answers given out of order, questions left unanswered, writing that answers nothing
 on the paper, and answers spanning several pages are all handled explicitly rather
-than assumed away. Marking is included, and every mark cites the lines it rests on.
+than assumed away. Marking is included, every mark cites the lines it rests on, and
+a teacher can change any of it.
 
 ## The one design decision everything else follows from
 
@@ -79,19 +80,38 @@ On a synthetic golden set that generates the graded edge cases in volume:
 | Question extraction F1 | 100% |
 | Printed-order accuracy (Kendall τ) | +1.000 |
 | Answer placement accuracy | 98.5% |
-| Highlight covers the answer region (IoU) | 0.730 |
-| Highlight is ink rather than paper (IoU) | 0.524 |
+| Highlight lands on the writing | 88.6% |
+| Highlight is ink rather than paper (IoU) | 0.570 |
+| Highlight covers the answer region (IoU) | 0.554 |
 | Written labels reaching their own line | 100% |
 | Blanks not called blank | 1.5% |
 | **False "unanswered" rate** | **0.0%** |
 
-A highlight is **one band per region of writing** — lines that sit under one another
-and overlap horizontally merge into a single rectangle, and writing elsewhere on the
-page gets a band of its own. Both other shapes were tried and both were wrong in
-opposite directions. One box per page reads cleanly and paints the empty half of a
-page of handwritten code. One box per line is tight and unreadable: a teacher
-reported ten stripes down a page of ruled paper, each cut to the ragged end of its
-line and each clipping the first letter it was meant to mark.
+A highlight is **the shape a text selection has**: one box per row of writing, each
+extended down to meet the row below so a run renders as a single connected shape
+with no gap to see, and only the first and last row ragged.
+
+Both simpler shapes were tried and both were wrong in opposite directions. One
+rectangle around all the lines reads cleanly and is mostly paper — ruled writing
+leaves a gap of about four-fifths of a line between lines, and the last line stops
+wherever the sentence stopped, so a box around five lines covers roughly twice the
+area of the writing in it. One rectangle per line is tight and unreadable: a
+teacher reported ten stripes down a page of ruled paper, each cut to the ragged end
+of its line and each clipping the first letter it was meant to mark. The selection
+shape removes the gaps that made the stripes and keeps the tightness that made them
+worth wanting. Measured back to back on the same set:
+
+| | one rectangle | selection |
+|---|---|---|
+| Highlight lands on the writing | 55.3% | **88.6%** |
+| Highlights missing the writing | 57 of 132 | **13 of 132** |
+| Ink IoU | 0.487 | **0.570** |
+| Region IoU | 0.685 | 0.554 |
+| Answer placement | 98.5% | 98.5% |
+
+The region figure falls, which is the trade named below and made deliberately: that
+metric rewards painting the blank paper around the writing, and painting it is the
+fault a teacher complains about.
 
 Placement and highlight quality are reported apart because they move for unrelated
 reasons: redrawing a highlight cannot send an answer to a different question, and
@@ -100,13 +120,27 @@ against each other by construction — a band that reads as one region necessari
 includes the space between its lines, so covering the region better means covering
 less ink. This project has now been misled by each of them in turn.
 
-Measured with the scorer the deployed service uses, which the harness now names in
-its own output. It did not always: this package's environment does not install the
-embedding client, so every mapping figure published before this line was written
-was measured by word overlap while the service scored by meaning. The two disagree
-by three points and in opposite directions on individual cases — a fix built and
-verified against the wrong one cost three points of accuracy and was reverted. Run
-`pnpm turbo eval` and read the `answer scorer` line before believing any of this.
+Measured with the scorer the deployed service uses, and `pnpm turbo eval` now
+reaches it without being asked. It did not: the eval and gate commands run `uv run`
+without `--env-file`, so `OPENAI_API_KEY` was absent unless a developer had exported
+it into their shell, the scorer fell back to word overlap, and the report said so on
+a line nobody had to read. The harness loads the repository's `.env` itself now, and
+a mismatch **fails the run** rather than printing a caption above the numbers it
+invalidates. Read the `answer scorer` line anyway.
+
+The same gap hid something larger. The eval package had no `aws` extra, so boto3 was
+missing, no recognizer could be built, and four of the gate's nine documents are
+scans: all four read nothing and scored zero, reported as a marking catastrophe
+rather than as a missing dependency.
+
+**These figures are reproducible within a session and were not across days.** Two
+runs at the same commit agree exactly. A figure measured earlier in the work — 96.2%
+where the same code now reads 88.6% — could not be reproduced hours later at that
+same commit, with the fixtures untouched and the page cache cleared. The scorer
+depends on a hosted embedding service, so the golden set is not the closed system it
+looks like. Every comparison in this file is therefore measured back to back in one
+session, and a number carried over from an earlier one should be re-measured rather
+than believed.
 
 **These figures replace earlier ones, and two of them are lower.** Mapping accuracy
 was quoted at 92.7% and highlight IoU at 0.744. Neither was measured against what
@@ -184,7 +218,70 @@ an accent on. All three are fixed and all four papers now read correctly. That i
 the loop that works, and it is worth repeating on anything that touches the
 aligner rather than running once.
 
-Tests: 566 on the API, 66 on the web app, 106 on the eval harness.
+## Are the marks right
+
+Every figure above measures where an answer is or which question it belongs to.
+None of them measures whether the mark is right, and for a long time that number
+did not exist. It does now, and it is the gate: nine documents, each with a total a
+competent marker could defend written down **before any run**, and it exits non-zero
+rather than reporting.
+
+| document | truth (band) | marks |
+|---|---|---|
+| history | 20 (15-20) | 17 |
+| geography | 15 (13-15) | 15 |
+| english | 20 (16-20) | 20 |
+| economics | 13 (11-13) | **10** |
+| physics | 5 (4-7) | 6 |
+| math-paper | 15 (14-17) | 14 |
+| asap-clean | 3 (3-3) | 3 |
+| asap-middling | 2 (2-3) | 3 |
+| asap-worst | 3 (3-3) | 3 |
+
+**Eight of nine inside their band.** It was four of nine when the gate could first
+see a recognizer, and every one of the five failures was *under* marking.
+
+Two changes account for it and both were measured one at a time.
+
+**The marker was too small a model.** It was `gpt-4o-mini`, chosen because marking
+is a short constrained call and the two ways a weak model fails it are already
+contained — malformed output is prevented by demanding a schema, invented citations
+are refused by validation, so the failure is *no mark* rather than a wrong one.
+Both are still true. What was never contained is judgement, and judgement is what
+the gate measured: moving to `gpt-4.1` took five documents out of band down to two.
+`physics` is the control — the one paper answered badly on purpose, which stays at
+6 against a truth of 5, so the larger model is not simply more generous.
+
+**Handwritten mathematics was unreadable, so it was unmarkable.** Answers whose
+evidence is a calculation, a formula or a drawing are now read a second time from a
+crop of the page. `math-paper` went from 10 to 14 and inside its band. The invariant
+holds: the model is handed a rectangle **code** computed and returns a string per
+line id, so every box, highlight and citation is exactly what it was before the
+call. See "The one design decision" above — a pass that returned boxes would be the
+thing this project exists to avoid; a pass that returns text is what OCR already is,
+done better where OCR is worst.
+
+The one that remains is **economics**, and it is not a marking fault: the student
+labelled their elasticity working `Q4` in the margin, the mislabel wins through the
+recognizer, and question 3 gets nothing. Three marks, on the aligner's side of the
+line.
+
+**Marks move between identical runs**, so a single pass cannot tell a fix from
+noise. Each question is marked by a panel of five sampled independently, and
+`--passes 3` takes the median and reports the spread. On `gpt-4.1`, 45 scored
+questions over three identical passes: three moved. A single sample at temperature
+zero moved four and swung further, so the panel still earns its five calls — the
+provider's seed is best-effort, which is the premise it was built on. Placement was
+identical on every pass, as it must be: it is deterministic and none of this touches
+it.
+
+A mark is a proposal. **A teacher can change any of it**, including on a question
+the marker declined, and their number is kept beside the proposal rather than
+replacing it — the gap between the two measures the marker on real scripts without
+anybody writing truth down first.
+
+Tests: 673 on the API, 109 on the web app, 145 on the eval harness, 46 on the
+contracts.
 
 ## Running it
 
@@ -204,13 +301,22 @@ and wrong for anything with a public address, so the deploy script refuses to
 release without one.
 Handwriting recognition needs either `OCR_ENGINE=textract` with AWS credentials, or
 `uv sync --extra ocr-local` for the local model. Marking needs `OPENAI_API_KEY` or
-`ANTHROPIC_API_KEY`.
+`ANTHROPIC_API_KEY`, and so does the second read of handwritten mathematics.
+
+The eval and gate commands read `.env` themselves. They did not, and the figures
+they printed were quietly measured by a different scorer than the service uses.
 
 ```bash
 pnpm turbo test               # unit tests, both languages
 pnpm turbo eval               # extraction, mapping, IoU against the golden set
+pnpm --filter @vedaai/evals gate            # are the marks right — costs paid calls
+pnpm --filter @vedaai/evals gate -- --passes 3   # and are they the same twice
 python tooling/scripts/audit_ui.py <submission-id>   # layout faults across 6 viewports
 ```
+
+The gate is the one that fails rather than reports, and the one to run before a
+commit that touches marking. It needs the documents under `data/`, which a clean
+clone does not have — see the last of the known limitations.
 
 ## Deployment
 
@@ -332,19 +438,29 @@ radius this size.
 
 ## Known limitations
 
-- **Marking varies by about one mark between runs.** Temperature 0 and a fixed seed
-  narrowed it; hosted models are not bit-reproducible. Settling it needs
-  self-consistency over several samples.
+- **Marking still varies between runs, on about one question in fifteen.** A panel
+  of five independent samples brought it down from one in eleven and halved the
+  worst swing; hosted models are not bit-reproducible and a seed is best-effort.
+  What is left is not decode noise — five samples disagreeing consistently is an
+  ambiguous question, and the next instrument is check-level logging rather than
+  more samples.
 - **Progress events do not survive a restart.** The live stream a browser watches
   during a run is per process; the result survives, the running commentary does
   not. A page open across a restart falls back to polling, which is the path it
   already uses.
-- **Handwritten mathematics and code get located but not marked.** This is the
-  limitation a new user meets first and the one worth stating loudest. The
-  aligner finds the answer and the highlight lands on it; the marks are near zero,
-  because recognition returns things like `Let the Cost of \ apple = A 1 Orange
-  = 0` and a marker cannot credit what it cannot read. Transcription is the
-  ceiling and no aligner change moves it.
+- **Handwritten mathematics is read twice, and the second read is unmeasured
+  against ground truth.** It used to be the limitation a new user met first: the
+  aligner found the answer, the highlight landed on it, and the marks were near
+  zero because recognition returned things like `Let the Cost of \ apple = A 1
+  Orange = 0`. A crop of the answer now goes back through a vision model, and the
+  mathematics paper moved from 10 marks to 14 and inside its band. What is *not*
+  measured is the character error rate of that second read — the evidence is a
+  mark total, which is the outcome that matters and a coarse instrument for the
+  step. Five pages with ground-truth transcriptions would settle it and they have
+  not been written.
+- **An answer spanning a page boundary is re-read only on the page holding most of
+  it.** A crop is one image. The rest keeps its first transcription, which is the
+  same outcome as not re-reading rather than a worse one.
 - **Unplaced writing is no longer shown to a teacher.** It was, and it was mostly
   noise — seven of eight cards on a real script had no readable text at all, and
   one said `Roll No: Page : 03`. The unassigned-ink total still qualifies every
@@ -356,6 +472,17 @@ radius this size.
 - **A submission cannot be deleted.** Student handwriting sits in DynamoDB until
   its seven-day TTL expires it.
 - **Real-page recall is unmeasured**, as above.
+- **The golden-set figures were not reproducible across days.** Two runs at one
+  commit agree exactly; a figure measured hours earlier at that same commit did
+  not reproduce, with the fixtures untouched and the page cache cleared. The
+  scorer depends on a hosted embedding service, so the set is not the closed
+  system it looks like. Every comparison published here is measured back to back
+  in one session for that reason, and the cause is not yet pinned down.
+- **The gate cannot run in CI.** Its documents live under `data/`, which is
+  gitignored because they are real student scripts. The generated papers rebuild
+  from `tooling/scripts/build_fresh_papers.py`; the ASAP ones need a corpus a
+  clean clone does not have. So the one check that measures whether the marks are
+  right is a command somebody has to remember to run.
 
 ## Layout
 
