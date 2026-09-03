@@ -7,6 +7,7 @@ is importable across the package boundary. Pipeline endpoints arrive in Phase 1.
 from __future__ import annotations
 
 import os
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,8 +58,23 @@ class GradingReadiness(BaseModel):
     """Whether this deployment can mark, and with what."""
 
     configured: bool
+    """A marker is selected. Free to answer, and not the same as it working."""
+
     engine: str
     model: str | None
+
+    reachable: bool | None = None
+    """Whether the provider actually answered, when it was asked.
+
+    ``None`` means nobody asked. The distinction is the whole point of this field:
+    the first version of this check reported only ``configured``, which is true as
+    soon as a key exists — and a deployment whose provider account had run out of
+    credit passed its release check while every submission came back zeros. A key
+    that exists is not a provider that answers.
+    """
+
+    detail: str | None = None
+    """Why the provider refused, where it did. Truncated, and never the key."""
 
 
 class Health(BaseModel):
@@ -109,6 +125,59 @@ class Health(BaseModel):
     similarity: str
 
 
+#: How long a reachability answer is reused.
+#:
+#: The container probes health every thirty seconds. A check that spends a request
+#: per probe is one somebody switches off, and then the signal is gone for the
+#: reason the signal existed. Five minutes is far shorter than any outage worth
+#: reporting and far longer than a probe interval.
+_REACHABILITY_TTL = 300.0
+
+_reachability: tuple[float, bool, str | None] | None = None
+
+
+def forget_reachability() -> None:
+    """Drop the cached answer. For tests, and for a deliberate re-probe."""
+    global _reachability
+    _reachability = None
+
+
+async def _ask_the_provider(grader) -> None:
+    """One minimal request, to prove the provider answers at all.
+
+    Deliberately not a marking call: no rubric, no student text, no schema. The
+    question is whether credentials and credit are good, and the cheapest possible
+    request answers it exactly as well as an expensive one.
+    """
+    client = getattr(grader, "_client", None)
+    if client is None:
+        raise RuntimeError("this grader has no client to ask")
+    await client.chat.completions.create(
+        model=grader.model,
+        messages=[{"role": "user", "content": "ok"}],
+        max_tokens=1,
+    )
+
+
+async def _reachable(grader) -> tuple[bool, str | None]:
+    """Whether the provider answered, cached."""
+    global _reachability
+    now = time.monotonic()
+    if _reachability is not None and now - _reachability[0] < _REACHABILITY_TTL:
+        return _reachability[1], _reachability[2]
+
+    try:
+        await _ask_the_provider(grader)
+    except Exception as exc:  # noqa: BLE001 - every failure is the same answer here
+        # The message, not the key. Provider errors name the account and the
+        # limit — "You have no credits remaining" — which is the actionable half,
+        # and they do not contain the credential.
+        _reachability = (now, False, str(exc)[:200])
+    else:
+        _reachability = (now, True, None)
+    return _reachability[1], _reachability[2]
+
+
 def _grading_readiness() -> GradingReadiness:
     """What will mark the next submission, decided without asking the provider.
 
@@ -132,8 +201,29 @@ def _grading_readiness() -> GradingReadiness:
 
 
 @app.get("/health", response_model=Health, tags=["meta"])
-def health() -> Health:
+async def health(deep: bool = False) -> Health:
+    """Readiness. ``?deep=1`` also asks the provider whether it will answer.
+
+    Two questions, because they have different costs and different answers. Is a
+    marker configured — free, safe on a probe every thirty seconds, and true as
+    soon as a key exists. Does the provider answer — one request, so it happens
+    only when asked for, and the answer is cached.
+
+    The release step asks deeply, once. The container's own probe does not.
+    """
     from .answers.similarity import SemanticSimilarity, default_similarity
+
+    grading = _grading_readiness()
+    if deep:
+        if not grading.configured:
+            # Nothing to ask, and `configured: false` has already answered it.
+            grading = grading.model_copy(update={"reachable": False})
+        else:
+            from . import grading as grading_module
+
+            marker = grading_module.select_grader()
+            ok, detail = await _reachable(marker)
+            grading = grading.model_copy(update={"reachable": ok, "detail": detail})
 
     return Health(
         status="ok",
@@ -143,7 +233,7 @@ def health() -> Health:
         contract_model_count=len(EXPORTED_MODELS),
         max_upload_bytes=MAX_BYTES,
         submissions_durable=get_store().durable,
-        grading=_grading_readiness(),
+        grading=grading,
         similarity=(
             "semantic" if isinstance(default_similarity, SemanticSimilarity) else "lexical"
         ),

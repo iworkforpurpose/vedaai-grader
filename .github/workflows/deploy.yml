@@ -169,8 +169,14 @@ jobs:
           # nothing about grading — so a rotated key, a dropped secret ARN or an
           # empty provider account all shipped green while every submission came
           # back zeros. That happened. The build is red for it now.
-          health="$(curl -s -m 25 "${stable}/api/health" || echo '{}')"
-          marking="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print("yes" if g.get("configured") else "no")' 2>/dev/null || echo unknown)"
+          # `deep=1`: ask the provider whether it will actually answer, not just
+          # whether a key is present. The first version of this check asked only
+          # the second question, and a deployment whose account had run out of
+          # credit passed it while every submission came back zeros. One request,
+          # once per release, cached behind the endpoint.
+          health="$(curl -s -m 40 "${stable}/api/health?deep=1" || echo '{}')"
+          marking="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print("yes" if g.get("reachable") else "no")' 2>/dev/null || echo unknown)"
+          why="$(printf '%s' "$health" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("grading",{}).get("detail") or "")' 2>/dev/null || echo "")"
           marker="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print(f"{g.get(\"engine\",\"?\")}:{g.get(\"model\") or \"-\"}")' 2>/dev/null || echo unknown)"
           placing="$(printf '%s' "$health" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("similarity","unknown"))' 2>/dev/null || echo unknown)"
           # Checked separately, because "the gate is on" is its own claim and the
@@ -193,6 +199,7 @@ jobs:
             echo "| revision | \`${rev##*/}\` |"
             echo "| via gateway | HTTP ${scode} |"
             echo "| marking | ${marking} (\`${marker}\`) |"
+            if [ -n "${why}" ]; then echo "| provider said | ${why} |"; fi
             echo "| placing answers by | ${placing} |"
             echo "| front page | HTTP ${gate} ${gate_note} |"
             echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
@@ -208,7 +215,8 @@ jobs:
           # `complete`, and every question reads zero.
           if [ "${marking}" != "yes" ]; then
             echo "::error::the deployed service cannot mark (grading: ${marker})."
-            echo "::error::check OPENAI_SECRET_ARN, the secret's value, and the provider account balance."
+            echo "::error::the provider was asked and did not answer: ${why}"
+            echo "::error::check OPENAI_SECRET_ARN, the secret's value, and the account balance."
             exit 1
           fi
 
