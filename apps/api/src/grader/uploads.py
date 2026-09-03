@@ -42,6 +42,14 @@ URL_TTL_SECONDS = int(os.getenv("UPLOAD_URL_TTL", "900"))
 _KEY = re.compile(r"^[0-9a-f]{32}/(question_paper|answer_sheet)(\.[A-Za-z0-9]{1,8})?$")
 
 
+#: The largest document this service accepts, mirrored from the renderer.
+#:
+#: Imported lazily rather than at module scope because `render` pulls in PyMuPDF
+#: and OpenCV, and the upload path is reached before either is needed. The value
+#: is asserted against `render.MAX_BYTES` in the tests, so the two cannot drift.
+MAX_UPLOAD_BYTES = 40_000_000
+
+
 class UploadRejected(Exception):
     """A key the client asked for is not one this service issued."""
 
@@ -91,28 +99,53 @@ def object_key(key: str) -> str:
 
 
 def presign(kind: str, filename: str, *, client=None) -> UploadSlot:
-    """A URL the browser can PUT one document to.
+    """A form the browser can POST one document to, size-bounded.
 
-    Deliberately signs only the bucket and key. Including a content type would put
-    it in the signature, and then a browser that normalises the header — or guesses
-    a different type for the same file — gets a signature mismatch it cannot debug.
-    Nothing downstream trusts the declared type anyway: the document is identified
-    by inspecting its bytes.
+    A signed POST policy rather than a signed PUT, for one reason: a policy can
+    carry a `content-length-range` and a signed PUT cannot. The PUT version signed
+    only the bucket and the key, so the URL it handed out authorised an object of
+    any size — up to S3's 5 GB single-object limit — against the operator's bucket,
+    from an endpoint that had no rate limit either. The service's own cap of 40 MB
+    was enforced afterwards, in the renderer, long after the bytes had landed and
+    been paid for.
+
+    The content type is still deliberately unsigned. Putting it in the signature
+    means a browser that normalises the header, or guesses a different type for the
+    same file, gets a signature mismatch it cannot debug — and nothing downstream
+    trusts the declared type anyway, because the document is identified by
+    inspecting its bytes.
     """
     key = new_key(kind, filename)
     s3 = client or _client()
-    url = s3.generate_presigned_url(
-        "put_object",
-        Params={"Bucket": bucket(), "Key": object_key(key)},
+    signed = s3.generate_presigned_post(
+        Bucket=bucket(),
+        Key=object_key(key),
+        # One byte, so an empty object cannot be uploaded and then reported as a
+        # corrupt document from four stages away.
+        Conditions=[["content-length-range", 1, MAX_UPLOAD_BYTES]],
         ExpiresIn=URL_TTL_SECONDS,
     )
-    return UploadSlot(key=key, url=url, fields={})
+    return UploadSlot(key=key, url=signed["url"], fields=dict(signed["fields"]))
 
 
 def read(key: str, *, client=None) -> bytes:
-    """The bytes the browser uploaded."""
+    """The bytes the browser uploaded, refusing an object too large to accept.
+
+    The size is checked before the body is fetched. The signed policy already
+    bounds what can be written, but this path also serves objects that were
+    written before a policy existed, and `get_object(...).read()` materialises
+    whatever it finds in the worker's memory in one allocation. A cap that runs
+    after the download is a cap on the wrong thing.
+    """
     s3 = client or _client()
-    response = s3.get_object(Bucket=bucket(), Key=object_key(key))
+    resolved = object_key(key)
+    head = s3.head_object(Bucket=bucket(), Key=resolved)
+    size = int(head.get("ContentLength", 0))
+    if size > MAX_UPLOAD_BYTES:
+        raise UploadRejected(
+            f"{key!r} is {size} bytes, over the {MAX_UPLOAD_BYTES}-byte limit"
+        )
+    response = s3.get_object(Bucket=bucket(), Key=resolved)
     return response["Body"].read()
 
 

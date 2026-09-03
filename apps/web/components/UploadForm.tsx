@@ -214,7 +214,7 @@ export function UploadForm({
 /**
  * Get both documents to the service, past it where possible.
  *
- * Asks where to put them first. When object storage is configured the browser PUTs
+ * Asks where to put them first. When object storage is configured the browser posts
  * each file straight there and this returns the keys — the service never carries
  * the bytes, so whatever limit its host places on request bodies stops applying.
  * That matters concretely: the service accepts documents up to 40 MB, and an API
@@ -241,7 +241,10 @@ async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
   const mode = plan.ok
     ? ((await plan.json()) as {
         mode: string;
-        slots?: Record<string, { key: string; url: string }>;
+        slots?: Record<
+          string,
+          { key: string; url: string; fields: Record<string, string> }
+        >;
       })
     : { mode: "direct" as const };
 
@@ -254,8 +257,8 @@ async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
   // Both at once. They are independent objects and the sheet is much the larger of
   // the two, so waiting for the paper first would add its latency for nothing.
   await Promise.all([
-    put(mode.slots.question_paper!.url, paper),
-    put(mode.slots.answer_sheet!.url, sheet),
+    send(mode.slots.question_paper!, paper),
+    send(mode.slots.answer_sheet!, sheet),
   ]);
 
   body.append("question_paper_key", mode.slots.question_paper!.key);
@@ -263,12 +266,33 @@ async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
   return body;
 }
 
-async function put(url: string, file: File): Promise<void> {
-  const response = await fetch(url, { method: "PUT", body: file });
+/**
+ * Post one file to its signed destination.
+ *
+ * A signed form rather than a signed PUT, because only a POST policy can carry a
+ * size condition. A signed PUT authorises an object of any size, and the URL was
+ * being handed out by an endpoint that had no rate limit either — so the service's
+ * own 40 MB cap, which does not run until the renderer, was the only thing between
+ * a caller and an arbitrarily large object in the operator's bucket.
+ *
+ * The signed fields must precede the file in the form. S3 reads the policy as it
+ * streams and rejects the request the moment it sees a field it was not signed
+ * for; `file` last is not a style choice.
+ */
+async function send(
+  slot: { url: string; fields: Record<string, string> },
+  file: File,
+): Promise<void> {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(slot.fields)) form.append(name, value);
+  form.append("file", file);
+
+  const response = await fetch(slot.url, { method: "POST", body: form });
   if (!response.ok) {
     // Named as an upload failure rather than folded into "cannot reach the
     // service", because the destination is a different host and the fix is
-    // different — most often the bucket's CORS rules.
+    // different — most often the bucket's CORS rules. A 403 here with a
+    // well-formed request is usually the size condition doing its job.
     throw new Error(`Uploading ${file.name} failed with HTTP ${response.status}`);
   }
 }

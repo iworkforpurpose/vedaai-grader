@@ -19,6 +19,7 @@ to the same bytes would mean two places for an access rule to be wrong.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -28,6 +29,23 @@ from pathlib import Path
 DEFAULT_ROOT = Path(
     os.getenv("PAGE_STORE_ROOT") or Path(__file__).resolve().parents[2] / ".pagestore"
 )
+
+
+#: The only key shape either store accepts, and exactly what `key_for` produces:
+#: sixteen hex characters of the content hash, then a four-digit page number.
+#:
+#: Both stores validate against this rather than against traversal, because the
+#: key arrives from a URL path and "does not escape" is a weaker claim than "is
+#: one of ours". A bucket shared with `uploads/` and `submissions/` makes the
+#: difference between those two claims a student's scanned script.
+_PAGE_KEY = re.compile(r"^[0-9a-f]{1,64}/p\d{4}\.png$")
+
+
+def require_page_key(key: str) -> str:
+    """Return the key if this store could have generated it, else refuse."""
+    if not _PAGE_KEY.match(key):
+        raise ValueError(f"not a page key issued by this store: {key!r}")
+    return key
 
 
 class PageStore:
@@ -49,9 +67,10 @@ class PageStore:
         return f"{content_hash[:16]}/p{page_index:04d}.png"
 
     def path_for(self, key: str) -> Path:
-        # Reject traversal before touching the filesystem. Keys are generated
-        # internally today, but this becomes reachable from a URL path in the
-        # image endpoint, so it must not depend on the caller being careful.
+        # Reject anything that is not a key this store generates, before touching
+        # the filesystem. The key reaches here from a URL path in the image
+        # endpoint, so it must not depend on the caller being careful.
+        require_page_key(key)
         candidate = (self.root / key).resolve()
         if not candidate.is_relative_to(self.root.resolve()):
             raise ValueError(f"key escapes the page store: {key!r}")
@@ -120,10 +139,13 @@ class S3PageStore:
         return PageStore.key_for(content_hash, page_index)
 
     def _object_key(self, key: str) -> str:
-        if ".." in key or key.startswith("/"):
-            # Same guard as the local store, for the same reason: this key
-            # reaches here from a URL path in the image endpoint.
-            raise ValueError(f"key escapes the page store: {key!r}")
+        # The local store gets its safety from the filesystem: `path_for` resolves
+        # and checks containment, so a prefix really is a directory. Here the
+        # prefix is a string, one bucket holds the students' original uploads and
+        # the spilled submission payloads as well as the pages, and string
+        # concatenation confines nothing. Rejecting `..` was not the same guard,
+        # and `uploads/{id}/answer_sheet.pdf` went straight through it.
+        require_page_key(key)
         return f"{self.prefix}{key}"
 
     def _s3(self):

@@ -191,7 +191,7 @@ class TestPageStore:
     def test_rejects_a_traversal_key(self, page_store: PageStore) -> None:
         # Reachable from a URL path in the image endpoint, so it must not rely
         # on callers being careful.
-        with pytest.raises(ValueError, match="escapes the page store"):
+        with pytest.raises(ValueError, match="not a page key issued by this store"):
             page_store.path_for("../../etc/passwd")
 
     def test_exists_is_false_for_a_traversal_key(self, page_store: PageStore) -> None:

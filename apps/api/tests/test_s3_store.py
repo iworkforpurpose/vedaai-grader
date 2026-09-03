@@ -97,17 +97,30 @@ class TestKeysMatchTheLocalStore:
 
 
 class TestKeySafety:
-    @pytest.mark.parametrize("key", ["../secrets/p0000.png", "/etc/passwd", "a/../../b.png"])
-    def test_a_key_cannot_escape_the_prefix(self, key: str) -> None:
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "../secrets/p0000.png",
+            "/etc/passwd",
+            "a/../../b.png",
+            # Not traversal at all, and the reason the rule changed from "does not
+            # escape" to "is one of ours": these are ordinary keys in the same
+            # bucket, holding the student's original scan and the whole submission.
+            "uploads/0123456789abcdef0123456789abcdef/answer_sheet.pdf",
+            "submissions/abc123.json.gz",
+        ],
+    )
+    def test_a_key_this_store_did_not_issue_is_refused(self, key: str) -> None:
         # Reachable from a URL path in the image endpoint, so it must not depend
         # on the caller being careful.
-        with pytest.raises(ValueError, match="escapes"):
+        with pytest.raises(ValueError):
             store(FakeS3()).put(key, b"data")
 
-    def test_a_traversing_key_reads_as_absent_rather_than_raising(self) -> None:
+    def test_a_foreign_key_reads_as_absent_rather_than_raising(self) -> None:
         # `exists` is asked about keys that arrive from outside, and a malformed
         # one is a miss, not a crash.
         assert store(FakeS3()).exists("../elsewhere/p0000.png") is False
+        assert store(FakeS3()).exists("uploads/abc/answer_sheet.pdf") is False
 
 
 class TestFailuresAreNotMistakenForAbsence:
@@ -157,3 +170,54 @@ class TestSelection:
         built = storage_module.build_page_store()
         assert isinstance(built, S3PageStore)
         assert built.bucket == "some-bucket"
+
+
+class TestThePageEndpointIsNotAnObjectBrowser:
+    """The page key arrives from a URL path, so its shape is a security boundary.
+
+    One bucket holds three things: rendered pages under `pages/`, the students'
+    original uploads under `uploads/`, and whole submission payloads spilled under
+    `submissions/`. The prefix was the only separation, and the guard rejected
+    only `..` and a leading slash — so `GET /pages/uploads/{id}/answer_sheet.pdf`
+    returned the original scan, and `GET /pages/submissions/{id}.json.gz` returned
+    the entire submission, both unauthenticated and both labelled `image/png`.
+
+    The local store never had this hole: `path_for` resolves and checks
+    `is_relative_to`. The S3 store's comment claims the "same guard"; it was not
+    equivalent, because a prefix is a string and a directory is not.
+    """
+
+    def test_a_real_page_key_is_accepted(self) -> None:
+        store = S3PageStore(bucket="b", prefix="pages/", client=object())
+
+        assert store._object_key("2bb9b288de04b4/p0000.png") == "pages/2bb9b288de04b4/p0000.png"
+
+    def test_keys_naming_the_other_prefixes_are_refused(self) -> None:
+        store = S3PageStore(bucket="b", prefix="pages/", client=object())
+
+        for key in [
+            "uploads/0123456789abcdef0123456789abcdef/answer_sheet.pdf",
+            "submissions/abc123.json.gz",
+            "../uploads/abc",
+            "/etc/passwd",
+            "2bb9b288de04b4/../../uploads/abc",
+        ]:
+            with pytest.raises(ValueError):
+                store._object_key(key)
+
+    def test_a_key_that_is_merely_plausible_is_refused(self) -> None:
+        """Only the shape `key_for` produces. Anything else is somebody guessing."""
+        store = S3PageStore(bucket="b", prefix="pages/", client=object())
+
+        for key in ["2bb9b288de04b4/p0000.jpg", "2bb9b288de04b4/cover.png",
+                    "ZZZZ/p0000.png", "2bb9b288de04b4/p0.png", "p0000.png"]:
+            with pytest.raises(ValueError):
+                store._object_key(key)
+
+    def test_every_key_the_store_generates_survives_its_own_guard(self) -> None:
+        """The guard must not be tighter than the thing it guards."""
+        store = S3PageStore(bucket="b", prefix="pages/", client=object())
+
+        for page in [0, 1, 42, 59]:
+            key = S3PageStore.key_for("2bb9b288de04b440cafe", page)
+            assert store._object_key(key).startswith("pages/")
