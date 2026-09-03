@@ -42,6 +42,22 @@ class OcrEngine(StrEnum):
 
     GOOGLE_CLOUD_VISION = "gcv"
     PADDLE_OCR_VL = "paddle"
+
+    VLM_CROP_REREAD = "vlm_crop_reread"
+    """A line whose text was read a second time from a crop of the page, because
+    the first read was of the kind this recognizer does worst — mathematics,
+    symbols, the labels on a drawing.
+
+    Recorded because the class docstring above says why: provenance per line is
+    what makes engine disagreement usable, and a line two engines read
+    differently is the most interesting line on the page. It also keeps the
+    change honest downstream — a mark resting on a re-read line rests on a
+    different reading of the same ink, and that is a thing a teacher may want to
+    know.
+
+    Only the text differs. The box, the page and the line id are the first
+    engine's, because geometry is never a model's to decide."""
+
     SYNTHETIC = "synthetic"  # ground truth from the synthetic generator
 
 

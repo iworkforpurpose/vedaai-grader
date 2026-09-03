@@ -43,7 +43,7 @@ from vedaai_evals.env import load_repo_env  # noqa: E402
 
 load_repo_env()
 
-from grader import grading, pipeline, regions, render  # noqa: E402
+from grader import grading, pipeline, regions, render, reread  # noqa: E402
 from grader.ocr import PdfTextLayerEngine  # noqa: E402
 from grader.storage import PageStore  # noqa: E402
 from grader.store import SubmissionStore  # noqa: E402
@@ -117,9 +117,7 @@ def run_document(doc: str, *, engine: str, page_root: Path) -> Submission:
     if submission.answer_sheet_lines is None:
         return submission
 
-    excluded = regions.lines_excluded_from_grading(
-        submission.ink_regions, submission.answer_sheet_lines.lines
-    )
+    pages = PageStore(root=page_root / doc)
 
     async def mark():
         """One loop per document, and the client closed inside it.
@@ -130,6 +128,17 @@ def run_document(doc: str, *, engine: str, page_root: Path) -> Submission:
         loop, which printed a bare ``RuntimeError: Event loop is closed`` above
         otherwise correct output.
         """
+        # The same second read of damaged handwriting the service does, and in
+        # the same place: after mapping, before marking. Left out, this harness
+        # would measure a marker reading text the deployed one never sees, which
+        # is the class of mismatch the `answer scorer` line exists to prevent.
+        await reread.repair_submission(submission, pages)
+
+        # Computed after the re-read, because it is derived from the lines and
+        # the re-read replaces some of them.
+        excluded = regions.lines_excluded_from_grading(
+            submission.ink_regions, submission.answer_sheet_lines.lines
+        )
         grader = grading.select_grader()
         try:
             return await grading.grade_submission(

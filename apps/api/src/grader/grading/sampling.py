@@ -31,6 +31,7 @@ determinism it does not have.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -72,18 +73,17 @@ def _names_a_refused_parameter(error: Exception) -> str | None:
     return next((name for name in _OPTIONAL if name in message), None)
 
 
-async def structured_completion(
+async def _create(
     client: Any,
     *,
     model: str,
-    system: str,
-    user: str,
+    messages: list[dict],
     schema_name: str,
     schema: dict,
-    temperature: float | None = None,
-    seed: int | None = None,
+    temperature: float | None,
+    seed: int | None,
 ) -> dict:
-    """One JSON object matching ``schema``, from whichever call shape works."""
+    """The request, retried without whatever the model turns out to refuse."""
     optional: dict[str, Any] = {}
     if temperature is not None:
         optional["temperature"] = temperature
@@ -95,10 +95,7 @@ async def structured_completion(
         try:
             completion = await client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                messages=messages,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {"name": schema_name, "strict": True, "schema": schema},
@@ -116,3 +113,72 @@ async def structured_completion(
     if not content:
         raise ValueError("the model returned no judgement")
     return json.loads(content)
+
+
+async def structured_completion(
+    client: Any,
+    *,
+    model: str,
+    system: str,
+    user: str,
+    schema_name: str,
+    schema: dict,
+    temperature: float | None = None,
+    seed: int | None = None,
+) -> dict:
+    """One JSON object matching ``schema``, from whichever call shape works."""
+    return await _create(
+        client,
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        schema_name=schema_name,
+        schema=schema,
+        temperature=temperature,
+        seed=seed,
+    )
+
+
+async def structured_completion_with_image(
+    client: Any,
+    *,
+    model: str,
+    system: str,
+    user: str,
+    image_png: bytes,
+    schema_name: str,
+    schema: dict,
+    temperature: float | None = None,
+    seed: int | None = None,
+) -> dict:
+    """The same, with one image attached to the user's turn.
+
+    Inline as a data URL rather than by reference. The crop exists only in memory
+    for the length of this call, and uploading a student's handwriting somewhere
+    to obtain a URL for it would give the page a second life nobody asked for and
+    nothing deletes.
+    """
+    encoded = base64.b64encode(image_png).decode("ascii")
+    return await _create(
+        client,
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                    },
+                ],
+            },
+        ],
+        schema_name=schema_name,
+        schema=schema,
+        temperature=temperature,
+        seed=seed,
+    )
