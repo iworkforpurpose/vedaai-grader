@@ -25,7 +25,7 @@ from vedaai_contracts import (
     SubmissionStatus,
 )
 
-from . import align, grading, pipeline, regions, render, uploads
+from . import align, grading, pipeline, regions, render, reread, uploads
 from .persistence import ConcurrentUpdate
 from .render import UnsupportedDocument
 from .storage import AnyPageStore, get_page_store
@@ -301,7 +301,7 @@ async def _run_ingest(
         submission.status = SubmissionStatus.PROCESSING
         store.put(submission)
         try:
-            await _apply_marks(submission)
+            await _apply_marks(submission, page_store)
         except BaseException as exc:  # noqa: BLE001
             # BaseException, not Exception: a cancelled task raises CancelledError,
             # which is not an Exception, and losing it here would leave a
@@ -454,7 +454,7 @@ def reassign_answer(
     tags=["submissions"],
 )
 async def grade_submission(
-    request: Request, submission_id: str, store: StoreDep
+    request: Request, submission_id: str, store: StoreDep, page_store: PageStoreDep
 ) -> Submission:
     """Propose marks for a submission, citing the lines behind each one.
 
@@ -490,12 +490,12 @@ async def grade_submission(
             detail="The answer sheet was never transcribed, so there is no text to mark.",
         )
 
-    await _apply_marks(submission)
+    await _apply_marks(submission, page_store)
     _store_or_conflict(store, submission)
     return submission
 
 
-async def _apply_marks(submission: Submission) -> None:
+async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None:
     """Mark a submission in place, degrading to the rubric when no grader is set.
 
     Shared by the explicit endpoint and by ingest, so the two cannot diverge in
@@ -507,6 +507,24 @@ async def _apply_marks(submission: Submission) -> None:
     assert submission.questions is not None
     assert submission.mapping is not None
     assert submission.answer_sheet_lines is not None
+
+    # Read the answers recognition is likely to have damaged again, before they
+    # are marked. Mathematics and diagram labels are what a text recognizer reads
+    # worst and what a marker can do least with, and the aligner has already
+    # decided which lines belong to which question — which is what makes it
+    # possible to pay for a second read only where it can help.
+    #
+    # After mapping and before marking, and it changes only what a line says: no
+    # box, no highlight and no citation target moves.
+    try:
+        await reread.repair_submission(submission, page_store)
+    except Exception as exc:  # noqa: BLE001 - an improvement, never a requirement
+        warning = (
+            "Handwritten working could not be read a second time "
+            f"({type(exc).__name__}). Marks on any mathematics are less reliable."
+        )
+        if warning not in submission.warnings:
+            submission.warnings.append(warning)
 
     try:
         grader: grading.Grader = grading.select_grader()
