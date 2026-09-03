@@ -163,6 +163,16 @@ jobs:
           # probe needs it) and proves the same two things this step is for: the
           # task is serving, and the gateway points at it.
           scode="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/api/health" || echo 000)"
+          # What will actually mark the next submission.
+          #
+          # A 200 from /health used to be the whole release check, and /health said
+          # nothing about grading — so a rotated key, a dropped secret ARN or an
+          # empty provider account all shipped green while every submission came
+          # back zeros. That happened. The build is red for it now.
+          health="$(curl -s -m 25 "${stable}/api/health" || echo '{}')"
+          marking="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print("yes" if g.get("configured") else "no")' 2>/dev/null || echo unknown)"
+          marker="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print(f"{g.get(\"engine\",\"?\")}:{g.get(\"model\") or \"-\"}")' 2>/dev/null || echo unknown)"
+          placing="$(printf '%s' "$health" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("similarity","unknown"))' 2>/dev/null || echo unknown)"
           # Checked separately, because "the gate is on" is its own claim and the
           # cost of it being quietly off is every stored script.
           gate="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
@@ -182,6 +192,8 @@ jobs:
             echo "| image | \`${image##*/}\` |"
             echo "| revision | \`${rev##*/}\` |"
             echo "| via gateway | HTTP ${scode} |"
+            echo "| marking | ${marking} (\`${marker}\`) |"
+            echo "| placing answers by | ${placing} |"
             echo "| front page | HTTP ${gate} ${gate_note} |"
             echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -189,3 +201,20 @@ jobs:
           # The gateway is the address people are given, so that is the one whose
           # failure should fail the deploy.
           test "$scode" = "200"
+
+          # A release that cannot mark is not a release. Marking is the half of
+          # this product a teacher is actually asking for, and its absence is
+          # silent everywhere else: the submission completes, the status is
+          # `complete`, and every question reads zero.
+          if [ "${marking}" != "yes" ]; then
+            echo "::error::the deployed service cannot mark (grading: ${marker})."
+            echo "::error::check OPENAI_SECRET_ARN, the secret's value, and the provider account balance."
+            exit 1
+          fi
+
+          # Placing answers by word overlap rather than by meaning is a materially
+          # different product. Not fatal — the pipeline is designed to degrade —
+          # but it must never pass unremarked.
+          if [ "${placing}" != "semantic" ]; then
+            echo "::warning::answers will be placed by ${placing}, not by meaning."
+          fi
