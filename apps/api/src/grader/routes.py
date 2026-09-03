@@ -220,7 +220,7 @@ async def create_submission(
         # what was wrong rather than surfacing a parser exception.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    submission_id = uuid.uuid4().hex[:12]
+    submission_id = uuid.uuid4().hex
     accepted = Submission(submission_id=submission_id, status=SubmissionStatus.PROCESSING)
     store.put(accepted)
     store.remember_content(qp_source.content_hash, submission_id)
