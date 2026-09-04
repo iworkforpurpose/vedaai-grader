@@ -403,7 +403,19 @@ class SemanticSimilarity:
             }
         try:
             vectors = self._embed(texts)
-        except Exception:  # noqa: BLE001 - any provider failure degrades the same way
+        except Exception as exc:  # noqa: BLE001 - any provider failure degrades the same way
+            # The only record of this used to be a flag and a warning on the
+            # submission. Placement by wording rather than by meaning is a
+            # materially different product, and an operator should not have to
+            # open a script to discover the whole service is in that mode.
+            from ..observability import log_event
+
+            log_event(
+                "similarity_degraded",
+                error=type(exc).__name__,
+                detail=str(exc),
+                texts=len(texts),
+            )
             self._retry_after = self._now() + _OUTAGE_COOLDOWN
             for text in texts:
                 self._cache[text] = None

@@ -30,6 +30,7 @@ from . import questions as questions_module
 from . import regions as regions_module
 from . import render
 from .answers import addressed_to_the_marker
+from .observability import log_event
 from .ocr import (
     EngineUnavailable,
     PageInput,
@@ -129,6 +130,19 @@ def ingest_document(
                     )
                 )
             except EngineUnavailable as exc:
+                # Reported per page because the whole document's transcription is
+                # about to be discarded — a throttle on page 58 of 60 throws away
+                # 57 successful calls, and the warning says the engine was
+                # unavailable rather than what that cost.
+                log_event(
+                    "transcription_stopped",
+                    submission_id=submission.submission_id,
+                    document=source.filename,
+                    page=rendered.page.index + 1,
+                    pages_done=len(pages),
+                    pages_total=source.page_count,
+                    detail=str(exc),
+                )
                 # A recognizer that cannot run is not a failed submission. The
                 # pages are already rendered and still reviewable, ink geometry
                 # still works, and a diagram never needed text to be highlighted.

@@ -26,6 +26,7 @@ from vedaai_contracts import (
 )
 
 from . import align, grading, pipeline, regions, render, reread, uploads
+from .observability import log_event, timed
 from .persistence import ConcurrentUpdate
 from .render import UnsupportedDocument
 from .storage import AnyPageStore, get_page_store
@@ -268,16 +269,20 @@ async def _run_ingest(
     """
     loop = asyncio.get_running_loop()
     try:
-        submission = await loop.run_in_executor(
-            None,
-            lambda: pipeline.ingest(
-                submission_id=submission_id,
-                question_paper=question_paper,
-                answer_sheet=answer_sheet,
-                page_store=page_store,
-                submission_store=store,
-            ),
-        )
+        # Stage timings, which nothing recorded. A submission that sits at
+        # `processing` for ten minutes is indistinguishable from one that is
+        # working, and there was no way to tell which stage it was in.
+        with timed("ingest", submission_id=submission_id):
+            submission = await loop.run_in_executor(
+                None,
+                lambda: pipeline.ingest(
+                    submission_id=submission_id,
+                    question_paper=question_paper,
+                    answer_sheet=answer_sheet,
+                    page_store=page_store,
+                    submission_store=store,
+                ),
+            )
     except Exception as exc:  # noqa: BLE001
         failed = store.get(submission_id) or Submission(submission_id=submission_id)
         failed.status = SubmissionStatus.FAILED
@@ -310,7 +315,8 @@ async def _run_ingest(
         submission.status = SubmissionStatus.PROCESSING
         store.put(submission)
         try:
-            await _apply_marks(submission, page_store)
+            with timed("marking", submission_id=submission_id):
+                await _apply_marks(submission, page_store)
         except BaseException as exc:  # noqa: BLE001
             # BaseException, not Exception: a cancelled task raises CancelledError,
             # which is not an Exception, and losing it here would leave a
@@ -538,6 +544,14 @@ async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None
     try:
         grader: grading.Grader = grading.select_grader()
     except grading.GraderUnavailable as unavailable:
+        # The failure that produced a green deploy, a `complete` submission, and
+        # marks of zero, with the reason visible only to whoever opened that one
+        # script.
+        log_event(
+            "grader_unavailable",
+            submission_id=submission.submission_id,
+            detail=str(unavailable),
+        )
         grader = grading.RubricOnly()
         warning = f"Answers were not marked automatically: {unavailable}"
         if warning not in submission.warnings:

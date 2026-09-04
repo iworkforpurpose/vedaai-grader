@@ -52,6 +52,7 @@ from typing import Protocol
 
 from vedaai_contracts import LineIndex, Question, QuestionGrade, RubricPoint
 
+from ..observability import log_event
 from . import citations, prompt, sampling
 from .rubric import Rubric
 
@@ -373,6 +374,20 @@ async def _panel(judge, count: int) -> list[dict]:
         *(judge(seed) for seed in _seeds(count)), return_exceptions=True
     )
     samples = [r for r in results if isinstance(r, dict)]
+    if len(samples) < count:
+        # A panel that quietly shrinks is how "unanimous" becomes "whatever the
+        # one surviving sample said". The agreement threshold is recomputed from
+        # the survivors, so a question marked by one of five is indistinguishable
+        # downstream from one marked five-nil.
+        for result in results:
+            if isinstance(result, BaseException):
+                log_event(
+                    "panel_sample_failed",
+                    returned=len(samples),
+                    requested=count,
+                    error=type(result).__name__,
+                    detail=str(result),
+                )
     if not samples:
         first = next((r for r in results if isinstance(r, BaseException)), None)
         raise first or ValueError("the model returned no judgement")
