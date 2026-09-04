@@ -48,11 +48,8 @@ Three rules make it safe rather than merely stricter:
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import json
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from vedaai_contracts import Question
 
@@ -554,56 +551,35 @@ def render(bank: CheckBank) -> str:
     return "\n".join(lines)
 
 
-#: Where derived banks are kept between processes.
-#:
-#: A bank is a property of a question, not of a script, and it is the same for
-#: every student who sat the paper. In memory only, it died with the task — so a
-#: class of forty paid forty times for one paper's schemes, a restart threw away
-#: everything, and an experiment could not be repeated without paying again.
-#:
-#: That last one is what made this urgent rather than tidy: a day's worth of
-#: provider budget went on deriving banks that were then discarded, and the
-#: measurement it was meant to enable could not run.
-_STORE = Path(os.getenv("CHECK_BANK_CACHE") or Path(__file__).resolve().parents[3] / ".banks")
-
-
-def _slot(key: str) -> Path:
-    return _STORE / f"{hashlib.sha256(key.encode()).hexdigest()[:32]}.json"
-
-
 def _persist(key: str, bank: CheckBank) -> None:
-    """Write a bank where the next process can find it. Never fatal."""
-    try:
-        _STORE.mkdir(parents=True, exist_ok=True)
-        _slot(key).write_text(
-            json.dumps(
+    """Keep a bank where the next process — and the next task — can find it."""
+    from ..banks import store
+
+    store().write(
+        key,
+        {
+            "qid": bank.qid,
+            "traps": bank.traps,
+            "needs_material": bank.needs_material,
+            "checks": [
                 {
-                    "qid": bank.qid,
-                    "traps": bank.traps,
-                    "needs_material": bank.needs_material,
-                    "checks": [
-                        {
-                            "ask": c.ask,
-                            "claim": c.claim,
-                            "marks": c.marks,
-                            "needs_material": c.needs_material,
-                        }
-                        for c in bank.checks
-                    ],
+                    "ask": c.ask,
+                    "claim": c.claim,
+                    "marks": c.marks,
+                    "needs_material": c.needs_material,
                 }
-            )
-        )
-    except OSError:
-        # A read-only filesystem is a slower deployment, not a broken one.
-        pass
+                for c in bank.checks
+            ],
+        },
+    )
 
 
 def _restore(key: str) -> CheckBank | None:
-    """A bank derived by an earlier process, if one is on disk."""
-    slot = _slot(key)
-    try:
-        raw = json.loads(slot.read_text())
-    except (OSError, ValueError):
+    """A bank derived earlier, by this process or another one."""
+    from ..banks import store
+
+    raw = store().read(key)
+    if not raw:
         return None
     bank = CheckBank(
         qid=str(raw.get("qid", "")),
@@ -625,6 +601,9 @@ def _restore(key: str) -> CheckBank | None:
 def clear_cache() -> None:
     """Forget every derived bank. For tests, and for a changed paper."""
     _CACHE.clear()
+    from ..banks import LOCAL_ROOT, reset
+
+    reset()
     with contextlib.suppress(OSError):
-        for slot in _STORE.glob("*.json"):
+        for slot in LOCAL_ROOT.glob("*.json"):
             slot.unlink()

@@ -64,6 +64,20 @@ class GradingReadiness(BaseModel):
     engine: str
     model: str | None
 
+    throttled: bool = False
+    """The credential works and the quota is spent.
+
+    A distinction worth drawing, because the two failures need opposite responses
+    and look identical from a boolean. A rejected key, a dropped secret ARN or a
+    wrong model is a misconfiguration: nothing will mark until somebody changes
+    something, and a release carrying it should be red. A 429 is capacity: the
+    deployment is correct, the credential is good, and marking resumes when the
+    window rolls.
+
+    Conflating them means either a spent free-tier budget blocks every deploy, or
+    a genuinely broken marker ships green. Neither is acceptable, so the health
+    payload says which one it is."""
+
     reachable: bool | None = None
     """Whether the provider actually answered, when it was asked.
 
@@ -134,7 +148,7 @@ class Health(BaseModel):
 #: reporting and far longer than a probe interval.
 _REACHABILITY_TTL = 300.0
 
-_reachability: tuple[float, bool, str | None] | None = None
+_reachability: tuple[float, bool, str | None, bool] | None = None
 
 
 def forget_reachability() -> None:
@@ -160,23 +174,24 @@ async def _ask_the_provider(grader) -> None:
     )
 
 
-async def _reachable(grader) -> tuple[bool, str | None]:
-    """Whether the provider answered, cached."""
+async def _reachable(grader) -> tuple[bool, str | None, bool]:
+    """Whether the provider answered, whether it was merely throttled, cached."""
     global _reachability
     now = time.monotonic()
     if _reachability is not None and now - _reachability[0] < _REACHABILITY_TTL:
-        return _reachability[1], _reachability[2]
+        return _reachability[1], _reachability[2], _reachability[3]
 
     try:
         await _ask_the_provider(grader)
-    except Exception as exc:  # noqa: BLE001 - every failure is the same answer here
+    except Exception as exc:  # noqa: BLE001
         # The message, not the key. Provider errors name the account and the
         # limit — "You have no credits remaining" — which is the actionable half,
         # and they do not contain the credential.
-        _reachability = (now, False, str(exc)[:200])
+        throttled = "ratelimit" in type(exc).__name__.lower() or "429" in str(exc)
+        _reachability = (now, False, str(exc)[:200], throttled)
     else:
-        _reachability = (now, True, None)
-    return _reachability[1], _reachability[2]
+        _reachability = (now, True, None, False)
+    return _reachability[1], _reachability[2], _reachability[3]
 
 
 def _grading_readiness() -> GradingReadiness:
@@ -223,8 +238,10 @@ async def health(deep: bool = False) -> Health:
             from . import grading as grading_module
 
             marker = grading_module.select_grader()
-            ok, detail = await _reachable(marker)
-            grading = grading.model_copy(update={"reachable": ok, "detail": detail})
+            ok, detail, throttled = await _reachable(marker)
+            grading = grading.model_copy(
+                update={"reachable": ok, "detail": detail, "throttled": throttled}
+            )
 
     return Health(
         status="ok",

@@ -176,7 +176,7 @@ jobs:
           # credit passed it while every submission came back zeros. One request,
           # once per release, cached behind the endpoint.
           health="$(curl -s -m 40 "${stable}/api/health?deep=1" || echo '{}')"
-          # One parse, four values, in a file that can be tested.
+          # One parse, five values, in a file that can be tested.
           #
           # This was four `python3 -c` calls with escaped quotes inside a YAML
           # string inside a shell substitution, and the one needing an f-string did
@@ -187,6 +187,7 @@ jobs:
             read -r marker
             read -r placing
             read -r why
+            read -r throttled
           } < <(printf '%s' "$health" | python3 deploy/health_summary.py)
           # Checked separately, because "the gate is on" is its own claim and the
           # cost of it being quietly off is every stored script.
@@ -207,7 +208,11 @@ jobs:
             echo "| image | \`${image##*/}\` |"
             echo "| revision | \`${rev##*/}\` |"
             echo "| via gateway | HTTP ${scode} |"
-            echo "| marking | ${marking} (\`${marker}\`) |"
+            if [ "${marking}" != "yes" ] && [ "${throttled}" = "yes" ]; then
+              echo "| marking | rate limited (\`${marker}\`) |"
+            else
+              echo "| marking | ${marking} (\`${marker}\`) |"
+            fi
             if [ -n "${why}" ]; then echo "| provider said | ${why} |"; fi
             echo "| placing answers by | ${placing} |"
             echo "| front page | HTTP ${gate} ${gate_note} |"
@@ -222,7 +227,16 @@ jobs:
           # this product a teacher is actually asking for, and its absence is
           # silent everywhere else: the submission completes, the status is
           # `complete`, and every question reads zero.
-          if [ "${marking}" != "yes" ]; then
+          # A spent quota is not a broken release. The credential worked, the
+          # provider answered, and the answer was "not until the window rolls".
+          # Failing the build for that would mean the free tier can block a
+          # deploy for the rest of the day over something no change can fix,
+          # while a genuinely rejected key still has to be caught — so the two
+          # are separated at the source rather than guessed at from a boolean.
+          if [ "${marking}" != "yes" ] && [ "${throttled}" = "yes" ]; then
+            echo "::warning::the marking provider is rate limited right now: ${why}"
+            echo "::warning::the deployment is correct; marking resumes when the window rolls."
+          elif [ "${marking}" != "yes" ]; then
             echo "::error::the deployed service cannot mark (grading: ${marker})."
             echo "::error::the provider was asked and did not answer: ${why}"
             echo "::error::check GROQ_SECRET_ARN, the secret's value, and the account balance."

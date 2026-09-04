@@ -250,6 +250,56 @@ class TestProvingTheMarkerCanActuallyMark:
         assert body["grading"]["reachable"] is False
         assert "credits" in body["grading"]["detail"]
 
+    def test_a_spent_quota_is_not_the_same_answer_as_a_rejected_key(
+        self, client, monkeypatch
+    ) -> None:
+        """Both are `reachable: false`, and they need opposite responses.
+
+        A rejected key means nothing marks until somebody changes a secret, and a
+        release carrying it must be red. A rate limit means the deployment is
+        correct and marking resumes when the window rolls — on a free tier, daily.
+        With only the boolean the release step has to pick which one to get wrong:
+        block every deploy for the rest of the day, or ship a dead marker green.
+        """
+        from grader import main as main_module
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+        class RateLimitError(RuntimeError):
+            pass
+
+        async def throttled(_grader):
+            raise RateLimitError("Rate limit reached for model, try again in 2m1s")
+
+        async def rejected(_grader):
+            raise RuntimeError("Incorrect API key provided")
+
+        main_module.forget_reachability()
+        monkeypatch.setattr(main_module, "_ask_the_provider", throttled)
+        busy = client.get("/health?deep=1").json()["grading"]
+
+        main_module.forget_reachability()
+        monkeypatch.setattr(main_module, "_ask_the_provider", rejected)
+        broken = client.get("/health?deep=1").json()["grading"]
+
+        assert busy["reachable"] is False and broken["reachable"] is False
+        assert busy["throttled"] is True
+        assert broken["throttled"] is False
+
+    def test_a_provider_that_answers_is_never_reported_throttled(
+        self, client, monkeypatch
+    ) -> None:
+        from grader import main as main_module
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        main_module.forget_reachability()
+
+        async def answers(_grader):
+            return None
+
+        monkeypatch.setattr(main_module, "_ask_the_provider", answers)
+        assert client.get("/health?deep=1").json()["grading"]["throttled"] is False
+
     def test_the_deep_check_reports_a_provider_that_answers(
         self, client, monkeypatch
     ) -> None:
