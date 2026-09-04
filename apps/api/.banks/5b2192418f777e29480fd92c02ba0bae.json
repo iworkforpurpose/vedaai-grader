@@ -1,0 +1,1 @@
+{"qid": "2/i", "traps": ["valley", "ridge", "cirque", "glacier"], "needs_material": false, "checks": [{"ask": "Does the answer give the correct name of the landform at position A?", "claim": "The landform at position A is a drumlin.", "marks": 2.0, "needs_material": false}]}

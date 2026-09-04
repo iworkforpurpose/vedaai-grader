@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "eval": "uv run --extra dev --extra semantic python -m vedaai_evals.runner",
+    "eval": "uv run --extra dev --extra nli --extra semantic python -m vedaai_evals.runner",
     "test": "uv run --extra dev python -m pytest -q",
     "typecheck": "uv run --extra dev python -m ruff check src tests",
-    "score-marks": "uv run --extra dev --extra semantic --extra aws python ../../tooling/scripts/score_marks.py",
-    "gate": "uv run --extra dev --extra semantic --extra aws python ../../tooling/scripts/gate.py",
-    "score-recognition": "uv run --extra dev --extra semantic --extra aws python ../../tooling/scripts/score_recognition.py",
+    "score-marks": "uv run --extra dev --extra nli --extra semantic --extra aws python ../../tooling/scripts/score_marks.py",
+    "gate": "uv run --extra dev --extra nli --extra semantic --extra aws python ../../tooling/scripts/gate.py",
+    "score-recognition": "uv run --extra dev --extra nli --extra semantic --extra aws python ../../tooling/scripts/score_recognition.py",
     "snapshot": "uv run --extra dev python -m vedaai_evals.classification"
   }
 }

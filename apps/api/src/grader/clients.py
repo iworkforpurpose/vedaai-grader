@@ -71,9 +71,58 @@ def aws_config(read_timeout: float = STORAGE_READ_TIMEOUT) -> Any:
     )
 
 
+#: Where an OpenAI-shaped client should point, and what key it should carry.
+#:
+#: Every provider worth using for this speaks the OpenAI chat-completions API, so
+#: "which provider" is a base URL and a key rather than a second code path. The
+#: marking call is the same call either way: a system prompt, one message, and a
+#: strict JSON schema.
+#:
+#: Groq is chosen when its key is present because it is the one open-weight host
+#: confirmed to support `response_format: json_schema` with `strict: true`, which
+#: every marking call here depends on — and its schema rules (all fields required,
+#: `additionalProperties: false`, nullables as unions) are the ones this codebase
+#: already emits, so nothing had to be rewritten to move.
+#:
+#: An explicit `GRADER_BASE_URL` overrides the lot, so any other OpenAI-compatible
+#: host is a config change rather than a release.
+PROVIDERS: dict[str, tuple[str, str]] = {
+    # name: (env var holding the key, base URL)
+    "groq": ("GROQ_API_KEY", "https://api.groq.com/openai/v1"),
+    "openai": ("OPENAI_API_KEY", ""),
+}
+
+
+def openai_provider() -> tuple[str, str | None, str | None]:
+    """Which OpenAI-shaped provider to use: (name, api_key, base_url).
+
+    Groq first when its key is present, because it is roughly thirteen times
+    cheaper per script than the OpenAI default and this product marks a class of
+    forty at a time. `GRADER_PROVIDER` still wins where it names one.
+    """
+    forced = os.getenv("GRADER_PROVIDER", "").strip().lower()
+    order = ["groq", "openai"]
+    if forced in PROVIDERS:
+        order = [forced]
+
+    override = os.getenv("GRADER_BASE_URL", "").strip()
+    for name in order:
+        env_var, base = PROVIDERS[name]
+        key = os.getenv(env_var, "").strip()
+        if key:
+            return name, key, override or base or None
+    return "openai", None, override or None
+
+
 def openai_kwargs() -> dict[str, Any]:
-    """Timeout and retry settings for an OpenAI client."""
-    return {"timeout": MODEL_TIMEOUT, "max_retries": MODEL_RETRIES}
+    """Timeout, retry and destination settings for an OpenAI-shaped client."""
+    _name, key, base = openai_provider()
+    kwargs: dict[str, Any] = {"timeout": MODEL_TIMEOUT, "max_retries": MODEL_RETRIES}
+    if key:
+        kwargs["api_key"] = key
+    if base:
+        kwargs["base_url"] = base
+    return kwargs
 
 
 def anthropic_kwargs() -> dict[str, Any]:

@@ -92,3 +92,90 @@ class TestTheClientsActuallyUseIt:
         assert seen["service"] == "textract"
         assert seen["config"].read_timeout == clients.TEXTRACT_READ_TIMEOUT
         assert seen["config"].retries["mode"] == "adaptive"
+
+
+class TestWhichProviderMarks:
+    """One marking call, several hosts that speak the same API.
+
+    Every provider worth using here speaks the OpenAI chat-completions API, so
+    "which provider" is a base URL and a key rather than a second code path. What
+    has to be right is the selection, because getting it wrong is silent: a key
+    for one host and a model name from another produces a model-not-found nobody
+    was expecting.
+    """
+
+    def _only(self, monkeypatch, **env) -> None:
+        for var in ["GROQ_API_KEY", "OPENAI_API_KEY", "GRADER_PROVIDER", "GRADER_BASE_URL"]:
+            monkeypatch.delenv(var, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+
+    def test_groq_is_preferred_when_its_key_is_present(self, monkeypatch) -> None:
+        """Roughly thirteen times cheaper per script, marking a class at a time."""
+        self._only(monkeypatch, GROQ_API_KEY="gsk_test", OPENAI_API_KEY="sk-test")
+
+        name, key, base = clients.openai_provider()
+
+        assert name == "groq"
+        assert key == "gsk_test"
+        assert base == "https://api.groq.com/openai/v1"
+
+    def test_openai_needs_no_base_url(self, monkeypatch) -> None:
+        self._only(monkeypatch, OPENAI_API_KEY="sk-test")
+
+        name, key, base = clients.openai_provider()
+
+        assert (name, key, base) == ("openai", "sk-test", None)
+
+    def test_an_explicit_choice_wins(self, monkeypatch) -> None:
+        """`GRADER_PROVIDER` exists so a deployment cannot drift silently when a
+        second key appears in its environment."""
+        self._only(
+            monkeypatch,
+            GROQ_API_KEY="gsk_test",
+            OPENAI_API_KEY="sk-test",
+            GRADER_PROVIDER="openai",
+        )
+
+        assert clients.openai_provider()[0] == "openai"
+
+    def test_an_explicit_base_url_overrides_the_provider_default(self, monkeypatch) -> None:
+        """Any other OpenAI-compatible host is a config change, not a release."""
+        self._only(monkeypatch, GROQ_API_KEY="gsk_test",
+                   GRADER_BASE_URL="https://openrouter.ai/api/v1")
+
+        assert clients.openai_provider()[2] == "https://openrouter.ai/api/v1"
+
+    def test_no_key_at_all_yields_no_key(self, monkeypatch) -> None:
+        """The rubric-only path is a working product, not an error path."""
+        self._only(monkeypatch)
+
+        assert clients.openai_provider()[1] is None
+
+    def test_the_client_carries_the_key_and_the_destination(self, monkeypatch) -> None:
+        self._only(monkeypatch, GROQ_API_KEY="gsk_test")
+
+        kwargs = clients.openai_kwargs()
+
+        assert kwargs["api_key"] == "gsk_test"
+        assert kwargs["base_url"] == "https://api.groq.com/openai/v1"
+        assert kwargs["timeout"] == clients.MODEL_TIMEOUT
+
+
+class TestTheGradeSaysWhichHostJudgedIt:
+    def test_provenance_names_the_provider_not_the_sdk_shape(self, monkeypatch) -> None:
+        """Groq speaks the OpenAI API. Without this, a grade from `gpt-oss-120b`
+        on Groq and one from `gpt-4.1` on OpenAI both read `openai:...`, and
+        "a mark is only checkable if you know what made it" stops being true the
+        moment two hosts are configurable.
+        """
+        from grader.grading.engine import OpenAIGrader
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+        monkeypatch.setenv("GRADER_PROVIDER", "groq")
+
+        grader = OpenAIGrader(client=object())
+
+        assert grader.model == "openai/gpt-oss-120b"
+        assert grader.provenance == "groq:openai/gpt-oss-120b"

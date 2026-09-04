@@ -34,6 +34,12 @@ grading = ["anthropic>=0.40", "openai>=1.50"]
 # Hosted handwriting recognition and page storage. Small next to the local model,
 # and the only option that needs no weights shipped in the image.
 aws = ["boto3>=1.35"]
+# Answering the binary checks on this machine, with a cross-encoder rather than a
+# generative model. Deriving the checks still needs a provider; this removes the
+# five generative calls per question that *answer* them, which is roughly 95% of
+# the marking volume — and makes the mark deterministic, the citation
+# unfabricatable, and the student's writing something that never leaves the box.
+nli = ["torch>=2.4", "transformers>=4.44", "sentencepiece>=0.2"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../../packages/contracts", editable = true }

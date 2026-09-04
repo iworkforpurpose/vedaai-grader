@@ -136,7 +136,13 @@ def available() -> bool:
     """Whether a re-read can run at all."""
     if os.environ.get("REREAD", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False
-    return bool(os.getenv("OPENAI_API_KEY"))
+    from .clients import openai_provider
+
+    # Vision, specifically. A host that marks well may serve no multimodal model
+    # at all, and a re-read that silently returns nothing is worse than one that
+    # never ran — the answer keeps its damaged text either way, but only one of
+    # them is honest about why.
+    return bool(os.getenv("REREAD_MODEL")) and bool(openai_provider()[1])
 
 
 def worth_rereading(kind: EvidenceKind, lines: list[Line]) -> bool:

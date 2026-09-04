@@ -47,6 +47,7 @@ Three rules make it safe rather than merely stricter:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass, field
 
@@ -64,6 +65,25 @@ class Check:
     to be present — "gives the value 15 m/s", not "correct calculation"."""
 
     marks: float
+
+    claim: str = ""
+    """The same check as a statement about the world, for a verifier to test.
+
+    Not a duplicate of ``ask``: they are addressed to different readers, and the
+    difference is load-bearing. ``ask`` is a question about the answer and is what
+    a teacher reads. ``claim`` is the proposition the answer has to assert, and is
+    what an entailment model is given as its hypothesis.
+
+    Measured, deriving one from the other mechanically does not work. "Does the
+    answer state that field lines never intersect?" transformed into "The answer
+    states that field lines never intersect" scores 0.057 against a student who
+    wrote exactly that — because an NLI model judges the hypothesis as a statement
+    about the world and has no referent for "the answer". The bare claim, "Field
+    lines never intersect", is the thing that can be entailed.
+
+    Empty where the bank predates this field, in which case the verifier falls
+    back to transforming ``ask`` and is worse at it."""
+
     needs_material: bool = False
     """True only when answering needs material the paper did not supply — a
     passage, a figure, a table. Such a check is credited rather than refused,
@@ -118,7 +138,7 @@ BANK_SCHEMA: dict = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["ask", "marks", "needs_material"],
+                "required": ["ask", "claim", "marks", "needs_material"],
                 "properties": {
                     "ask": {
                         "type": "string",
@@ -126,6 +146,18 @@ BANK_SCHEMA: dict = {
                         "the substance: 'Does the answer give 15 m/s?' not 'Is the "
                         "calculation correct?'. Never bundle two things into one check — "
                         "'defines resistance AND gives the unit' must be two checks.",
+                    },
+                    "claim": {
+                        "type": "string",
+                        "description": "The same check written as a plain statement "
+                        "about the world, which the student's answer would make true. "
+                        "NOT a sentence about the answer. 'Field lines never "
+                        "intersect.' not 'The answer states that field lines never "
+                        "intersect.' 'The speed is 15 m/s.' not 'The answer gives 15 "
+                        "m/s.' Where the check tests a property of the writing rather "
+                        "than a fact — that a definition is not circular, that two "
+                        "distinct reasons are given — leave this empty, because there "
+                        "is no fact to state.",
                     },
                     "marks": {"type": "number"},
                     "needs_material": {
@@ -262,6 +294,27 @@ on something the question text does not contain:
 
 If you can tell whether the answer is right by reading the answer, it is false.
 
+**Write the claim as well as the question.** The two are read by different things.
+The question is what a teacher reads. The claim is the bare proposition the \
+student's answer has to make true, and it is handed to a verifier as a hypothesis:
+
+  ask:   "Does the answer state that field lines never intersect?"
+  claim: "Field lines never intersect."
+
+  ask:   "Does the answer give the value 15 m/s?"
+  claim: "The speed is 15 m/s."
+
+Never write the claim as a sentence about the answer. "The answer states that \
+field lines never intersect" is a fact about a document, and a verifier asked to \
+test it has no idea what document is meant — measured, that phrasing scores 0.057 \
+against a student who wrote exactly the right thing.
+
+Leave the claim **empty** where the check tests a property of the writing rather \
+than a fact about the world: that a definition is not circular, that two *distinct* \
+reasons are given, that each reason is correct rather than merely plausible. Those \
+are real checks and there is no proposition to state, so say nothing rather than \
+inventing one.
+
 Then list the traps: wrong answers a marker would be tempted to credit because \
 they are fluent, confident and on topic.\
 """
@@ -304,7 +357,9 @@ def available() -> bool:
     """Whether checks can be derived at all."""
     if os.environ.get("MARK_CHECKS", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False
-    return bool(os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
+    from ..clients import openai_provider
+
+    return bool(openai_provider()[1] or os.getenv("ANTHROPIC_API_KEY"))
 
 
 async def derive(
@@ -327,14 +382,33 @@ async def derive(
     if key in _CACHE:
         return _CACHE[key]
 
+    stored = _restore(key)
+    if stored is not None:
+        _CACHE[key] = stored
+        return stored
+
     try:
         raw = await _ask(question, rubric, reference=reference, client=client)
-    except Exception:  # noqa: BLE001 - checks are an improvement, not a requirement
+    except Exception as exc:  # noqa: BLE001 - checks are an improvement, not a requirement
+        # Logged here rather than by the caller, because this function swallows
+        # the exception and returns `None` — so the caller's own handler never
+        # runs and its `scheme_failed` event never fired. That gap cost an hour:
+        # every question reported "no check bank, nothing to verify" and nothing
+        # anywhere said the provider had refused, or why.
+        from ..observability import log_event
+
+        log_event(
+            "scheme_failed",
+            qid=question.qid,
+            error=type(exc).__name__,
+            detail=str(exc),
+        )
         return None
 
     bank = _assemble(question, rubric, raw)
     if bank.usable:
         _CACHE[key] = bank
+        _persist(key, bank)
     return bank if bank.usable else None
 
 
@@ -347,12 +421,13 @@ def _model() -> str:
     can award a mark a check refuses. ``MARK_CHECKS_MODEL`` exists to separate the
     two when that is the experiment being run.
     """
+    from ..clients import openai_provider
     from .engine import DEFAULT_MODELS
 
     return (
         os.getenv("MARK_CHECKS_MODEL")
         or os.getenv("GRADER_MODEL")
-        or DEFAULT_MODELS["openai"]
+        or DEFAULT_MODELS[openai_provider()[0]]
     )
 
 
@@ -405,6 +480,7 @@ def _assemble(question: Question, rubric: Rubric, raw: dict) -> CheckBank:
         checks.append(
             Check(
                 ask=ask,
+                claim=str(entry.get("claim", "") or "").strip(),
                 marks=max(0.0, float(entry.get("marks", 0.0) or 0.0)),
                 needs_material=bool(entry.get("needs_material", False)),
             )
@@ -446,7 +522,7 @@ def _rescaled(checks: list[Check], available_marks: float) -> list[Check]:
     drift = round(available_marks - sum(marks), 2)
     marks[0] = max(0.5, round(marks[0] + drift, 2))
     return [
-        Check(ask=c.ask, marks=m, needs_material=c.needs_material)
+        Check(ask=c.ask, claim=c.claim, marks=m, needs_material=c.needs_material)
         for c, m in zip(checks, marks, strict=False)
     ]
 
@@ -475,6 +551,59 @@ def render(bank: CheckBank) -> str:
     return "\n".join(lines)
 
 
+def _persist(key: str, bank: CheckBank) -> None:
+    """Keep a bank where the next process — and the next task — can find it."""
+    from ..banks import store
+
+    store().write(
+        key,
+        {
+            "qid": bank.qid,
+            "traps": bank.traps,
+            "needs_material": bank.needs_material,
+            "checks": [
+                {
+                    "ask": c.ask,
+                    "claim": c.claim,
+                    "marks": c.marks,
+                    "needs_material": c.needs_material,
+                }
+                for c in bank.checks
+            ],
+        },
+    )
+
+
+def _restore(key: str) -> CheckBank | None:
+    """A bank derived earlier, by this process or another one."""
+    from ..banks import store
+
+    raw = store().read(key)
+    if not raw:
+        return None
+    bank = CheckBank(
+        qid=str(raw.get("qid", "")),
+        checks=[
+            Check(
+                ask=str(c.get("ask", "")),
+                marks=float(c.get("marks", 0.0)),
+                claim=str(c.get("claim", "") or ""),
+                needs_material=bool(c.get("needs_material", False)),
+            )
+            for c in raw.get("checks", [])
+        ],
+        traps=[str(x) for x in raw.get("traps", [])],
+        needs_material=bool(raw.get("needs_material", False)),
+    )
+    return bank if bank.usable else None
+
+
 def clear_cache() -> None:
     """Forget every derived bank. For tests, and for a changed paper."""
     _CACHE.clear()
+    from ..banks import LOCAL_ROOT, reset
+
+    reset()
+    with contextlib.suppress(OSError):
+        for slot in LOCAL_ROOT.glob("*.json"):
+            slot.unlink()

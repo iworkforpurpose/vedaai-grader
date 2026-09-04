@@ -31,9 +31,77 @@ determinism it does not have.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import os
+import random
+import re
 from typing import Any
+
+#: How many model calls this process will have in flight at once.
+#:
+#: Not a performance knob. Free and low tier quotas are per minute, and this
+#: service fans out four questions at a time, each of which used to fan out to
+#: five samples — twenty concurrent calls against an allowance of thirty a minute,
+#: with nothing client-side to slow it down. Measured on a nine-document gate run,
+#: that produced 53 dropped panel samples and a set of documents that scored zero
+#: for reasons that had nothing to do with marking.
+#:
+#: A pilot on a free tier is exactly this shape, so this is a correctness setting
+#: rather than a courtesy.
+MAX_IN_FLIGHT = int(os.getenv("MODEL_MAX_IN_FLIGHT") or 2)
+
+#: How many times a refused-for-rate request is waited out before giving up.
+RATE_LIMIT_RETRIES = int(os.getenv("MODEL_RATE_LIMIT_RETRIES") or 5)
+
+#: The longest single wait. A provider asking for twenty minutes is telling you
+#: the daily budget is gone, and a submission should fail honestly rather than
+#: hold a teacher's browser open until it arrives.
+MAX_BACKOFF_SECONDS = float(os.getenv("MODEL_MAX_BACKOFF") or 90.0)
+
+_in_flight: asyncio.Semaphore | None = None
+_loop_owning_semaphore: object | None = None
+
+
+def _gate() -> asyncio.Semaphore:
+    """One semaphore per event loop.
+
+    Created lazily rather than at import: a semaphore binds to the loop that made
+    it, and this module is imported long before any loop exists — and the eval
+    harness runs one `asyncio.run` per document, so there is more than one.
+    """
+    global _in_flight, _loop_owning_semaphore
+    loop = asyncio.get_running_loop()
+    if _in_flight is None or _loop_owning_semaphore is not loop:
+        _in_flight = asyncio.Semaphore(MAX_IN_FLIGHT)
+        _loop_owning_semaphore = loop
+    return _in_flight
+
+
+#: "Please try again in 21m24.336s" / "try again in 6.2s".
+_RETRY_AFTER = re.compile(r"try again in\s+(?:(\d+)m)?([\d.]+)s", re.IGNORECASE)
+
+
+def _wait_for(error: Exception, attempt: int) -> float | None:
+    """How long to wait before retrying, or None if this is not a rate limit.
+
+    The provider's own number is preferred over a guess, because it knows when the
+    window rolls and a shorter guess just spends another request being refused.
+    Jitter on the fallback so that four questions refused together do not all come
+    back at the same instant and refuse each other again.
+    """
+    if "ratelimit" not in type(error).__name__.lower() and "429" not in str(error):
+        return None
+
+    match = _RETRY_AFTER.search(str(error))
+    if match:
+        minutes = float(match.group(1) or 0)
+        seconds = minutes * 60 + float(match.group(2))
+        return seconds if seconds <= MAX_BACKOFF_SECONDS else None
+
+    return min(MAX_BACKOFF_SECONDS, (2**attempt) + random.random())
+
 
 #: Parameters known to be refused, by model. Populated on the first refusal and
 #: consulted before every later call, so one 400 is paid per model per process
@@ -90,24 +158,39 @@ async def _create(
     if seed is not None:
         optional["seed"] = seed
 
+    attempt = 0
     while True:
         sending = {k: v for k, v in optional.items() if k not in refused_by(model)}
         try:
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {"name": schema_name, "strict": True, "schema": schema},
-                },
-                **sending,
-            )
+            async with _gate():
+                completion = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": schema_name,
+                            "strict": True,
+                            "schema": schema,
+                        },
+                    },
+                    **sending,
+                )
             break
         except Exception as exc:  # noqa: BLE001 - re-raised below unless it is ours
             refused = _names_a_refused_parameter(exc)
-            if refused is None or refused not in sending:
+            if refused is not None and refused in sending:
+                _REFUSED.setdefault(model, set()).add(refused)
+                continue
+
+            # A rate limit is a wait, not a failure. Left unhandled it became one:
+            # the question came back "could not be marked automatically", the
+            # document scored zero, and the gate reported it as a marking result.
+            wait = _wait_for(exc, attempt) if attempt < RATE_LIMIT_RETRIES else None
+            if wait is None:
                 raise
-            _REFUSED.setdefault(model, set()).add(refused)
+            attempt += 1
+            await asyncio.sleep(wait)
 
     content = completion.choices[0].message.content
     if not content:

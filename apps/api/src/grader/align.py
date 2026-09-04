@@ -208,7 +208,21 @@ DECISIVE_MARGIN = 0.25
 #: question, then the honest report is "found writing I could not place", not "the
 #: student left this blank". The unassigned-ink check cannot cover this case,
 #: because the block may well be assigned — to a different question.
-PLAUSIBLE_ANSWER_EXISTS = 0.18
+#: How far above a scorer's own noise floor a block must score before it counts
+#: as a plausible answer to a question nothing was assigned to.
+#:
+#: A share of the band rather than an absolute, and this is the third place the
+#: same bug has appeared. It was 0.18 flat, which on the hosted embedder sat below
+#: its own 0.30 unrelated floor, and on a local embedder — whose unrelated pairs
+#: run 0.42 to 0.77 — makes every block plausible for every question. The effect
+#: is not a wrong mark but something worse in this product: every absence claim
+#: downgrades to `uncertain`, so `unanswered`, `ocr_failed` and `not_required`
+#: collapse into one hedge, which is exactly the distinction the four states exist
+#: to keep.
+#:
+#: Caught by the align tests when the default scorer changed, which is the only
+#: reason it is not shipping.
+PLAUSIBLE_SHARE_OF_BAND = 0.20
 
 
 class _State(Enum):
@@ -1391,6 +1405,17 @@ def resolve(
 _SETTLED_ELSEWHERE = 1.5
 
 
+def _plausible_threshold(similarity) -> float:
+    """The score above which a block plausibly answers something.
+
+    Read from the measure, because the measures disagree by a factor of four
+    about where their noise stops. See ``PLAUSIBLE_SHARE_OF_BAND``.
+    """
+    floor = float(getattr(similarity, "unrelated_below", 0.0) or 0.0)
+    confident = float(getattr(similarity, "confident_above", 1.0) or 1.0)
+    return floor + max(0.0, confident - floor) * PLAUSIBLE_SHARE_OF_BAND
+
+
 def _plausible_answer_exists(
     question: Question,
     blocks: list[AnswerBlock],
@@ -1431,7 +1456,7 @@ def _plausible_answer_exists(
         if not block.text.strip():
             continue
         score = similarity.score(question.text, block.text)
-        if score < PLAUSIBLE_ANSWER_EXISTS:
+        if score < _plausible_threshold(similarity):
             continue
 
         owner = owner_of.get(block.block_id)
