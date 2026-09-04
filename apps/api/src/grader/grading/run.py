@@ -27,6 +27,7 @@ from vedaai_contracts import (
     RubricPoint,
 )
 
+from ..observability import log_event
 from . import rubric as rubric_mod
 from . import scheme as scheme_mod
 from .citations import gradable_lines
@@ -159,7 +160,16 @@ async def grade_submission(
             # forty scripts pays for one paper's schemes rather than forty.
             try:
                 scheme = await scheme_mod.derive(question, spec)
-            except Exception:  # noqa: BLE001 - never fatal
+            except Exception as exc:  # noqa: BLE001 - never fatal
+                # Silent until now, and consequential: without a bank the marker
+                # falls back to the scalar path, which is the one the docstrings
+                # blame for fluent nonsense earning full marks.
+                log_event(
+                    "scheme_failed",
+                    qid=question.qid,
+                    error=type(exc).__name__,
+                    detail=str(exc),
+                )
                 scheme = None
             if scheme is not None and (
                 scheme.needs_material or any(not c.verifiable for c in scheme.checks)
@@ -178,6 +188,12 @@ async def grade_submission(
                 # Caught per question rather than around the whole batch because
                 # these run concurrently, and one refused request would otherwise
                 # discard the grades that succeeded beside it.
+                log_event(
+                    "marking_failed",
+                    qid=question.qid,
+                    error=type(exc).__name__,
+                    detail=str(exc),
+                )
                 failures.append(_describe(exc))
                 return _ungraded(
                     question.qid,

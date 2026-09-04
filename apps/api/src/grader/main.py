@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from vedaai_contracts import EXPORTED_MODELS
 from vedaai_contracts.geometry import HGBENCH_SCALE, RENDER_DPI
 
+from .observability import configure as configure_logging
 from .render import MAX_BYTES
 from .routes import router
 from .store import get_store
@@ -239,5 +240,7 @@ async def health(deep: bool = False) -> Health:
         ),
     )
 
+
+configure_logging()
 
 app.include_router(router)
