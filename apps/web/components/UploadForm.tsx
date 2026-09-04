@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { crossFade } from "@/lib/transitions";
+import { usableUploadPlan } from "@/lib/uploads";
 import { TypedPhrase } from "./TypedPhrase";
 import { LoadingStage } from "./LoadingStage";
 import { PIPELINE_PHASES } from "./LoadingPhases";
@@ -248,7 +249,23 @@ async function sendDocuments(paper: File, sheet: File): Promise<FormData> {
       })
     : { mode: "direct" as const };
 
-  if (mode.mode !== "s3" || !mode.slots) {
+  /*
+   * A plan is only usable if every slot carries a destination and a signed
+   * policy. Checked rather than assumed, because the two halves of this exchange
+   * deploy separately: a service that has not yet learned to send `fields` - or
+   * has stopped - produces slots that look present and are not, and the browser
+   * met that as `Object.entries(undefined)` inside the upload. It threw before
+   * issuing a single request, the catch below declined it for not being an
+   * upload failure, and the first screen of the product reported that it could
+   * not reach a service that was answering normally.
+   *
+   * The direct path is a supported environment rather than a degradation, so an
+   * unusable plan should quietly take it. Anything else turns a version skew
+   * into a dead product.
+   */
+  const usable = usableUploadPlan(mode);
+
+  if (!usable || !mode.slots) {
     body.append("question_paper", paper);
     body.append("answer_sheet", sheet);
     return body;
