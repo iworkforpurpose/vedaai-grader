@@ -79,7 +79,17 @@ class TextractEngine:
                 raise EngineUnavailable(
                     "boto3 is not installed; install the 'aws' extra to use Textract"
                 ) from exc
-            self._client = boto3.client("textract", region_name=self.region)
+            from ..clients import TEXTRACT_READ_TIMEOUT, aws_config
+
+            # Adaptive retries are what turn a throttle into a pause rather
+            # than a lost document: every failure here becomes a terminal
+            # `EngineUnavailable`, and that ends the transcription of every
+            # page, including the fifty-seven already paid for.
+            self._client = boto3.client(
+                "textract",
+                region_name=self.region,
+                config=aws_config(TEXTRACT_READ_TIMEOUT),
+            )
         return self._client
 
     def transcribe(self, page: PageInput) -> list[TranscribedLine]:

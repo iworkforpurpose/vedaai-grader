@@ -172,4 +172,8 @@ def _client():
         raise RuntimeError(
             "S3_PAGE_BUCKET is set but boto3 is not installed; install the 'aws' extra"
         ) from exc
-    return boto3.client("s3", region_name=os.getenv("AWS_REGION") or None)
+    from .clients import aws_config
+
+    return boto3.client(
+        "s3", region_name=os.getenv("AWS_REGION") or None, config=aws_config()
+    )

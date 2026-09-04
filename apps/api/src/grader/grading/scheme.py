@@ -365,7 +365,9 @@ async def _ask(
     if client is None:
         from openai import AsyncOpenAI
 
-        owned = client = AsyncOpenAI()
+        from ..clients import openai_kwargs
+
+        owned = client = AsyncOpenAI(**openai_kwargs())
 
     try:
         return await sampling.structured_completion(

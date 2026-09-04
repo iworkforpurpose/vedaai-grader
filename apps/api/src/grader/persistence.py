@@ -151,7 +151,11 @@ class DynamoPersistence:
         if self._s3 is None:
             import boto3
 
-            self._s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION") or None)
+            from .clients import aws_config
+
+            self._s3 = boto3.client(
+                "s3", region_name=os.getenv("AWS_REGION") or None, config=aws_config()
+            )
         return self._s3
 
     # -- submissions -------------------------------------------------------

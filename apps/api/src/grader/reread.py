@@ -238,7 +238,9 @@ async def repair(
             return {}
         from openai import AsyncOpenAI
 
-        client = owned = AsyncOpenAI()
+        from .clients import openai_kwargs
+
+        client = owned = AsyncOpenAI(**openai_kwargs())
     else:
         owned = None
 

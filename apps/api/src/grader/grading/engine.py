@@ -519,7 +519,9 @@ class Claude:
             raise GraderUnavailable(
                 "the anthropic package is not installed; install the 'grading' extra"
             ) from exc
-        self._client = AsyncAnthropic()
+        from ..clients import anthropic_kwargs
+
+        self._client = AsyncAnthropic(**anthropic_kwargs())
 
     async def grade(
         self,
@@ -693,7 +695,9 @@ class OpenAIGrader:
             raise GraderUnavailable(
                 "the openai package is not installed; install the 'grading' extra"
             ) from exc
-        self._client = AsyncOpenAI()
+        from ..clients import openai_kwargs
+
+        self._client = AsyncOpenAI(**openai_kwargs())
 
     async def grade(
         self,
