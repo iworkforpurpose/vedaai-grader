@@ -266,6 +266,40 @@ labelled their elasticity working `Q4` in the margin, the mislabel wins through 
 recognizer, and question 3 gets nothing. Three marks, on the aligner's side of the
 line.
 
+### What the open-weight marker changed, and what it costs
+
+The table above was measured on `gpt-4.1`, which is not what this deployment runs
+any more. It marks on Groq's `openai/gpt-oss-120b`, which costs roughly a
+thirteenth as much per script and has a free tier a pilot fits inside.
+
+Two figures from a full nine-document gate, one sample per question, no rate
+limiting:
+
+| marker | documents in band | direction of the misses |
+| --- | --- | --- |
+| `openai/gpt-oss-120b` | 8 of 9 | - |
+| `openai/gpt-oss-20b` | 4 of 9 | under-marking in all five, no false credit |
+
+The smaller model is not a smaller version of the same result. Under-marking is
+the safer direction, but two of its five misses are answers a student earned
+marks for that scored zero, and a false zero is the worst error this product can
+make. It is therefore where marking goes when the larger model's daily budget is
+spent, and not before. `provenance` names the model that actually answered, so a
+script marked after the switch says so.
+
+**What is not measured.** The 8-of-9 figure for `gpt-oss-120b` comes from a run at
+five samples per question. The deployment ships one sample, and that exact
+combination has one document confirmed in band (`history`, 16 against 15-20) out
+of nine. The gap is not neglect: a single nine-document gate run consumes an
+entire 200,000-token daily budget, so the shipping configuration gets confirmed a
+document at a time as quota allows. Do not quote 8 of 9 as this deployment's
+number.
+
+**Why the budget is per model.** A free tier meters each model separately, so the
+two sizes are two allowances rather than one. That is what makes the fallback
+worth having at all: with the larger model spent, the alternative to a worse
+marker is no marker.
+
 **Marks move between identical runs**, so a single pass cannot tell a fix from
 noise. Each question is marked by a panel of five sampled independently, and
 `--passes 3` takes the median and reports the spread. On `gpt-4.1`, 45 scored
