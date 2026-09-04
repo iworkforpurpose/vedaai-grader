@@ -43,6 +43,16 @@ from vedaai_evals.env import load_repo_env  # noqa: E402
 
 load_repo_env()
 
+# Turn the log on. Everything this harness needs in order to explain a zero —
+# a refused provider, a bank that could not be derived, a panel that shrank — is
+# already emitted as a structured event, and the harness was the one caller that
+# never configured a handler. So three separate gate runs today reported whole
+# documents scoring zero with no way to tell a marking result from a rate limit,
+# and each one had to be re-diagnosed by hand.
+from grader.observability import configure as configure_logging  # noqa: E402
+
+configure_logging()
+
 from grader import grading, pipeline, regions, render, reread  # noqa: E402
 from grader.ocr import PdfTextLayerEngine  # noqa: E402
 from grader.storage import PageStore  # noqa: E402
