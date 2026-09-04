@@ -432,7 +432,10 @@ def _openai_embed(texts: list[str]) -> list[list[float]]:
     """
     from openai import OpenAI
 
-    response = OpenAI().embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    from ..clients import openai_kwargs
+
+    client = OpenAI(**openai_kwargs())
+    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
     return [item.embedding for item in response.data]
 
 
