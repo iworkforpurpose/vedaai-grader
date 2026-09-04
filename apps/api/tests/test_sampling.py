@@ -9,6 +9,7 @@ just changed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -180,3 +181,100 @@ class TestWhatItRefusesToSwallow:
         client = Client(content=json.dumps({"checks": [{"index": 1, "met": True}]}))
 
         assert await _ask(client) == {"checks": [{"index": 1, "met": True}]}
+
+
+class FakeRateLimit(Exception):
+    """Shaped like the provider's, including the wait it names."""
+
+
+FakeRateLimit.__name__ = "RateLimitError"
+
+
+class TestARateLimitIsAWaitNotAFailure:
+    """The failure this prevents cost a whole day of measurement.
+
+    Free and low tiers meter per minute, and this service fans out four questions
+    at a time. Nothing client-side slowed that down, so a nine-document run
+    produced 53 dropped panel samples, every affected question came back "could
+    not be marked automatically", and the documents scored zero — which the gate
+    then reported as a marking result. It was a queueing result.
+    """
+
+    @pytest.mark.asyncio
+    async def test_it_waits_and_retries(self, monkeypatch) -> None:
+        monkeypatch.setattr(sampling.asyncio, "sleep", _record_sleep := _Recorder())
+        attempts = []
+
+        class Limited(Client):
+            async def create(self, **kwargs):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise FakeRateLimit(
+                        "Error code: 429 - Rate limit reached. Please try again in 2.5s"
+                    )
+                return await super().create(**kwargs)
+
+        assert await _ask(Limited()) == {"ok": True}
+        assert len(attempts) == 2
+        assert _record_sleep.waited == [2.5], "the provider's own number, not a guess"
+
+    @pytest.mark.asyncio
+    async def test_it_reads_a_wait_given_in_minutes(self, monkeypatch) -> None:
+        """Groq phrases a daily-budget refusal as "try again in 21m24.336s"."""
+        assert sampling._wait_for(
+            FakeRateLimit("429 - try again in 1m30.0s"), attempt=0
+        ) == pytest.approx(90.0)
+
+    @pytest.mark.asyncio
+    async def test_a_wait_longer_than_the_cap_fails_honestly(self) -> None:
+        """A provider asking for twenty minutes is saying the budget is gone.
+
+        Holding a teacher's browser open until then is worse than telling them.
+        """
+        assert sampling._wait_for(FakeRateLimit("429 - try again in 21m24.3s"), 0) is None
+
+    @pytest.mark.asyncio
+    async def test_it_gives_up_rather_than_retrying_for_ever(self, monkeypatch) -> None:
+        monkeypatch.setattr(sampling.asyncio, "sleep", _Recorder())
+
+        class AlwaysLimited(Client):
+            async def create(self, **kwargs):
+                raise FakeRateLimit("429 - Rate limit reached. Please try again in 0.1s")
+
+        with pytest.raises(FakeRateLimit):
+            await _ask(AlwaysLimited())
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_failure_is_not_treated_as_a_wait(self) -> None:
+        assert sampling._wait_for(ValueError("nope"), attempt=0) is None
+
+    @pytest.mark.asyncio
+    async def test_calls_are_bounded_in_flight(self, monkeypatch) -> None:
+        """Twenty concurrent calls against thirty a minute is how this began."""
+        monkeypatch.setattr(sampling, "MAX_IN_FLIGHT", 2)
+        sampling._in_flight = None
+        live, peak = 0, 0
+
+        class Slow(Client):
+            async def create(self, **kwargs):
+                nonlocal live, peak
+                live += 1
+                peak = max(peak, live)
+                await asyncio.sleep(0)
+                live -= 1
+                return await super().create(**kwargs)
+
+        client = Slow()
+        await asyncio.gather(*(_ask(client) for _ in range(8)))
+
+        assert peak <= 2, f"{peak} calls were in flight at once"
+
+
+class _Recorder:
+    """Stands in for `asyncio.sleep` and remembers what it was asked to wait."""
+
+    def __init__(self) -> None:
+        self.waited: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waited.append(seconds)
