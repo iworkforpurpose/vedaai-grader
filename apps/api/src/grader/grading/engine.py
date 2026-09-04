@@ -1007,7 +1007,24 @@ def select_grader() -> Grader:
         except GraderUnavailable as unavailable:
             reasons.append(str(unavailable))
 
-    raise GraderUnavailable(" ".join(reasons))
+    # One sentence, written for the person reading it.
+    #
+    # Joining the providers' own messages put this on a teacher's screen:
+    #
+    #   "No marking key is set, so answers cannot be marked automatically. Set
+    #   GROQ_API_KEY or OPENAI_API_KEY. The rubric and the located answer are
+    #   still produced. ANTHROPIC_API_KEY is not set, so answers cannot be marked
+    #   automatically. The rubric and the located answer are still produced."
+    #
+    # Two providers, the same fact twice, and two environment variables a teacher
+    # can do nothing about. The per-provider reasons are for whoever deployed
+    # this, so they go to the log, where they can name variables freely and where
+    # somebody is actually looking for them.
+    log_event("no_marker_available", reasons=" | ".join(reasons))
+    raise GraderUnavailable(
+        "Answers were located and the rubric was produced, but no marks were "
+        "proposed: this deployment has no marking model configured."
+    )
 
 
 def _needs_a_person(rubric: Rubric, question: Question, *, graded_by: str) -> QuestionGrade:
