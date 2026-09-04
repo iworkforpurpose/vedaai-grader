@@ -1123,16 +1123,54 @@ class TestProviderSelection:
         monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
         assert isinstance(engine.select_grader(), engine.OpenAIGrader)
 
-    def test_with_no_key_at_all_it_reports_both_reasons(self, monkeypatch) -> None:
-        # The message a teacher sees has to name what to do, and with two
-        # providers there are two things they could do.
+    def test_with_no_key_the_teacher_is_told_once_and_without_variables(
+        self, monkeypatch
+    ) -> None:
+        """Two audiences, two messages, and they had been merged into one.
+
+        Joining every provider's reason put this on a teacher's screen: "No
+        marking key is set, so answers cannot be marked automatically. Set
+        GROQ_API_KEY or OPENAI_API_KEY. The rubric and the located answer are
+        still produced. ANTHROPIC_API_KEY is not set, so answers cannot be marked
+        automatically. The rubric and the located answer are still produced."
+
+        The same fact twice, and two environment variables a teacher cannot act
+        on. The variables matter to whoever deployed the service, so they belong
+        in the log, where somebody is looking for them.
+        """
+        import io
+        import logging
+
+        # Captured off the logger rather than off stdout. `configure` is
+        # idempotent by design, so by the time this test runs another one has
+        # already bound the handler and `capsys` sees nothing — the test passed
+        # alone and failed in the suite.
+        captured = io.StringIO()
+        handler = logging.StreamHandler(captured)
+        logger = logging.getLogger("grader")
+        logger.addHandler(handler)
         monkeypatch.setattr(engine, "GRADER_PROVIDER", "")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
         with pytest.raises(engine.GraderUnavailable) as caught:
             engine.select_grader()
-        assert "ANTHROPIC_API_KEY" in str(caught.value)
-        assert "OPENAI_API_KEY" in str(caught.value)
+
+        shown = str(caught.value)
+        assert "API_KEY" not in shown, "a teacher was shown an environment variable"
+        assert shown.count("no marks were proposed") == 1
+        # Still says the two things that are true and useful: the answers were
+        # found, and the absent marks are a configuration fact rather than a
+        # judgement about the student.
+        assert "located" in shown and "rubric" in shown
+
+        try:
+            logged = captured.getvalue()
+        finally:
+            logger.removeHandler(handler)
+        assert "no_marker_available" in logged
+        assert "API_KEY" in logged, "the operator's detail did not reach the log"
 
 
 class TestMarkingFailuresAreNotFatal:
