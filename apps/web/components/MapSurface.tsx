@@ -193,7 +193,12 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       if (narrow) setTab("questions");
       return;
     }
+    // Switch panes on a miss as well as on a hit. The notice renders in the
+    // questions pane, and on a narrow screen the other pane is `inert` and at
+    // zero opacity — so the answer to "why did nothing happen" was being written
+    // into the half of the screen the teacher could not see.
     setNotice("No answer is mapped to that spot.");
+    if (narrow) setTab("questions");
   }
 
   /*
@@ -450,7 +455,26 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
 
           <RunNotices notices={notices} />
 
-          {notice && <p className="q-hint" style={{ whiteSpace: "normal" }}>{notice}</p>}
+          {/*
+            Every mutation failure lands here — a move that would not save, a 409
+            telling the teacher to reload, a 429 with a wait, "no answer is mapped
+            to that spot". It had no role and no aria-live, so all of it was
+            silent to a screen reader while the pattern existed three components
+            away (`UploadForm` uses role="alert", `UnlockForm` uses role="status").
+
+            `assertive`, because every one of these is a response to something the
+            teacher just did and the next thing they do depends on it.
+          */}
+          {notice && (
+            <p
+              className="q-hint"
+              role="alert"
+              aria-live="assertive"
+              style={{ whiteSpace: "normal" }}
+            >
+              {notice}
+            </p>
+          )}
 
           <div className="q-list">
             {rows.map((row, index) => (

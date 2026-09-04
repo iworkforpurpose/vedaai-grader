@@ -82,12 +82,47 @@ export function QuestionCard({
       onClick={placingActive && !row.question.is_stem ? onPlaceHere : onSelect}
     >
       <div className="q-row">
-        <span className="q-num">{badge}</span>
-        {sub && <span className="q-sub">{sub}</span>}
-
-        <span className="q-text">
-          {row.question.is_stem ? <strong>{row.question.text}</strong> : row.question.text}
+        <span className="q-num" aria-hidden="true">
+          {badge}
         </span>
+        {sub && (
+          <span className="q-sub" aria-hidden="true">
+            {sub}
+          </span>
+        )}
+
+        {/*
+         * The tab stop, and the thing a screen reader announces.
+         *
+         * The card itself carried the only click handler and was a plain `div`
+         * with no role, no tabIndex and no key handler — so the product's primary
+         * interaction could not be performed without a mouse. The CSS still holds
+         * the reset a button needs (`width: 100%`, `font: inherit`,
+         * `text-align: left`) and `.q-list` reserves room for a focus ring, so
+         * this was a `<button>` once and regressed.
+         *
+         * It cannot go back to being one: the card now contains the score pill,
+         * the chevron and the move controls, and a button inside a button is
+         * invalid and unreachable. So the control is the question text, which is
+         * what a person would point at anyway.
+         *
+         * The badge and sub-label are `aria-hidden` and folded into the label
+         * here instead, so the announcement is one sentence rather than three
+         * fragments read in layout order.
+         */}
+        <button
+          type="button"
+          className="q-open"
+          aria-pressed={selected}
+          aria-label={`Question ${badge}${sub ? ` ${sub}` : ""}: ${row.question.text}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (placingActive && !row.question.is_stem) onPlaceHere();
+            else onSelect();
+          }}
+        >
+          {row.question.is_stem ? <strong>{row.question.text}</strong> : row.question.text}
+        </button>
 
         <span className="q-right">
           {/* Whose decision this was. A teacher returning to a script should not have

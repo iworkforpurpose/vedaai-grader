@@ -1943,12 +1943,49 @@ body::before {
   color: var(--ink);
 }
 
-.q-text {
+/*
+ * The question text, which is also the card's keyboard target.
+ *
+ * A real `<button>` because the card is not one and cannot be: it holds the
+ * score pill, the chevron and the move controls, and a button inside a button is
+ * invalid and unreachable. The card kept its click handler for the mouse; this is
+ * how the same interaction is reached from a keyboard.
+ *
+ * The reset is the point of the rule. Left unstyled a button brings its own font,
+ * its own centred text and a border, and the card would visibly change shape for
+ * a change that is supposed to be invisible to anyone using a mouse.
+ */
+.q-text,
+.q-open {
   flex: 1;
   min-width: 0;
   font-size: var(--fs-base);
   line-height: var(--lh-snug);
   color: var(--ink);
+}
+
+.q-open {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/*
+ * A focus ring that is visible against the card.
+ *
+ * `:focus-visible`, so a mouse click does not leave a ring behind it — the
+ * pointer already showed where the click went, and a persistent ring after a
+ * click reads as something being stuck.
+ */
+.q-open:focus-visible {
+  outline: 2px solid #ff8d36;
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
 }
 
 .q-right {
@@ -2692,7 +2729,8 @@ button.score:hover {
     align-items: center;
   }
 
-  .q-text {
+  .q-text,
+  .q-open {
     order: 3;
     flex-basis: 100%;
   }
@@ -3393,6 +3431,7 @@ button {
 
 /* Selection stays where the words are the point. */
 .q-text,
+.q-open,
 .q-sub,
 .q-hint,
 .feedback,
