@@ -281,9 +281,17 @@ def report(
     # way the service does.
     from grader.answers.similarity import default_similarity
 
+    # Which measure, and where it runs. Both matter and they are different
+    # questions: `SemanticSimilarity` backed by a local model and the same class
+    # backed by a hosted one are the same code and a different product, and the
+    # scales they work on are not comparable — which is the bug that took
+    # placement from 24 answers to 17 across five papers.
+    embedder = type(getattr(default_similarity, "_embed", None)).__name__
+    where = "local" if embedder == "LocalEmbedder" else "hosted"
     scorer = type(default_similarity).__name__
     matches_production = scorer == "SemanticSimilarity"
-    out(f"  answer scorer            {scorer}")
+    out(f"  answer scorer            {scorer} ({where})" if matches_production
+        else f"  answer scorer            {scorer}")
     out("" if matches_production else "   <- NOT what the service uses")
     out("\n")
 
@@ -298,13 +306,17 @@ def report(
     # checking a geometry change should not be stopped by an absent secret. They
     # get the banner instead.
     if not matches_production:
-        if os.getenv("OPENAI_API_KEY", "").strip():
+        # A key OR a local model. Either is a configuration in which the surface
+        # scorer is a misconfiguration rather than a fact about the machine.
+        from grader.answers import similarity as similarity_module
+
+        if os.getenv("OPENAI_API_KEY", "").strip() or similarity_module.local_available():
             problems.append(
                 (
                     "harness",
-                    f"scored with {scorer} while a key is present — the service uses "
-                    "SemanticSimilarity, so these mapping figures are not its "
-                    "figures. Install the 'semantic' extra.",
+                    f"scored with {scorer} while a semantic scorer was available — "
+                    "the service uses SemanticSimilarity, so these mapping figures "
+                    "are not its figures. Install the 'nli' or 'semantic' extra.",
                 )
             )
         else:

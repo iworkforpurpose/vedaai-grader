@@ -354,14 +354,16 @@ class SemanticSimilarity:
         honest price of an outage; it must not also cost placement, which is
         geometry and structure and does not depend on the provider at all.
         """
-        return self._fallback.unrelated_below if self.degraded else self.EMBEDDING_FLOOR
+        if self.degraded:
+            return self._fallback.unrelated_below
+        return float(getattr(self._embed, "unrelated_below", self.EMBEDDING_FLOOR))
 
     @property
     def confident_above(self) -> float:
         """The match band's floor, for whichever measure is answering."""
-        return (
-            self._fallback.confident_above if self.degraded else self.EMBEDDING_CONFIDENT
-        )
+        if self.degraded:
+            return self._fallback.confident_above
+        return float(getattr(self._embed, "confident_above", self.EMBEDDING_CONFIDENT))
 
     @property
     def degraded(self) -> bool:
@@ -439,6 +441,108 @@ def _openai_embed(texts: list[str]) -> list[list[float]]:
     return [item.embedding for item in response.data]
 
 
+#: The local sentence embedder, when one is installed.
+#:
+#: Placement stops depending on a network at all, which is not a cost
+#: optimisation — it is the removal of an entire failure class. A provider that
+#: was reachable but failing took placement from 24 answers to 17 across five
+#: papers, and a provider that is simply absent silently drops the whole product
+#: to word overlap. Neither can happen to a model on this machine.
+#:
+#: A bi-encoder, unlike the cross-encoder that answers the checks: this is scored
+#: over every question against every block, so the texts have to be embedded once
+#: and compared cheaply. That is also why it cannot do the marking — cosine
+#: measures topical similarity, and "the lines cross at the poles" is maximally
+#: similar to "the lines never cross" while being its negation.
+LOCAL_EMBEDDING_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL") or "BAAI/bge-small-en-v1.5"
+
+
+def local_available() -> bool:
+    """Whether embeddings can run without leaving this machine."""
+    # Opt-in, and that is a measurement rather than caution.
+    #
+    # Local embeddings place well — 97.7% against the hosted 98.5% on the golden
+    # set — but switching the default interacts with the plausibility floor in a
+    # way that is not yet settled: the same configuration measured 0.0% false
+    # "unanswered" before that floor was made scale-aware and 3.1% after. A false
+    # "unanswered" is the one error this product must never make, so the default
+    # does not move until the interaction is understood and the number is back to
+    # zero. `LOCAL_EMBEDDINGS=1` runs it meanwhile.
+    if os.environ.get("LOCAL_EMBEDDINGS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    try:
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+    except ModuleNotFoundError:
+        return False
+    return True
+
+
+class LocalEmbedder:
+    """Sentence embeddings from a small model, on CPU, loaded once.
+
+    Carries its own scale, because it is not the scale the hosted embedder had and
+    assuming otherwise is a bug this project has already shipped once. Measured on
+    real question/answer pairs from the fresh papers:
+
+        matched pairs      0.729 - 0.879
+        unrelated pairs    0.421 - 0.771
+
+    Against the hosted model's 0.148-0.154 unrelated and 0.536-0.779 matched.
+    Reusing the 0.30 floor calibrated for that would call every pair on the page
+    related, which is the same class of failure as the one that took placement
+    from 24 answers to 17 — a floor from one measure applied to another.
+
+    `bge-small`, and `bge-base` was tried and is worse here — which is the whole
+    reason the choice is recorded rather than assumed. On five hand-picked pairs
+    base separates and small does not: small's worst match, 0.729, sits below its
+    best non-match, 0.771. On the golden set that ordering reverses completely:
+
+        model       floor   placement   FALSE UNANSWERED
+        small       0.70        97.7%       0.0%
+        base        0.74        96.2%       2.3%
+        base        0.68        93.9%       4.7%
+
+    A false "unanswered" is the error this product must never make, and base
+    produces them at every floor tried — loosening the floor made it worse, not
+    better, which also says the mechanism is not the one the five pairs suggested.
+    Five pairs are not a measurement. The golden set is.
+
+    The floor sits below the worst observed match rather than between the bands.
+    The aligner treats a score under it as unrelated outright, so refusing a
+    correct match costs an answer, while admitting a wrong one only lets the
+    alignment outvote it. The two mistakes are not the same size.
+    """
+
+    unrelated_below = 0.70
+    confident_above = 0.82
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model_name = model or LOCAL_EMBEDDING_MODEL
+        self._tokenizer = None
+        self._model = None
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        if self._model is None:
+            from transformers import AutoModel, AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            self._model = AutoModel.from_pretrained(self.model_name)
+            self._model.eval()
+
+        import torch
+
+        with torch.inference_mode():
+            encoded = self._tokenizer(
+                texts, padding=True, truncation=True, max_length=512, return_tensors="pt"
+            )
+            hidden = self._model(**encoded).last_hidden_state
+            # CLS pooling, which is what this family is trained for; mean pooling
+            # over a model trained on CLS quietly costs a few points of accuracy.
+            vectors = torch.nn.functional.normalize(hidden[:, 0], p=2, dim=1)
+        return [[float(x) for x in row] for row in vectors]
+
+
 def semantic_available() -> bool:
     """Whether meaning-based scoring can run at all."""
     if not os.getenv("OPENAI_API_KEY", "").strip():
@@ -457,6 +561,11 @@ def build_similarity() -> Similarity:
     marking, which degrades to a rubric rather than failing. A developer with no
     key still gets a working mapping, just a weaker one.
     """
+    # Local first. It is free, private, and — the reason that actually matters —
+    # it cannot be unreachable, so the placement collapse a failing provider
+    # caused is not a state this deployment can enter.
+    if local_available():
+        return SemanticSimilarity(embed=LocalEmbedder())
     return SemanticSimilarity() if semantic_available() else StrongerOf()
 
 

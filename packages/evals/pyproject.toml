@@ -27,6 +27,11 @@ semantic = ["openai>=1.50"]
 # a marking catastrophe rather than as a missing dependency. Four of its nine
 # documents are scans, and all four read as total failures until this was added.
 aws = ["boto3>=1.35"]
+# Local entailment and embeddings, so the harness runs what the service runs.
+# Without it the scorer silently drops to word overlap and the marker cannot be
+# measured at all — the same class of gap as the missing `.env` and the missing
+# recognizer, found the same way.
+nli = ["torch>=2.4", "transformers>=4.44", "sentencepiece>=0.2"]
 
 [tool.uv.sources]
 vedaai-contracts = { path = "../contracts", editable = true }

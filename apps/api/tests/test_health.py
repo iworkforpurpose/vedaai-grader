@@ -167,12 +167,23 @@ class TestHealthSaysWhetherMarkingWillRun:
     def test_it_reports_which_scorer_will_place_answers(self, client, monkeypatch) -> None:
         """The other half of the same question.
 
-        Placement degrades to word overlap without a key, which is a materially
+        Placement degrades to word overlap when neither a hosted key nor a local
+        model is available, which is a materially
         different product, and until now nothing outside a finished submission
         said which one was running.
         """
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        assert client.get("/health").json()["similarity"] == "lexical"
+        monkeypatch.setenv("LOCAL_EMBEDDINGS", "0")
+        import importlib
+
+        from grader.answers import similarity as similarity_module
+
+        importlib.reload(similarity_module)
+        try:
+            assert client.get("/health").json()["similarity"] == "lexical"
+        finally:
+            monkeypatch.delenv("LOCAL_EMBEDDINGS", raising=False)
+            importlib.reload(similarity_module)
 
     def test_asking_does_not_cost_a_request_to_the_provider(self, client) -> None:
         """A health check runs every thirty seconds against a paid API."""

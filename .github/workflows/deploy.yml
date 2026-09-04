@@ -111,6 +111,7 @@ jobs:
       - name: Build, push and roll out
         env:
           IMAGE_TAG: ${{ github.sha }}
+          GROQ_SECRET_ARN: ${{ vars.GROQ_SECRET_ARN }}
           OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
           # The passcode in front of the origin. A secret rather than a var
           # because vars are readable by anyone with access to the repository's
@@ -224,7 +225,7 @@ jobs:
           if [ "${marking}" != "yes" ]; then
             echo "::error::the deployed service cannot mark (grading: ${marker})."
             echo "::error::the provider was asked and did not answer: ${why}"
-            echo "::error::check OPENAI_SECRET_ARN, the secret's value, and the account balance."
+            echo "::error::check GROQ_SECRET_ARN, the secret's value, and the account balance."
             exit 1
           fi
 

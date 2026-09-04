@@ -99,6 +99,18 @@ from .rubric import Rubric
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
     "openai": "gpt-4.1",
+    # An open-weight model, and the reason it is here is arithmetic. Marking a
+    # class of forty on `gpt-4.1` costs about $27; the same class on this costs
+    # about $2, and a full nine-document gate run costs six cents rather than
+    # seventy-eight. A product that marks a whole class at a time cannot be
+    # priced like one that answers a single question.
+    #
+    # `gpt-oss-120b` specifically because it is the one open-weight model
+    # confirmed to support `response_format: json_schema` with `strict: true`.
+    # That is not a preference: every marking call in this service asks for a
+    # schema rather than prose, and a provider that can only offer best-effort
+    # JSON removes the guarantee that makes a weak model safe here.
+    "groq": "openai/gpt-oss-120b",
 }
 
 #: Explicit provider choice. With nothing set, whichever key is present is used —
@@ -679,15 +691,28 @@ class OpenAIGrader:
     name = "openai"
 
     def __init__(self, *, model: str | None = None, client=None) -> None:
-        self.model = model or os.getenv("GRADER_MODEL") or DEFAULT_MODELS["openai"]
+        from ..clients import openai_provider
+
+        # The default follows the provider. A Groq key with no `GRADER_MODEL`
+        # should mark on a model Groq actually serves, rather than asking it for
+        # `gpt-4.1` and failing with a model-not-found nobody expected.
+        self.model = (
+            model
+            or os.getenv("GRADER_MODEL")
+            or DEFAULT_MODELS[openai_provider()[0]]
+        )
         if client is not None:
             self._client = client
             return
 
-        if not os.getenv("OPENAI_API_KEY"):
+        from ..clients import openai_provider
+
+        provider, key, _base = openai_provider()
+        if not key:
             raise GraderUnavailable(
-                "OPENAI_API_KEY is not set, so answers cannot be marked automatically. "
-                "The rubric and the located answer are still produced."
+                "No marking key is set, so answers cannot be marked automatically. "
+                "Set GROQ_API_KEY or OPENAI_API_KEY. The rubric and the located "
+                "answer are still produced."
             )
         try:
             from openai import AsyncOpenAI
@@ -770,7 +795,17 @@ class OpenAIGrader:
 
     @property
     def provenance(self) -> str:
-        return f"openai:{self.model}"
+        """Which host and model judged this, recorded on every grade.
+
+        The provider, not the SDK. Groq speaks the OpenAI API, so without this a
+        grade marked by `gpt-oss-120b` on Groq and one marked by `gpt-4.1` on
+        OpenAI would both read `openai:...` — and "a mark is only checkable if
+        you know what made it" stops being true the moment two hosts are
+        configurable.
+        """
+        from ..clients import openai_provider
+
+        return f"{openai_provider()[0]}:{self.model}"
 
     async def aclose(self) -> None:
         """Release the HTTP client.
@@ -790,6 +825,102 @@ class OpenAIGrader:
             await result
 
 
+class LocalChecks:
+    """Answers a bank of binary checks with a local cross-encoder.
+
+    The cheap half of the design, and the one that carries almost all the volume.
+    Deriving the checks is generative, needs subject knowledge, and happens once
+    per question for a whole class. *Answering* them is entailment — does this
+    text assert this claim — and it happens roughly ninety times per script.
+
+    Everything after the judgement is the generative path's code, unchanged:
+    ``assemble_checks`` turns the same dict into the same grade, so the marks, the
+    deferral handling, the unverifiable credit and the citation validation cannot
+    drift between the two markers.
+
+    Without a bank there is nothing to verify. That is not a failure — it is the
+    scalar rubric path, and the caller falls back to it exactly as it did before
+    this class existed.
+    """
+
+    name = "local_checks"
+
+    def __init__(self, *, entailment=None) -> None:
+        if entailment is not None:
+            self._entailment = entailment
+            return
+        from . import nli
+
+        if not nli.available():
+            raise GraderUnavailable(
+                "local entailment is not installed, so checks cannot be answered "
+                "on this machine; install the 'nli' extra"
+            )
+        self._entailment = nli.shared()
+
+    @property
+    def model(self) -> str:
+        return getattr(self._entailment, "name", "nli")
+
+    @property
+    def provenance(self) -> str:
+        return f"local:{self.model}"
+
+    async def grade(
+        self,
+        *,
+        question: Question,
+        rubric: Rubric,
+        index: LineIndex,
+        line_ids: list[str],
+        scheme=None,
+    ) -> QuestionGrade:
+        if not rubric.gradable_from_text:
+            return _needs_a_person(rubric, question, graded_by=self.provenance)
+        if scheme is None or not scheme.usable:
+            raise GraderUnavailable(
+                "no check bank for this question, so there is nothing to verify"
+            )
+
+        from . import verifier
+
+        by_id = index.by_id()
+        lines = [by_id[i] for i in line_ids if i in by_id]
+
+        # Synchronous and CPU-bound, so it goes to a thread rather than blocking
+        # the loop the way `reread` did. One question is a few hundred pairs and
+        # a fraction of a second, but four run at once and the SSE stream is on
+        # this loop.
+        verdicts = await asyncio.to_thread(
+            verifier.verify, scheme.checks, lines, self._entailment, question.text
+        )
+
+        return assemble_checks(
+            question=question,
+            rubric=rubric,
+            bank=scheme,
+            index=index,
+            line_ids=line_ids,
+            judgement=verifier.as_judgement(verdicts),
+            graded_by=self.provenance,
+        )
+
+    async def aclose(self) -> None:
+        """Nothing to release. The model is shared and outlives one submission."""
+        return None
+
+
+def _local_checks_preferred() -> bool:
+    """Whether to answer checks locally when nothing has been asked for.
+
+    Opt-in for now. The claim that entailment on a supplied hypothesis survives
+    the cross-domain regime — where generic short-answer grading with small models
+    does not — is exactly the kind that has to be measured before it is defaulted
+    to, and `score_scientsbank.py` is the measurement.
+    """
+    return os.getenv("LOCAL_CHECKS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def select_grader() -> Grader:
     """The grader this deployment should use.
 
@@ -797,11 +928,37 @@ def select_grader() -> Grader:
     used, and if neither is, the rubric-only grader — which is a working product,
     not an error path: it structures the marking without inventing a score.
     """
-    providers: list[tuple[str, type]] = [("anthropic", Claude), ("openai", OpenAIGrader)]
-    if GRADER_PROVIDER == "openai":
-        providers.reverse()
-    elif GRADER_PROVIDER == "none":
+    # Local entailment first where it is installed, because it is the right shape
+    # for the job and not merely the cheap one: a cross-encoder is deterministic,
+    # so the mark stops moving between runs, and its citation is the line that
+    # entailed the check rather than a line id a model was asked to produce and
+    # could invent. It still needs a provider to *derive* the checks; what it
+    # removes is the five generative calls per question that answer them.
+    if GRADER_PROVIDER == "none":
         return RubricOnly()
+
+    # `LOCAL_CHECKS` and `GRADER_PROVIDER` are not the same switch, and treating
+    # them as one meant a run asking for local marking silently got the generative
+    # marker instead — which then spent 175 provider calls being rate-limited, and
+    # the resulting gate looked like a verdict on entailment when it was a verdict
+    # on nothing at all.
+    #
+    # They name different roles. `GRADER_PROVIDER` is the host that *derives* the
+    # check bank, which is generative and needs subject knowledge. `LOCAL_CHECKS`
+    # decides who *answers* those checks, which is entailment. Deriving on Groq and
+    # answering on this machine is the intended configuration, not a contradiction.
+    if _local_checks_preferred():
+        try:
+            return LocalChecks()
+        except GraderUnavailable:
+            if os.getenv("LOCAL_CHECKS", "").strip().lower() in {"1", "true", "yes", "on"}:
+                raise
+
+    # `OpenAIGrader` covers every OpenAI-shaped host, Groq included; which one it
+    # reaches is decided by `clients.openai_provider` from the keys present.
+    providers: list[tuple[str, type]] = [("anthropic", Claude), ("openai", OpenAIGrader)]
+    if GRADER_PROVIDER in {"openai", "groq"}:
+        providers.reverse()
 
     reasons: list[str] = []
     for _name, engine in providers:

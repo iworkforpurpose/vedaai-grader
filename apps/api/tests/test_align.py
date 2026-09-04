@@ -26,6 +26,27 @@ from vedaai_contracts import (
 )
 
 from grader.align import resolve
+from grader.answers.similarity import StrongerOf
+
+
+@pytest.fixture(autouse=True)
+def _pin_the_scorer(monkeypatch):
+    """These tests are about the aligner, not about whichever model is installed.
+
+    Most of them build fabricated question and block text and rely on the
+    module-level `default_similarity`, so the scorer they actually exercised was
+    "whatever the environment had" — `StrongerOf` in CI, where no key is set, and
+    something else on a laptop. Installing a local embedder changed five of them
+    at once, in both directions: a tighter floor stopped a plausible answer being
+    recognised, a looser one reported a legitimately-skipped question as
+    uncertain.
+
+    Neither outcome was a fact about the aligner. Pinning the surface scorer makes
+    these tests measure the thing they are named for; the scorers themselves are
+    tested in `test_answers.py`, and the aligner's behaviour against a real
+    embedder is measured by the golden set.
+    """
+    monkeypatch.setattr("grader.align.default_similarity", StrongerOf())
 
 
 def q(qid: str, label: str, text: str, order: int, path: list[str], *, marks: int | None = 2,
