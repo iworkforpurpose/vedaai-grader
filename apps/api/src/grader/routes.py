@@ -107,7 +107,7 @@ def start_upload(
     `/submissions` itself. Two paths, one per environment that exists.
     """
     # Throttled on the same allowance as ingest, and for a stronger reason than
-    # ingest has. Every call here mints two presigned PUT URLs against the
+    # ingest has. Every call here mints two signed upload forms against the
     # operator's bucket; unthrottled, this was an unauthenticated write primitive
     # that could be issued in a loop. Counted against the same budget because two
     # URLs are one intent to upload, and a caller who exhausts it has not been
@@ -125,7 +125,15 @@ def start_upload(
         "mode": "s3",
         "expires_in": uploads.URL_TTL_SECONDS,
         "slots": {
-            kind: {"key": slot.key, "url": slot.url} for kind, slot in slots.items()
+            # `fields` is not optional. A POST policy is the signature, the
+            # conditions and the key, all carried as form fields, and a browser
+            # that posts without them is posting to a bucket that will refuse it.
+            # Omitting it here made the client throw on `Object.entries(undefined)`
+            # before it sent anything, which its own fallback then declined to
+            # catch - so the first screen of the product reported "cannot reach
+            # the grader service" while the service was answering fine.
+            kind: {"key": slot.key, "url": slot.url, "fields": slot.fields}
+            for kind, slot in slots.items()
         },
     }
 

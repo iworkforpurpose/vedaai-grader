@@ -488,7 +488,18 @@ class TestUploadRouting:
             uploads,
             "presign",
             lambda kind, name, **_: uploads.UploadSlot(
-                key=f"{'0' * 32}/{kind}.pdf", url=f"https://example.test/{kind}", fields={}
+                key=f"{'0' * 32}/{kind}.pdf",
+                url=f"https://example.test/{kind}",
+                # A realistic policy rather than an empty dict. The empty one is
+                # what let this endpoint drop `fields` entirely without a test
+                # noticing: nothing downstream could tell "no fields" from "the
+                # key was never carried", and the browser was left posting an
+                # unsigned form the bucket refuses.
+                fields={
+                    "key": f"{'0' * 32}/{kind}.pdf",
+                    "policy": "eyJleHBpcmF0aW9uIjoi",
+                    "x-amz-signature": "deadbeef",
+                },
             ),
         )
         body = client.post(
@@ -498,6 +509,39 @@ class TestUploadRouting:
         assert body["mode"] == "s3"
         assert set(body["slots"]) == {"question_paper", "answer_sheet"}
         assert body["slots"]["answer_sheet"]["url"] == "https://example.test/answer_sheet"
+
+    def test_the_signed_form_fields_reach_the_caller(
+        self, client: TestClient, monkeypatch
+    ) -> None:
+        """A POST policy without its fields is not a signed upload.
+
+        The signature, the conditions and the key all travel as form fields, so a
+        slot carrying only a URL is one the bucket will refuse. This endpoint built
+        its response field by field and omitted them, which the browser met as
+        `Object.entries(undefined)` - it threw before sending anything, and the
+        first screen of the product reported that it could not reach a service
+        that was in fact answering normally.
+        """
+        from grader import uploads
+
+        monkeypatch.setenv("S3_PAGE_BUCKET", "a-bucket")
+        signed = {"key": "k", "policy": "p", "x-amz-signature": "s"}
+        monkeypatch.setattr(
+            uploads,
+            "presign",
+            lambda kind, name, **_: uploads.UploadSlot(
+                key="k", url="https://example.test/bucket", fields=dict(signed)
+            ),
+        )
+        body = client.post(
+            "/uploads",
+            json={"question_paper_name": "p.pdf", "answer_sheet_name": "s.pdf"},
+        ).json()
+
+        for kind in ("question_paper", "answer_sheet"):
+            assert body["slots"][kind]["fields"] == signed, (
+                f"{kind} lost the signed policy on the way out of the endpoint"
+            )
 
     def test_refuses_a_mix_of_files_and_keys(self, client: TestClient) -> None:
         """Ambiguity is refused rather than resolved by precedence.
