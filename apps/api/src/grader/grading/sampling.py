@@ -39,6 +39,8 @@ import random
 import re
 from typing import Any
 
+from ..observability import log_event
+
 #: How many model calls this process will have in flight at once.
 #:
 #: Not a performance knob. Free and low tier quotas are per minute, and this
@@ -81,6 +83,96 @@ def _gate() -> asyncio.Semaphore:
 
 #: "Please try again in 21m24.336s" / "try again in 6.2s".
 _RETRY_AFTER = re.compile(r"try again in\s+(?:(\d+)m)?([\d.]+)s", re.IGNORECASE)
+
+
+#: A schema-validation 400 names the property the model dropped. Matched on the
+#: provider's stable wording rather than on the status code alone, because a 400
+#: is also what a genuinely malformed request returns — a bad model name, an
+#: unsupported parameter — and retrying one of those is a loop.
+_DECODE_SLIP = re.compile(
+    r"does not (validate|match)|missing propert|failed_generation", re.IGNORECASE
+)
+
+#: How many times a dropped field is re-rolled. Two: a third attempt on a model
+#: that cannot hold the schema is a slower failure, not a different one.
+DECODE_RETRIES = int(os.getenv("MODEL_DECODE_RETRIES") or 2)
+
+
+#: A daily exhaustion, as opposed to a per-minute burst.
+#:
+#: The two arrive as the same 429 and need opposite handling. A per-minute limit
+#: clears in seconds and waiting is correct. A daily limit clears in hours: the
+#: provider says "try again in 8m47s" only because that is when the rolling
+#: window next admits one request, and waiting it out means a teacher's browser
+#: holds open for a submission that will be rate limited again on the next
+#: question. There is nothing to wait for.
+_DAILY_LIMIT = re.compile(r"per day|\bTPD\b|\bRPD\b", re.IGNORECASE)
+
+#: Where to go when the preferred model's day is spent.
+#:
+#: A free tier budgets per model, not per account, so the second model is a
+#: second allowance rather than a second charge. That makes the honest degradation
+#: obvious: mark with the better model while its day lasts, then drop to the
+#: smaller one, rather than refusing to mark at all with an untouched allowance
+#: sitting there.
+#:
+#: It is a degradation and it is recorded as one. `provenance` names the model on
+#: every grade, so a script marked after the switch says so, and a teacher
+#: comparing two scripts can see that they were not marked by the same thing.
+#: Silently substituting a different marker would make the marks incomparable
+#: without saying so, which is worse than either model alone.
+FALLBACK_MODELS: dict[str, str] = {
+    "openai/gpt-oss-120b": "openai/gpt-oss-20b",
+}
+
+
+#: Models whose daily budget this process has seen refused.
+#:
+#: Module level and sticky, because a spent day does not come back inside one
+#: process's lifetime, and because `provenance` has to be able to answer "what
+#: actually marked this" without threading a return value through every layer
+#: between the HTTP call and the grade.
+_spent: set[str] = set()
+
+
+def effective_model(model: str) -> str:
+    """The model that will actually answer, after any budget already spent.
+
+    A grade records what marked it, and after a fallback the configured model is
+    no longer that. Reporting the configured one would make two scripts marked by
+    two different models claim the same provenance, which is precisely the
+    comparison a teacher would make and precisely the one that would be wrong.
+    """
+    seen = model
+    while seen in _spent:
+        spare = fallback_for(seen)
+        if spare is None or spare == seen:
+            break
+        seen = spare
+    return seen
+
+
+def forget_spent_budgets() -> None:
+    """For tests, and for a process that outlives a quota window."""
+    _spent.clear()
+
+
+def _is_a_daily_limit(error: Exception) -> bool:
+    """Whether this 429 is the day's budget rather than this minute's burst."""
+    return bool(_DAILY_LIMIT.search(str(error)))
+
+
+def fallback_for(model: str) -> str | None:
+    """The model to drop to when ``model`` has spent its day, if there is one."""
+    override = os.getenv("GRADER_FALLBACK_MODEL", "").strip()
+    if override:
+        return override if override != model else None
+    return FALLBACK_MODELS.get(model)
+
+
+def _is_a_decode_slip(error: Exception) -> bool:
+    """Whether the provider rejected the model's output rather than our request."""
+    return bool(_DECODE_SLIP.search(str(error)))
 
 
 def _wait_for(error: Exception, attempt: int) -> float | None:
@@ -159,6 +251,7 @@ async def _create(
         optional["seed"] = seed
 
     attempt = 0
+    exhausted: set[str] = set()
     while True:
         sending = {k: v for k, v in optional.items() if k not in refused_by(model)}
         try:
@@ -182,6 +275,48 @@ async def _create(
             if refused is not None and refused in sending:
                 _REFUSED.setdefault(model, set()).add(refused)
                 continue
+
+            # A decode slip is a re-roll, not a failure. The provider validates
+            # the model's output against our schema and returns 400 when it does
+            # not fit — "missing properties: 'cited_line_ids'". That is the
+            # model dropping a field on one sample, not a request this service
+            # got wrong, and the fix for a bad sample is another sample.
+            #
+            # It mattered because the panel used to absorb this and no longer
+            # does. At five samples a dropped field cost one vote; at one it
+            # costs the question, which comes back "never judged" and reads to a
+            # teacher as an answer nobody looked at. A false absence is the worst
+            # error this product makes, and losing a question to a JSON field is
+            # the cheapest possible way to cause one.
+            #
+            # Retried at a raised temperature, because a re-roll at the same
+            # settings on a near-deterministic decode reproduces the same slip.
+            if _is_a_decode_slip(exc) and attempt < DECODE_RETRIES:
+                attempt += 1
+                optional["temperature"] = min(
+                    1.0, (optional.get("temperature") or 0.0) + 0.3
+                )
+                continue
+
+            # A spent day is a different model, not a longer wait. Waiting out a
+            # daily limit means holding a teacher's browser open for a
+            # submission that will be refused again on the very next question,
+            # while a second allowance sits unused on the smaller model.
+            if _is_a_daily_limit(exc):
+                spare = fallback_for(model)
+                if spare is not None and spare not in exhausted:
+                    exhausted.add(model)
+                    _spent.add(model)
+                    log_event(
+                        "model_budget_spent",
+                        model=model,
+                        falling_back_to=spare,
+                        detail=str(exc),
+                    )
+                    model = spare
+                    attempt = 0
+                    continue
+                raise
 
             # A rate limit is a wait, not a failure. Left unhandled it became one:
             # the question came back "could not be marked automatically", the
