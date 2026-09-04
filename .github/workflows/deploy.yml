@@ -175,10 +175,18 @@ jobs:
           # credit passed it while every submission came back zeros. One request,
           # once per release, cached behind the endpoint.
           health="$(curl -s -m 40 "${stable}/api/health?deep=1" || echo '{}')"
-          marking="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print("yes" if g.get("reachable") else "no")' 2>/dev/null || echo unknown)"
-          why="$(printf '%s' "$health" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("grading",{}).get("detail") or "")' 2>/dev/null || echo "")"
-          marker="$(printf '%s' "$health" | python3 -c 'import json,sys;d=json.load(sys.stdin);g=d.get("grading",{});print(f"{g.get(\"engine\",\"?\")}:{g.get(\"model\") or \"-\"}")' 2>/dev/null || echo unknown)"
-          placing="$(printf '%s' "$health" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("similarity","unknown"))' 2>/dev/null || echo unknown)"
+          # One parse, four values, in a file that can be tested.
+          #
+          # This was four `python3 -c` calls with escaped quotes inside a YAML
+          # string inside a shell substitution, and the one needing an f-string did
+          # not survive the trip: it failed silently and the summary said
+          # `grading: unknown` while the payload plainly said `openai:gpt-4.1`.
+          {
+            read -r marking
+            read -r marker
+            read -r placing
+            read -r why
+          } < <(printf '%s' "$health" | python3 deploy/health_summary.py)
           # Checked separately, because "the gate is on" is its own claim and the
           # cost of it being quietly off is every stored script.
           gate="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
