@@ -72,3 +72,6 @@ data/corpus/
 # treehouse worktree pool
 .treehouse/
 treehouse.toml
+
+# Derived check banks. A cache keyed by question text, rebuilt on demand.
+.banks/
