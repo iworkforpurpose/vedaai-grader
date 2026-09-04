@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -278,3 +279,285 @@ class _Recorder:
 
     async def __call__(self, seconds: float) -> None:
         self.waited.append(seconds)
+
+
+class TestADroppedFieldIsARerollNotALostQuestion:
+    """The provider validates the model's output and 400s when a field is missing.
+
+    At five samples that cost one vote and the panel absorbed it. At one sample it
+    costs the whole question, which surfaces as "never judged" — an answer the
+    teacher wrote that nobody marked. That is a false absence, which is the worst
+    error this product can make, arrived at through a missing JSON key.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_schema_validation_400_is_retried(self):
+        from grader.grading import sampling
+
+        calls: list[dict] = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        calls.append(kwargs)
+                        if len(calls) == 1:
+                            raise RuntimeError(
+                                "Error code: 400 - Generated JSON does not match the "
+                                "expected schema. Error: jsonschema: '/checks/0' does "
+                                "not validate with /properties/checks/items/required: "
+                                "missing properties: 'cited_line_ids'"
+                            )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(
+                                    message=SimpleNamespace(content='{"ok": true}')
+                                )
+                            ]
+                        )
+
+        out = await sampling._create(
+            Client(),
+            model="openai/gpt-oss-20b",
+            messages=[{"role": "user", "content": "x"}],
+            schema_name="s",
+            schema={"type": "object"},
+            temperature=0.0,
+            seed=1,
+        )
+
+        assert out == {"ok": True}
+        assert len(calls) == 2, "the slip should have been re-rolled, not raised"
+
+    @pytest.mark.asyncio
+    async def test_the_reroll_changes_temperature(self):
+        """A re-roll at the same settings reproduces the same slip."""
+        from grader.grading import sampling
+
+        temps: list[float | None] = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        temps.append(kwargs.get("temperature"))
+                        if len(temps) == 1:
+                            raise RuntimeError("400 missing properties: 'x'")
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(
+                                    message=SimpleNamespace(content="{}")
+                                )
+                            ]
+                        )
+
+        await sampling._create(
+            Client(),
+            model="m",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=0.0,
+            seed=None,
+        )
+        assert temps[1] > temps[0]
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_bad_request_is_not_retried(self):
+        """A 400 is also what a wrong model name returns. Retrying that is a loop."""
+        from grader.grading import sampling
+
+        calls = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        calls.append(kwargs)
+                        raise RuntimeError(
+                            "Error code: 400 - The model `nope` does not exist"
+                        )
+
+        with pytest.raises(RuntimeError):
+            await sampling._create(
+                Client(),
+                model="nope",
+                messages=[],
+                schema_name="s",
+                schema={},
+                temperature=None,
+                seed=None,
+            )
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_model_that_never_holds_the_schema_gives_up(self):
+        """Two re-rolls, then raise. A third is a slower failure, not a different one."""
+        from grader.grading import sampling
+
+        calls = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        calls.append(kwargs)
+                        raise RuntimeError("400 does not validate with required")
+
+        with pytest.raises(RuntimeError):
+            await sampling._create(
+                Client(),
+                model="m",
+                messages=[],
+                schema_name="s",
+                schema={},
+                temperature=0.0,
+                seed=None,
+            )
+        assert len(calls) == sampling.DECODE_RETRIES + 1
+
+
+class TestASpentDayIsADifferentModelNotALongerWait:
+    """A free tier budgets per model, so the second model is a second allowance.
+
+    Waiting out a daily limit holds a teacher's browser open for a submission that
+    will be refused again on the very next question, while an untouched allowance
+    sits on the smaller model. Falling back marks the script; waiting does not.
+    """
+
+    def setup_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_spent_budgets()
+
+    def teardown_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_spent_budgets()
+
+    @pytest.mark.asyncio
+    async def test_a_daily_limit_switches_model_rather_than_sleeping(self):
+        from grader.grading import sampling
+
+        used: list[str] = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        used.append(kwargs["model"])
+                        if kwargs["model"] == "openai/gpt-oss-120b":
+                            raise RuntimeError(
+                                "Error code: 429 - Rate limit reached for model "
+                                "`openai/gpt-oss-120b` on tokens per day (TPD): "
+                                "Limit 200000, Used 199900. Please try again in 15m34s."
+                            )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(
+                                    message=SimpleNamespace(content='{"ok": 1}')
+                                )
+                            ]
+                        )
+
+        out = await sampling._create(
+            Client(),
+            model="openai/gpt-oss-120b",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=0.0,
+            seed=None,
+        )
+        assert out == {"ok": 1}
+        assert used == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+
+    @pytest.mark.asyncio
+    async def test_a_per_minute_limit_still_waits(self, monkeypatch):
+        """Only the daily limit is a different model. A burst clears in seconds."""
+        from grader.grading import sampling
+
+        slept: list[float] = []
+
+        async def no_sleep(seconds):
+            slept.append(seconds)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", no_sleep)
+        used: list[str] = []
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        used.append(kwargs["model"])
+                        if len(used) == 1:
+                            raise RuntimeError(
+                                "429 Rate limit reached on tokens per minute (TPM). "
+                                "Please try again in 2.5s"
+                            )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(message=SimpleNamespace(content="{}"))
+                            ]
+                        )
+
+        await sampling._create(
+            Client(),
+            model="openai/gpt-oss-120b",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=None,
+            seed=None,
+        )
+        assert used == ["openai/gpt-oss-120b", "openai/gpt-oss-120b"]
+        assert slept, "a per-minute limit should have been waited out"
+
+    @pytest.mark.asyncio
+    async def test_a_model_with_no_fallback_raises_rather_than_waiting_hours(self):
+        from grader.grading import sampling
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        raise RuntimeError("429 tokens per day (TPD) exhausted")
+
+        with pytest.raises(RuntimeError):
+            await sampling._create(
+                Client(),
+                model="openai/gpt-oss-20b",
+                messages=[],
+                schema_name="s",
+                schema={},
+                temperature=None,
+                seed=None,
+            )
+
+    def test_provenance_names_the_model_that_will_actually_answer(self):
+        """Two scripts marked by two different models must not claim the same thing."""
+        from grader.grading import sampling
+
+        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-120b"
+        sampling._spent.add("openai/gpt-oss-120b")
+        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-20b"
+
+    def test_the_fallback_chain_cannot_loop(self):
+        from grader.grading import sampling
+
+        sampling._spent.update({"openai/gpt-oss-120b", "openai/gpt-oss-20b"})
+        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-20b"
+
+    def test_the_fallback_is_overridable(self, monkeypatch):
+        from grader.grading import sampling
+
+        monkeypatch.setenv("GRADER_FALLBACK_MODEL", "qwen/qwen3.8-27b")
+        assert sampling.fallback_for("openai/gpt-oss-120b") == "qwen/qwen3.8-27b"
+        assert sampling.fallback_for("qwen/qwen3.8-27b") is None

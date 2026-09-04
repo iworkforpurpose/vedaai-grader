@@ -105,11 +105,47 @@ DEFAULT_MODELS = {
     # seventy-eight. A product that marks a whole class at a time cannot be
     # priced like one that answers a single question.
     #
-    # `gpt-oss-120b` specifically because it is the one open-weight model
-    # confirmed to support `response_format: json_schema` with `strict: true`.
-    # That is not a preference: every marking call in this service asks for a
-    # schema rather than prose, and a provider that can only offer best-effort
-    # JSON removes the guarantee that makes a weak model safe here.
+    # The larger open-weight size first, with the smaller one behind it as a
+    # second allowance rather than a second charge. See `sampling.FALLBACK_MODELS`.
+    #
+    # Measured, both on the nine-document gate: the larger marks 8 of 9 documents
+    # inside their band, the smaller 4 of 9 — and every one of the smaller's
+    # misses is under-marking, never false credit. Under-marking is the safer
+    # direction but it is not a safe result: two of its misses are answers a
+    # student earned marks for that scored zero, and a false zero is the worst
+    # error this product makes.
+    #
+    # So the smaller model is where marking goes when the day's budget on the
+    # larger one is gone, and not before. That is a real degradation and it is
+    # recorded as one on every grade.
+    #
+    # Three further notes on why the smaller one is nevertheless worth having:
+    #
+    # **It is the task that was made small, not the model that was made weak.**
+    # `scheme.py` turns a question into atomic yes/no checks, so marking is
+    # answering a supplied binary question against a supplied text rather than
+    # judging an answer from scratch. The fact-checking literature is consistent
+    # that decomposition benefits weaker verifiers most and does little for
+    # strong ones, because an undecomposed judgement has to weigh several
+    # sub-claims at once and the supported ones drown the contradicted one. This
+    # codebase already paid for the decomposition and was not collecting on it.
+    #
+    # **The daily budget is per model, not per account.** A free tier gives each
+    # model its own allowance, so the choice is not "smaller and weaker" against
+    # "larger and stronger" but against a specific number of scripts a day. The
+    # 120B allowance is spent by roughly one full gate run; the 20B allowance
+    # buys several times that, because the tokens cost less and the pool is its
+    # own.
+    #
+    # **The schema guarantee is not a differentiator.** It was the stated reason
+    # for the larger default, and it does not hold: both sizes accept
+    # `response_format: json_schema` with `strict: true`, which is what makes a
+    # small model safe here — the marker fills a schema rather than writing
+    # prose, so it cannot answer in a shape the citation checker will refuse.
+    #
+    # `GRADER_MODEL` still names any of them, and the grade records which one
+    # marked it, because a small model and a large one are not interchangeable
+    # evidence.
     "groq": "openai/gpt-oss-120b",
 }
 
@@ -798,14 +834,18 @@ class OpenAIGrader:
         """Which host and model judged this, recorded on every grade.
 
         The provider, not the SDK. Groq speaks the OpenAI API, so without this a
-        grade marked by `gpt-oss-120b` on Groq and one marked by `gpt-4.1` on
+        grade marked by `gpt-oss-20b` on Groq and one marked by `gpt-4.1` on
         OpenAI would both read `openai:...` — and "a mark is only checkable if
         you know what made it" stops being true the moment two hosts are
         configurable.
         """
         from ..clients import openai_provider
 
-        return f"{openai_provider()[0]}:{self.model}"
+        # The model that will answer, not the one that was configured. They
+        # differ once a daily budget is spent and marking falls back to the
+        # second allowance, and a grade that named the configured model would
+        # make two scripts marked by two different models look identical.
+        return f"{openai_provider()[0]}:{sampling.effective_model(self.model)}"
 
     async def aclose(self) -> None:
         """Release the HTTP client.
