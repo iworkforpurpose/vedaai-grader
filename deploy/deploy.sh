@@ -375,25 +375,55 @@ register_task() {
   require_pushed_image || return 1
   say "registering task definition"
 
-  # Referenced by ARN rather than by value, so the key is visible neither in the
-  # task definition nor to anyone who can describe the task. Either provider, or
-  # neither — marking degrades to a rubric without one.
+  # Two ways a marking key can reach the container, and they are not equally
+  # good.
+  #
+  # By ARN, the task definition holds a pointer and ECS resolves it at start:
+  # the key appears in neither the definition nor `describe-task-definition`, and
+  # rotating it touches one place. That is the right way and it needs somebody
+  # with AWS access to create the secret first, because the deploy role
+  # deliberately has no Secrets Manager permissions.
+  #
+  # By value, the key is written into the task definition itself. This works with
+  # nothing but a GitHub Actions secret, which is why it exists - but task
+  # definitions are immutable numbered revisions, so the key stays readable in
+  # every past revision to anyone with `ecs:DescribeTaskDefinition`, and rotating
+  # it does not remove it from the ones already registered. For a free-tier key
+  # that is a small price; for a key with billing attached it is worth ten
+  # minutes with the console instead.
+  #
+  # ARN wins where both are given.
   local secrets=""
   local entries=()
+  local plain=()
+
+  # $1 provider label, $2 ARN, $3 key value, $4 container variable name
+  add_credential() {
+    if [ -n "${2:-}" ]; then
+      entries+=("$(printf '{"name":"%s","valueFrom":"%s"}' "$4" "$2")")
+    elif [ -n "${3:-}" ]; then
+      plain+=("$(printf '{"name":"%s","value":"%s"}' "$4" "$3")")
+      echo "  ${1}: key passed by value (visible in task definition revisions)" >&2
+    fi
+  }
   # Groq first, and OpenAI kept only so an existing deployment is not broken by
   # this change. The product now derives its check banks on an open-weight model
   # and answers them with a cross-encoder on the task itself, so a deployment
   # needs no OpenAI credential at all.
-  [ -n "${GROQ_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"GROQ_API_KEY","valueFrom":"%s"}' "${GROQ_SECRET_ARN}")")
-  # A second host is a second daily allowance for the same model, so it is worth
-  # wiring even though nothing breaks without it: the chain simply skips a host
-  # it has no key for.
-  [ -n "${CEREBRAS_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"CEREBRAS_API_KEY","valueFrom":"%s"}' "${CEREBRAS_SECRET_ARN}")")
-  [ -n "${GEMINI_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"GEMINI_API_KEY","valueFrom":"%s"}' "${GEMINI_SECRET_ARN}")")
-  [ -n "${OPENAI_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"OPENAI_API_KEY","valueFrom":"%s"}' "${OPENAI_SECRET_ARN}")")
-  [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")")
+  # Every host is a separate daily allowance, so each one wired is more capacity
+  # rather than a spare. The chain skips a host it has no key for, so wiring none
+  # of these is a working deployment that marks with a rubric only.
+  add_credential "groq"      "${GROQ_SECRET_ARN:-}"      "${GROQ_API_KEY:-}"      "GROQ_API_KEY"
+  add_credential "cerebras"  "${CEREBRAS_SECRET_ARN:-}"  "${CEREBRAS_API_KEY:-}"  "CEREBRAS_API_KEY"
+  add_credential "gemini"    "${GEMINI_SECRET_ARN:-}"    "${GEMINI_API_KEY:-}"    "GEMINI_API_KEY"
+  add_credential "openai"    "${OPENAI_SECRET_ARN:-}"    "${OPENAI_API_KEY:-}"    "OPENAI_API_KEY"
+  add_credential "anthropic" "${ANTHROPIC_SECRET_ARN:-}" "${ANTHROPIC_API_KEY:-}" "ANTHROPIC_API_KEY"
   if [ ${#entries[@]} -gt 0 ]; then
     secrets=$(IFS=,; echo "${entries[*]}")
+  fi
+  local extra_env=""
+  if [ ${#plain[@]} -gt 0 ]; then
+    extra_env=",$(IFS=,; echo "${plain[*]}")"
   fi
 
   # ACCESS_CODE rides in the plain task environment rather than Secrets Manager.
@@ -424,12 +454,12 @@ register_task() {
         { "name": "S3_PAGE_PREFIX", "value": "pages/" },
         { "name": "SUBMISSIONS_TABLE", "value": "${TABLE}" },
         { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
-        { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-groq}" },
+        { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-}" },
         { "name": "MARK_SAMPLES", "value": "${MARK_SAMPLES:-5}" },
         { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" },
         { "name": "ACCESS_CODE", "value": "${ACCESS_CODE:-}" },
         { "name": "RATE_LIMIT_INGEST_PER_HOUR", "value": "${RATE_LIMIT_INGEST_PER_HOUR:-30}" },
-        { "name": "RATE_LIMIT_REMARK_PER_HOUR", "value": "${RATE_LIMIT_REMARK_PER_HOUR:-120}" }
+        { "name": "RATE_LIMIT_REMARK_PER_HOUR", "value": "${RATE_LIMIT_REMARK_PER_HOUR:-120}" }${extra_env}
       ],
       "secrets": [${secrets}],
       "logConfiguration": {
