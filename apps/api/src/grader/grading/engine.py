@@ -727,38 +727,42 @@ class OpenAIGrader:
     name = "openai"
 
     def __init__(self, *, model: str | None = None, client=None) -> None:
-        from ..clients import openai_provider
+        from ..clients import marking_chain, openai_provider
 
-        # The default follows the provider. A Groq key with no `GRADER_MODEL`
-        # should mark on a model Groq actually serves, rather than asking it for
-        # `gpt-4.1` and failing with a model-not-found nobody expected.
+        # Where marking starts is the first entry of the chain this deployment
+        # can actually reach, not a per-provider default. The two differ once
+        # more than one host is configured, and the chain is the ordering that
+        # was measured; a per-provider default is the ordering that happened to
+        # be written down.
+        chain = marking_chain()
+        self.provider, chain_model = chain[0] if chain else (openai_provider()[0], "")
         self.model = (
             model
             or os.getenv("GRADER_MODEL")
-            or DEFAULT_MODELS[openai_provider()[0]]
+            or chain_model
+            or DEFAULT_MODELS.get(self.provider, DEFAULT_MODELS["openai"])
         )
         if client is not None:
             self._client = client
             return
 
-        from ..clients import openai_provider
+        from ..clients import key_for
 
-        provider, key, _base = openai_provider()
-        if not key:
+        if not key_for(self.provider):
             raise GraderUnavailable(
                 "No marking key is set, so answers cannot be marked automatically. "
-                "Set GROQ_API_KEY or OPENAI_API_KEY. The rubric and the located "
-                "answer are still produced."
+                "Set GROQ_API_KEY, CEREBRAS_API_KEY or OPENAI_API_KEY. The rubric "
+                "and the located answer are still produced."
             )
         try:
-            from openai import AsyncOpenAI
+            import openai  # noqa: F401
         except ModuleNotFoundError as exc:  # pragma: no cover - depends on extras
             raise GraderUnavailable(
                 "the openai package is not installed; install the 'grading' extra"
             ) from exc
-        from ..clients import openai_kwargs
+        from ..clients import client_for
 
-        self._client = AsyncOpenAI(**openai_kwargs())
+        self._client = client_for(self.provider)
 
     async def grade(
         self,
@@ -821,6 +825,7 @@ class OpenAIGrader:
         return await sampling.structured_completion(
             self._client,
             model=self.model,
+            provider=getattr(self, "provider", ""),
             system=prompt.SYSTEM,
             user=message,
             schema_name="judgement",
@@ -839,13 +844,16 @@ class OpenAIGrader:
         you know what made it" stops being true the moment two hosts are
         configurable.
         """
-        from ..clients import openai_provider
 
-        # The model that will answer, not the one that was configured. They
-        # differ once a daily budget is spent and marking falls back to the
-        # second allowance, and a grade that named the configured model would
-        # make two scripts marked by two different models look identical.
-        return f"{openai_provider()[0]}:{sampling.effective_model(self.model)}"
+        # The marker that will answer, not the one that was configured. They
+        # differ once a daily budget is spent and marking continues down the
+        # chain - possibly onto a different host - and a grade naming the
+        # configured entry would make two scripts marked by two different models
+        # look identical.
+        provider, model = sampling.effective_marker(
+            getattr(self, "provider", "openai"), self.model
+        )
+        return f"{provider}:{model}"
 
     async def aclose(self) -> None:
         """Release the HTTP client.

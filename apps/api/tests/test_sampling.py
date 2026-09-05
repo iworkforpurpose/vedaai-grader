@@ -421,53 +421,76 @@ class TestADroppedFieldIsARerollNotALostQuestion:
         assert len(calls) == sampling.DECODE_RETRIES + 1
 
 
-class TestASpentDayIsADifferentModelNotALongerWait:
-    """A free tier budgets per model, so the second model is a second allowance.
+class TestASpentDayIsADifferentMarkerNotALongerWait:
+    """A free tier meters per model *and* per host, so the chain is real capacity.
 
-    Waiting out a daily limit holds a teacher's browser open for a submission that
-    will be refused again on the very next question, while an untouched allowance
-    sits on the smaller model. Falling back marks the script; waiting does not.
+    Waiting out a daily limit holds a teacher's browser open for a submission
+    that will be refused again on the very next question, while an untouched
+    allowance sits one entry down. Walking the chain marks the script; waiting
+    does not.
     """
 
-    def setup_method(self):
+    CHAIN = [
+        ("cerebras", "gpt-oss-120b"),
+        ("groq", "openai/gpt-oss-120b"),
+        ("groq", "qwen/qwen3.8-27b"),
+    ]
+
+    @pytest.fixture(autouse=True)
+    def _chain(self, monkeypatch):
+        from grader import clients
         from grader.grading import sampling
 
         sampling.forget_spent_budgets()
-
-    def teardown_method(self):
-        from grader.grading import sampling
-
+        monkeypatch.setattr(clients, "marking_chain", lambda: list(self.CHAIN))
+        yield
         sampling.forget_spent_budgets()
+
+    @staticmethod
+    def _client(refuse: set, seen: list):
+        class Client:
+            def __init__(self, tag="start"):
+                self.tag = tag
+
+            class chat:  # noqa: N801
+                pass
+
+        def make(tag):
+            c = Client(tag)
+
+            class completions:  # noqa: N801
+                @staticmethod
+                async def create(**kwargs):
+                    seen.append((c.tag, kwargs["model"]))
+                    if kwargs["model"] in refuse:
+                        raise RuntimeError(
+                            f"Error code: 429 - Rate limit reached for model "
+                            f"`{kwargs['model']}` on tokens per day (TPD): Limit "
+                            f"200000, Used 199900. Please try again in 15m34s."
+                        )
+                    return SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(message=SimpleNamespace(content='{"ok": 1}'))
+                        ]
+                    )
+
+            c.chat = SimpleNamespace(completions=completions)
+            return c
+
+        return make
 
     @pytest.mark.asyncio
-    async def test_a_daily_limit_switches_model_rather_than_sleeping(self):
+    async def test_a_daily_limit_walks_to_the_next_entry(self, monkeypatch):
         from grader.grading import sampling
 
-        used: list[str] = []
-
-        class Client:
-            class chat:  # noqa: N801
-                class completions:  # noqa: N801
-                    @staticmethod
-                    async def create(**kwargs):
-                        used.append(kwargs["model"])
-                        if kwargs["model"] == "openai/gpt-oss-120b":
-                            raise RuntimeError(
-                                "Error code: 429 - Rate limit reached for model "
-                                "`openai/gpt-oss-120b` on tokens per day (TPD): "
-                                "Limit 200000, Used 199900. Please try again in 15m34s."
-                            )
-                        return SimpleNamespace(
-                            choices=[
-                                SimpleNamespace(
-                                    message=SimpleNamespace(content='{"ok": 1}')
-                                )
-                            ]
-                        )
+        seen: list = []
+        make = self._client({"gpt-oss-120b"}, seen)
+        monkeypatch.setattr(sampling, "client_for", lambda p: make(p))
 
         out = await sampling._create(
-            Client(),
-            model="openai/gpt-oss-120b",
+            make("cerebras"),
+            model="gpt-oss-120b",
+            provider="cerebras",
             messages=[],
             schema_name="s",
             schema={},
@@ -475,11 +498,41 @@ class TestASpentDayIsADifferentModelNotALongerWait:
             seed=None,
         )
         assert out == {"ok": 1}
-        assert used == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+        assert [m for _tag, m in seen] == ["gpt-oss-120b", "openai/gpt-oss-120b"]
+
+    @pytest.mark.asyncio
+    async def test_crossing_hosts_builds_a_client_for_the_new_host(self, monkeypatch):
+        """A client carries its key and base URL, so a new host is a new client.
+
+        Reusing the old one sends a Groq key to Cerebras, which is not a fallback
+        but a second failure wearing the first one's clothes.
+        """
+        from grader.grading import sampling
+
+        seen: list = []
+        built: list[str] = []
+        make = self._client({"gpt-oss-120b"}, seen)
+
+        def client_for(provider):
+            built.append(provider)
+            return make(provider)
+
+        monkeypatch.setattr(sampling, "client_for", client_for)
+        await sampling._create(
+            make("cerebras"),
+            model="gpt-oss-120b",
+            provider="cerebras",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=None,
+            seed=None,
+        )
+        assert built == ["groq"], "the next host did not get its own client"
 
     @pytest.mark.asyncio
     async def test_a_per_minute_limit_still_waits(self, monkeypatch):
-        """Only the daily limit is a different model. A burst clears in seconds."""
+        """Only a daily limit is a different marker. A burst clears in seconds."""
         from grader.grading import sampling
 
         slept: list[float] = []
@@ -488,15 +541,15 @@ class TestASpentDayIsADifferentModelNotALongerWait:
             slept.append(seconds)
 
         monkeypatch.setattr(sampling.asyncio, "sleep", no_sleep)
-        used: list[str] = []
+        calls: list = []
 
         class Client:
             class chat:  # noqa: N801
                 class completions:  # noqa: N801
                     @staticmethod
                     async def create(**kwargs):
-                        used.append(kwargs["model"])
-                        if len(used) == 1:
+                        calls.append(kwargs["model"])
+                        if len(calls) == 1:
                             raise RuntimeError(
                                 "429 Rate limit reached on tokens per minute (TPM). "
                                 "Please try again in 2.5s"
@@ -510,54 +563,396 @@ class TestASpentDayIsADifferentModelNotALongerWait:
         await sampling._create(
             Client(),
             model="openai/gpt-oss-120b",
+            provider="groq",
             messages=[],
             schema_name="s",
             schema={},
             temperature=None,
             seed=None,
         )
-        assert used == ["openai/gpt-oss-120b", "openai/gpt-oss-120b"]
+        assert calls == ["openai/gpt-oss-120b", "openai/gpt-oss-120b"]
         assert slept, "a per-minute limit should have been waited out"
 
     @pytest.mark.asyncio
-    async def test_a_model_with_no_fallback_raises_rather_than_waiting_hours(self):
+    async def test_the_end_of_the_chain_raises_rather_than_waiting_hours(
+        self, monkeypatch
+    ):
         from grader.grading import sampling
 
-        class Client:
-            class chat:  # noqa: N801
-                class completions:  # noqa: N801
-                    @staticmethod
-                    async def create(**kwargs):
-                        raise RuntimeError("429 tokens per day (TPD) exhausted")
+        seen: list = []
+        every = {model for _p, model in self.CHAIN}
+        make = self._client(every, seen)
+        monkeypatch.setattr(sampling, "client_for", lambda p: make(p))
 
         with pytest.raises(RuntimeError):
             await sampling._create(
-                Client(),
-                model="openai/gpt-oss-20b",
+                make("cerebras"),
+                model="gpt-oss-120b",
+                provider="cerebras",
                 messages=[],
                 schema_name="s",
                 schema={},
                 temperature=None,
                 seed=None,
             )
+        assert [m for _t, m in seen] == [m for _p, m in self.CHAIN]
 
-    def test_provenance_names_the_model_that_will_actually_answer(self):
+    def test_provenance_names_the_marker_that_will_actually_answer(self):
         """Two scripts marked by two different models must not claim the same thing."""
         from grader.grading import sampling
 
-        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-120b"
-        sampling._spent.add("openai/gpt-oss-120b")
-        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-20b"
+        assert sampling.effective_marker("cerebras", "gpt-oss-120b") == (
+            "cerebras",
+            "gpt-oss-120b",
+        )
+        sampling._spent.add(("cerebras", "gpt-oss-120b"))
+        assert sampling.effective_marker("cerebras", "gpt-oss-120b") == (
+            "groq",
+            "openai/gpt-oss-120b",
+        )
 
-    def test_the_fallback_chain_cannot_loop(self):
+    def test_the_same_model_on_two_hosts_is_two_budgets(self):
+        """The reason the spent set is keyed by both halves.
+
+        Keyed by model alone, a spent Cerebras allowance would also write off the
+        Groq entry for a differently-named build of the same weights, and the
+        chain would skip an allowance that was never touched.
+        """
         from grader.grading import sampling
 
-        sampling._spent.update({"openai/gpt-oss-120b", "openai/gpt-oss-20b"})
-        assert sampling.effective_model("openai/gpt-oss-120b") == "openai/gpt-oss-20b"
+        sampling._spent.add(("cerebras", "gpt-oss-120b"))
+        assert sampling.next_marker() == ("groq", "openai/gpt-oss-120b")
 
-    def test_the_fallback_is_overridable(self, monkeypatch):
+    def test_the_chain_cannot_loop_or_run_off_the_end(self):
         from grader.grading import sampling
 
-        monkeypatch.setenv("GRADER_FALLBACK_MODEL", "qwen/qwen3.8-27b")
-        assert sampling.fallback_for("openai/gpt-oss-120b") == "qwen/qwen3.8-27b"
-        assert sampling.fallback_for("qwen/qwen3.8-27b") is None
+        sampling._spent.update(set(self.CHAIN))
+        assert sampling.next_marker() is None
+        # And the marker of last resort is still reported honestly rather than
+        # claiming an entry that refused.
+        assert sampling.effective_marker("groq", "qwen/qwen3.8-27b") == (
+            "groq",
+            "qwen/qwen3.8-27b",
+        )
+
+
+class TestTheMarkingChainReflectsTheDeployment:
+    """Which entries exist is decided by keys and by what was pinned."""
+
+    def test_a_host_with_no_key_is_not_in_the_chain(self, monkeypatch):
+        from grader import clients
+
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        chain = clients.marking_chain()
+        assert chain, "a configured host produced no chain"
+        assert {p for p, _m in chain} == {"groq"}
+
+    def test_pinning_a_model_collapses_the_chain(self, monkeypatch):
+        """A measurement is only worth something if it names one marker.
+
+        The eval harness pins `GRADER_MODEL` for exactly this reason: a gate run
+        that started on one model and silently finished on another would report a
+        number belonging to neither.
+        """
+        from grader import clients
+
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "csk-test")
+        monkeypatch.setenv("GRADER_MODEL", "qwen/qwen3.8-27b")
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        assert clients.marking_chain() == [("groq", "qwen/qwen3.8-27b")]
+
+    def test_pinning_a_host_keeps_only_that_host(self, monkeypatch):
+        from grader import clients
+
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "csk-test")
+        monkeypatch.setenv("GRADER_PROVIDER", "cerebras")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+
+        assert {p for p, _m in clients.marking_chain()} == {"cerebras"}
+
+    def test_an_unknown_pinned_model_is_still_honoured(self, monkeypatch):
+        """Better to mark with what was asked for than to substitute silently."""
+        from grader import clients
+
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+        monkeypatch.setenv("GRADER_MODEL", "some/experimental-model")
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        assert clients.marking_chain() == [("groq", "some/experimental-model")]
+
+
+class TestTheChainIsOrderedByMeasurement:
+    """The order is a claim about accuracy, so it is worth pinning.
+
+    Measured on the nine-document gate: `gpt-oss-120b` reaches 8 of 9 at five
+    samples and 5 of 9 at one; `gpt-oss-20b` reaches 4 of 9 with every miss
+    under-marking, two of them earned answers scoring zero. An order that put the
+    cheaper or faster entry first would be trading marks for latency without
+    saying so.
+    """
+
+    def test_the_best_measured_marker_is_reached_first(self, monkeypatch):
+        from grader import clients
+
+        for var in ("GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY"):
+            monkeypatch.setenv(var, "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        chain = clients.marking_chain()
+        assert chain[0][1].endswith("gpt-oss-120b")
+        assert chain[1][1].endswith("gpt-oss-120b")
+
+    def test_the_weakest_measured_marker_is_reached_last(self, monkeypatch):
+        from grader import clients
+
+        for var in ("GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY"):
+            monkeypatch.setenv(var, "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        assert clients.marking_chain()[-1] == ("groq", "openai/gpt-oss-20b")
+
+    def test_the_same_weights_appear_on_more_than_one_host(self, monkeypatch):
+        """The point of the chain: capacity that costs no accuracy.
+
+        Two hosts serving the same model is a second daily allowance for the same
+        judgement, which is the only kind of extra capacity worth having. Every
+        entry below them is a worse marker.
+        """
+        from grader import clients
+
+        for var in ("GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY"):
+            monkeypatch.setenv(var, "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        hosts = [p for p, m in clients.marking_chain() if m.endswith("gpt-oss-120b")]
+        assert len(set(hosts)) > 1
+
+
+class TestThePanelIsWhatBuysAccuracy:
+    """`MARK_SAMPLES` is an accuracy setting, and it had been used as a budget one.
+
+    Measured on the same nine documents with the same model, `gpt-oss-120b`:
+    five samples put 8 of 9 inside their band, one sample put 5 of 9, and all
+    four of the extra failures were under-marking. Cutting the panel to fit a
+    free tier is therefore not a cost saving, it is three documents of accuracy
+    spent without saying so - and the right response is more allowance, which is
+    what the chain is for.
+    """
+
+    def test_the_default_panel_is_the_measured_one(self, monkeypatch):
+        import importlib
+
+        monkeypatch.delenv("MARK_SAMPLES", raising=False)
+        from grader.grading import engine
+
+        importlib.reload(engine)
+        assert engine.MARK_SAMPLES == 5, (
+            "the default panel was reduced; that is an accuracy change, not a "
+            "cost change, and the gate figures above say what it costs"
+        )
+        importlib.reload(engine)
+
+
+class TestAHostThatRefusesAParameterIsLearnedFrom:
+    """Every OpenAI-shaped host implements a different subset of the parameters.
+
+    A refused parameter is silent in the worst way: it comes back as a 400 on
+    every sample, so the question is never judged and the document simply scores
+    zero. A whole nine-document gate run was lost to Google refusing `seed`, and
+    the message it refuses with is worded unlike any other host's.
+    """
+
+    def setup_method(self):
+        from grader.grading import sampling
+
+        sampling.forget()
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Unsupported value: 'seed' is not supported with this model",
+            "Unsupported parameter: 'seed'",
+            "Unrecognized request argument supplied: seed",
+            # Google, via its OpenAI-compatible endpoint.
+            'Invalid JSON payload received. Unknown name "seed": Cannot find field.',
+        ],
+    )
+    def test_every_hosts_wording_is_recognised(self, message):
+        from grader.grading import sampling
+
+        class BadRequestError(Exception):
+            pass
+
+        assert sampling._names_a_refused_parameter(BadRequestError(message)) == "seed"
+
+    def test_a_real_bad_request_is_not_mistaken_for_a_refused_parameter(self):
+        """Otherwise the retry loop strips parameters forever and never succeeds."""
+        from grader.grading import sampling
+
+        class BadRequestError(Exception):
+            pass
+
+        assert (
+            sampling._names_a_refused_parameter(
+                BadRequestError("The model `nope` does not exist")
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_request_is_retried_without_what_was_refused(self):
+        from grader.grading import sampling
+
+        sent: list[dict] = []
+
+        class BadRequestError(Exception):
+            pass
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        sent.append(kwargs)
+                        if "seed" in kwargs:
+                            raise BadRequestError(
+                                'Invalid JSON payload received. Unknown name "seed": '
+                                "Cannot find field."
+                            )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(message=SimpleNamespace(content="{}"))
+                            ]
+                        )
+
+        await sampling._create(
+            Client(),
+            model="gemini-3-flash-preview",
+            provider="gemini",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=0.2,
+            seed=7,
+        )
+        assert "seed" in sent[0] and "seed" not in sent[-1]
+        assert sampling.refused_by("gemini-3-flash-preview") == {"seed"}
+
+
+class TestRequestsArePacedNotJustLimitedInFlight:
+    """Concurrency and rate are different limits, and only the first was governed.
+
+    A cap of two in flight says nothing about how many requests start in a
+    minute: short calls finish and are replaced immediately, so two workers
+    comfortably issue sixty requests a minute against an allowance of ten.
+    Measured on Google's free tier, a nine-document gate produced 155 rate-limit
+    errors and eight documents scoring zero, while the one document that got
+    through landed inside its band. The marking was never the problem.
+    """
+
+    def setup_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_pacing()
+
+    def teardown_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_pacing()
+
+    @pytest.mark.asyncio
+    async def test_starting_more_than_the_allowance_waits(self, monkeypatch):
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "gemini", 3)
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        # The first three go straight through; the fourth has to wait for the
+        # window to roll.
+        for _ in range(3):
+            await sampling._pace("gemini")
+        assert not waits
+
+        # Ages the window by one slot on each sleep, so the fourth call waits
+        # once and then proceeds. Without this the stubbed sleep returns
+        # instantly, the window never moves, and the test spins for a real
+        # minute - which is the loop working correctly against a clock that is
+        # not advancing rather than a bug in the pacer.
+        async def age_one(seconds):
+            waits.append(seconds)
+            sampling._starts["gemini"][0] -= 61.0
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", age_one)
+        await sampling._pace("gemini")
+        assert len(waits) == 1, "the fourth request did not wait exactly once"
+
+    @pytest.mark.asyncio
+    async def test_each_host_is_paced_on_its_own_allowance(self, monkeypatch):
+        """A shared pacer would slow the fast host to the slow one's rate."""
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "gemini", 1)
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "groq", 30)
+
+        await sampling._pace("gemini")
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", record)
+        # Groq has its own budget and must not be held up by Gemini's.
+        await sampling._pace("groq")
+        assert not waits
+
+    @pytest.mark.asyncio
+    async def test_the_window_slides_rather_than_bucketing(self, monkeypatch):
+        """A fixed wall-clock bucket lets a burst straddle two of them.
+
+        The provider's own limit is a rolling sixty seconds, so bucketing would
+        allow twice the allowance across a boundary while looking compliant.
+        """
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "groq", 2)
+        await sampling._pace("groq")
+        await sampling._pace("groq")
+
+        # Age the recorded starts past the window; they should be discarded.
+        sampling._starts["groq"] = [t - 61.0 for t in sampling._starts["groq"]]
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", record)
+        await sampling._pace("groq")
+        assert not waits, "starts older than the window were still counted"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_host_is_not_throttled_to_a_standstill(self):
+        from grader.grading import sampling
+
+        assert sampling.rpm_for("some-paid-host") == sampling.DEFAULT_RPM

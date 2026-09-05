@@ -198,7 +198,7 @@ exec_role_secrets() {
   # may add to what must be granted; it may not be read as evidence that nothing
   # needs granting.
   local arns=() arn
-  for arn in "${GROQ_SECRET_ARN:-}" "${OPENAI_SECRET_ARN:-}" "${ANTHROPIC_SECRET_ARN:-}" $(referenced_credentials); do
+  for arn in "${GROQ_SECRET_ARN:-}" "${CEREBRAS_SECRET_ARN:-}" "${GEMINI_SECRET_ARN:-}" "${OPENAI_SECRET_ARN:-}" "${ANTHROPIC_SECRET_ARN:-}" $(referenced_credentials); do
     [ -n "${arn}" ] || continue
     case " ${arns[*]-} " in *"\"${arn}\""*) continue ;; esac
     arns+=("\"${arn}\"")
@@ -385,6 +385,11 @@ register_task() {
   # and answers them with a cross-encoder on the task itself, so a deployment
   # needs no OpenAI credential at all.
   [ -n "${GROQ_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"GROQ_API_KEY","valueFrom":"%s"}' "${GROQ_SECRET_ARN}")")
+  # A second host is a second daily allowance for the same model, so it is worth
+  # wiring even though nothing breaks without it: the chain simply skips a host
+  # it has no key for.
+  [ -n "${CEREBRAS_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"CEREBRAS_API_KEY","valueFrom":"%s"}' "${CEREBRAS_SECRET_ARN}")")
+  [ -n "${GEMINI_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"GEMINI_API_KEY","valueFrom":"%s"}' "${GEMINI_SECRET_ARN}")")
   [ -n "${OPENAI_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"OPENAI_API_KEY","valueFrom":"%s"}' "${OPENAI_SECRET_ARN}")")
   [ -n "${ANTHROPIC_SECRET_ARN:-}" ] && entries+=("$(printf '{"name":"ANTHROPIC_API_KEY","valueFrom":"%s"}' "${ANTHROPIC_SECRET_ARN}")")
   if [ ${#entries[@]} -gt 0 ]; then
@@ -420,7 +425,7 @@ register_task() {
         { "name": "SUBMISSIONS_TABLE", "value": "${TABLE}" },
         { "name": "WEB_ORIGINS", "value": "${APP_ORIGIN}" },
         { "name": "GRADER_PROVIDER", "value": "${GRADER_PROVIDER:-groq}" },
-        { "name": "MARK_SAMPLES", "value": "${MARK_SAMPLES:-1}" },
+        { "name": "MARK_SAMPLES", "value": "${MARK_SAMPLES:-5}" },
         { "name": "GRADER_MODEL", "value": "${GRADER_MODEL:-}" },
         { "name": "ACCESS_CODE", "value": "${ACCESS_CODE:-}" },
         { "name": "RATE_LIMIT_INGEST_PER_HOUR", "value": "${RATE_LIMIT_INGEST_PER_HOUR:-30}" },

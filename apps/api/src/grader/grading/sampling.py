@@ -39,6 +39,7 @@ import random
 import re
 from typing import Any
 
+from ..clients import client_for
 from ..observability import log_event
 
 #: How many model calls this process will have in flight at once.
@@ -62,8 +63,79 @@ RATE_LIMIT_RETRIES = int(os.getenv("MODEL_RATE_LIMIT_RETRIES") or 5)
 #: hold a teacher's browser open until it arrives.
 MAX_BACKOFF_SECONDS = float(os.getenv("MODEL_MAX_BACKOFF") or 90.0)
 
+#: Requests a minute this process will start, per host.
+#:
+#: Concurrency and rate are different limits and only the first was governed. A
+#: cap of two in flight says nothing about how many requests are started in a
+#: minute: short calls finish and are immediately replaced, so two concurrent
+#: workers comfortably issue sixty requests a minute against an allowance of ten.
+#:
+#: Measured, on Google's free tier: a nine-document gate produced 155 rate-limit
+#: errors and eight documents scoring zero, with the one document that did get
+#: through landing inside its band. The marking was never the problem.
+#:
+#: Per host because the allowance is per host, and because the chain can move
+#: between hosts mid-submission - a shared pacer would slow the fast host to the
+#: slow one's rate for no reason.
+REQUESTS_PER_MINUTE: dict[str, int] = {
+    "gemini": int(os.getenv("GEMINI_RPM") or 10),
+    "cerebras": int(os.getenv("CEREBRAS_RPM") or 5),
+    "groq": int(os.getenv("GROQ_RPM") or 30),
+}
+
+#: Used where a host is not in the table. High enough not to slow a paid account.
+DEFAULT_RPM = int(os.getenv("MODEL_RPM") or 60)
+
 _in_flight: asyncio.Semaphore | None = None
 _loop_owning_semaphore: object | None = None
+_starts: dict[str, list[float]] = {}
+_pace_lock: dict[str, asyncio.Lock] = {}
+_pace_loop: object | None = None
+
+
+def rpm_for(provider: str) -> int:
+    return REQUESTS_PER_MINUTE.get(provider, DEFAULT_RPM)
+
+
+async def _pace(provider: str) -> None:
+    """Wait until starting one more request keeps this host under its rate.
+
+    A sliding window rather than a fixed one: the provider's limit is itself a
+    rolling sixty seconds, so bucketing by wall-clock minute lets a burst at the
+    end of one bucket and the start of the next exceed the allowance while
+    looking compliant.
+
+    This is what turns a request-metered free tier into usable capacity. Without
+    it the allowance is spent on errors rather than on marking, which is a
+    strictly worse way to run out.
+    """
+    global _pace_loop
+    loop = asyncio.get_running_loop()
+    if _pace_loop is not loop:
+        _starts.clear()
+        _pace_lock.clear()
+        _pace_loop = loop
+
+    limit = rpm_for(provider)
+    if limit <= 0:
+        return
+    lock = _pace_lock.setdefault(provider, asyncio.Lock())
+    async with lock:
+        while True:
+            now = loop.time()
+            recent = [s for s in _starts.get(provider, []) if now - s < 60.0]
+            _starts[provider] = recent
+            if len(recent) < limit:
+                recent.append(now)
+                return
+            # Sleep until the oldest start falls out of the window.
+            await asyncio.sleep(max(0.05, 60.0 - (now - recent[0])))
+
+
+def forget_pacing() -> None:
+    """For tests."""
+    _starts.clear()
+    _pace_lock.clear()
 
 
 def _gate() -> asyncio.Semaphore:
@@ -108,53 +180,12 @@ DECODE_RETRIES = int(os.getenv("MODEL_DECODE_RETRIES") or 2)
 #: question. There is nothing to wait for.
 _DAILY_LIMIT = re.compile(r"per day|\bTPD\b|\bRPD\b", re.IGNORECASE)
 
-#: Where to go when the preferred model's day is spent.
+#: Which (provider, model) entries have spent their day, in this process.
 #:
-#: A free tier budgets per model, not per account, so the second model is a
-#: second allowance rather than a second charge. That makes the honest degradation
-#: obvious: mark with the better model while its day lasts, then drop to the
-#: smaller one, rather than refusing to mark at all with an untouched allowance
-#: sitting there.
-#:
-#: It is a degradation and it is recorded as one. `provenance` names the model on
-#: every grade, so a script marked after the switch says so, and a teacher
-#: comparing two scripts can see that they were not marked by the same thing.
-#: Silently substituting a different marker would make the marks incomparable
-#: without saying so, which is worse than either model alone.
-FALLBACK_MODELS: dict[str, str] = {
-    "openai/gpt-oss-120b": "openai/gpt-oss-20b",
-}
-
-
-#: Models whose daily budget this process has seen refused.
-#:
-#: Module level and sticky, because a spent day does not come back inside one
-#: process's lifetime, and because `provenance` has to be able to answer "what
-#: actually marked this" without threading a return value through every layer
-#: between the HTTP call and the grade.
-_spent: set[str] = set()
-
-
-def effective_model(model: str) -> str:
-    """The model that will actually answer, after any budget already spent.
-
-    A grade records what marked it, and after a fallback the configured model is
-    no longer that. Reporting the configured one would make two scripts marked by
-    two different models claim the same provenance, which is precisely the
-    comparison a teacher would make and precisely the one that would be wrong.
-    """
-    seen = model
-    while seen in _spent:
-        spare = fallback_for(seen)
-        if spare is None or spare == seen:
-            break
-        seen = spare
-    return seen
-
-
-def forget_spent_budgets() -> None:
-    """For tests, and for a process that outlives a quota window."""
-    _spent.clear()
+#: Sticky, because a spent allowance does not come back inside one process's
+#: lifetime, and keyed by both halves because the same model on two hosts is two
+#: separate budgets - which is the entire reason the chain is worth walking.
+_spent: set[tuple[str, str]] = set()
 
 
 def _is_a_daily_limit(error: Exception) -> bool:
@@ -162,12 +193,42 @@ def _is_a_daily_limit(error: Exception) -> bool:
     return bool(_DAILY_LIMIT.search(str(error)))
 
 
-def fallback_for(model: str) -> str | None:
-    """The model to drop to when ``model`` has spent its day, if there is one."""
-    override = os.getenv("GRADER_FALLBACK_MODEL", "").strip()
-    if override:
-        return override if override != model else None
-    return FALLBACK_MODELS.get(model)
+def next_marker(after: tuple[str, str] | None = None) -> tuple[str, str] | None:
+    """The next reachable (provider, model) the day has not been spent on.
+
+    Walks `clients.marking_chain`, which is ordered by measured accuracy on the
+    gate. Passing `after` continues past a specific entry rather than from the
+    top, so a caller that has just been refused does not immediately retry the
+    thing that refused it.
+    """
+    from ..clients import marking_chain
+
+    chain = marking_chain()
+    start = 0
+    if after is not None and after in chain:
+        start = chain.index(after) + 1
+    for entry in chain[start:]:
+        if entry not in _spent:
+            return entry
+    return None
+
+
+def forget_spent_budgets() -> None:
+    """For tests, and for a process that outlives a quota window."""
+    _spent.clear()
+
+
+def effective_marker(provider: str, model: str) -> tuple[str, str]:
+    """The marker that will actually answer, after any budget already spent.
+
+    A grade records what marked it, and after a fallback the configured entry is
+    no longer that. Reporting the configured one would let two scripts marked by
+    two different models claim the same provenance, which is exactly the
+    comparison a teacher would make and exactly the one that would be wrong.
+    """
+    if (provider, model) not in _spent:
+        return provider, model
+    return next_marker((provider, model)) or (provider, model)
 
 
 def _is_a_decode_slip(error: Exception) -> bool:
@@ -217,17 +278,30 @@ def forget() -> None:
 def _names_a_refused_parameter(error: Exception) -> str | None:
     """The optional parameter an error is complaining about, if it is one.
 
-    Matched on the message because the provider expresses this several ways —
+    Matched on the message because the provider expresses this several ways -
     "Unsupported value: 'temperature'", "Unsupported parameter: 'seed'",
-    "Unrecognized request argument supplied: seed" — and all of them are 400s
-    that name the parameter. Anything else is a real failure and is re-raised.
+    "Unrecognized request argument supplied: seed", and Google's
+    'Unknown name "seed": Cannot find field.' - and all of them are 400s that name
+    the parameter. Anything else is a real failure and is re-raised.
+
+    Google's wording is the one that cost a whole gate run. Every OpenAI-shaped
+    host implements a slightly different subset, so this list grows by meeting a
+    new host rather than by reading a specification; the failure it prevents is
+    not subtle but it is silent, because a refused parameter comes back as a
+    400 per sample and the document simply scores zero.
     """
     if "badrequest" not in type(error).__name__.lower():
         return None
     message = str(error).lower()
     if not any(
         phrase in message
-        for phrase in ("unsupported value", "unsupported parameter", "unrecognized request")
+        for phrase in (
+            "unsupported value",
+            "unsupported parameter",
+            "unrecognized request",
+            "unknown name",
+            "cannot find field",
+        )
     ):
         return None
     return next((name for name in _OPTIONAL if name in message), None)
@@ -237,6 +311,7 @@ async def _create(
     client: Any,
     *,
     model: str,
+    provider: str = "",
     messages: list[dict],
     schema_name: str,
     schema: dict,
@@ -251,10 +326,15 @@ async def _create(
         optional["seed"] = seed
 
     attempt = 0
-    exhausted: set[str] = set()
+    if not provider:
+        from ..clients import openai_provider
+
+        provider = openai_provider()[0]
+    exhausted: set[tuple[str, str]] = set()
     while True:
         sending = {k: v for k, v in optional.items() if k not in refused_by(model)}
         try:
+            await _pace(provider)
             async with _gate():
                 completion = await client.chat.completions.create(
                     model=model,
@@ -298,22 +378,31 @@ async def _create(
                 )
                 continue
 
-            # A spent day is a different model, not a longer wait. Waiting out a
-            # daily limit means holding a teacher's browser open for a
+            # A spent day is a different marker, not a longer wait. Waiting out
+            # a daily limit means holding a teacher's browser open for a
             # submission that will be refused again on the very next question,
-            # while a second allowance sits unused on the smaller model.
+            # while an untouched allowance sits one entry down the chain.
+            #
+            # The next entry may be on a different host, so the client is
+            # rebuilt rather than reused. That is the point of keying the spent
+            # set by (provider, model): free tiers meter per model *and* per
+            # host, so the same model on a second host is a second budget, and
+            # crossing to it is how capacity is bought without losing accuracy.
             if _is_a_daily_limit(exc):
-                spare = fallback_for(model)
+                _spent.add((provider, model))
+                spare = next_marker((provider, model))
                 if spare is not None and spare not in exhausted:
-                    exhausted.add(model)
-                    _spent.add(model)
+                    exhausted.add(spare)
                     log_event(
                         "model_budget_spent",
+                        provider=provider,
                         model=model,
-                        falling_back_to=spare,
+                        falling_back_to=f"{spare[0]}:{spare[1]}",
                         detail=str(exc),
                     )
-                    model = spare
+                    if spare[0] != provider:
+                        client = client_for(spare[0])
+                    provider, model = spare
                     attempt = 0
                     continue
                 raise
@@ -341,6 +430,7 @@ async def structured_completion(
     user: str,
     schema_name: str,
     schema: dict,
+    provider: str = "",
     temperature: float | None = None,
     seed: int | None = None,
 ) -> dict:
@@ -348,6 +438,7 @@ async def structured_completion(
     return await _create(
         client,
         model=model,
+        provider=provider,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -368,6 +459,7 @@ async def structured_completion_with_image(
     image_png: bytes,
     schema_name: str,
     schema: dict,
+    provider: str = "",
     temperature: float | None = None,
     seed: int | None = None,
 ) -> dict:
@@ -382,6 +474,7 @@ async def structured_completion_with_image(
     return await _create(
         client,
         model=model,
+        provider=provider,
         messages=[
             {"role": "system", "content": system},
             {
