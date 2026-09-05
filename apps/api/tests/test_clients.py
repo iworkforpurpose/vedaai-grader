@@ -194,7 +194,9 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
     def test_a_marker_below_the_bar_never_outranks_one_above_it(self):
         from grader import clients
 
-        chain = clients.FALLBACK_CHAIN
+        # Free hosts only. The paid entry is last by design however it scores,
+        # which is a different rule tested separately.
+        chain = [e for e in clients.FALLBACK_CHAIN if not clients._rank(e)[0]]
         good = [e for e in chain if (clients.MEASURED.get(e) or 0) >= clients.MIN_IN_BAND]
         weak = [e for e in chain if (clients.MEASURED.get(e) or 0) < clients.MIN_IN_BAND]
         assert good, "no marker cleared the accuracy bar"
@@ -210,7 +212,11 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
         from grader import clients
 
         for tier in (0, 1):
-            entries = [e for e in clients.FALLBACK_CHAIN if clients._rank(e)[0] == tier]
+            entries = [
+                e
+                for e in clients.FALLBACK_CHAIN
+                if clients._rank(e)[:2] == (0, tier)
+            ]
             allowances = [
                 clients.FREE_TIER.get(p, {}).get("scripts_per_day", 0.0)
                 for p, _m in entries
@@ -228,8 +234,8 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
         from grader import clients
 
         assert clients.MEASURED[("gemini", "gemini-2.5-flash")] is None
-        assert clients._rank(("gemini", "gemini-2.5-flash"))[0] == 1
-        assert clients._rank(("groq", "openai/gpt-oss-120b"))[0] == 0
+        assert clients._rank(("gemini", "gemini-2.5-flash"))[1] == 1
+        assert clients._rank(("groq", "openai/gpt-oss-120b"))[1] == 0
 
     def test_measuring_a_marker_promotes_it_into_allowance_order(self, monkeypatch):
         """The order is computed, so a new score re-sorts without anyone editing a list.
@@ -251,10 +257,10 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
         after = after_chain.index(entry)
 
         assert after < before, "a measured marker did not move up"
-        assert clients._rank(entry)[0] == 0, "it did not join the scored tier"
+        assert clients._rank(entry)[1] == 0, "it did not join the scored tier"
 
         # And it sits exactly where its allowance puts it among the scored.
-        scored = [e for e in after_chain if clients._rank(e)[0] == 0]
+        scored = [e for e in after_chain if clients._rank(e)[:2] == (0, 0)]
         allowances = [
             clients.FREE_TIER.get(p, {}).get("scripts_per_day", 0.0) for p, _m in scored
         ]
@@ -276,3 +282,67 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
             "gemini",
             "cerebras",
         }
+
+
+class TestAPaidHostIsAlwaysLast:
+    """A paid marker is a good last resort and a bad first choice.
+
+    Reaching it while a free allowance sits unspent charges for marking that was
+    already paid for, and it does so quietly - one submission at a time, with
+    nothing on the screen to say the bill just started. So free beats paid ahead
+    of every other consideration, accuracy included.
+    """
+
+    def test_the_paid_entry_is_the_final_one(self):
+        from grader import clients
+
+        assert clients.FALLBACK_CHAIN[-1][0] == "openai"
+
+    def test_it_stays_last_despite_scoring_highest(self, monkeypatch):
+        """It is the strongest marker in the table and still goes last.
+
+        This is the case that would break under a naive "best model first" or
+        "highest score wins" rule, which is why it is pinned.
+        """
+        from grader import clients
+
+        entry = ("openai", "gpt-4.1")
+        assert clients.MEASURED[entry] == max(
+            v for v in clients.MEASURED.values() if v is not None
+        )
+        assert clients.FALLBACK_CHAIN.index(entry) == len(clients.FALLBACK_CHAIN) - 1
+
+    def test_it_sorts_behind_an_unmeasured_free_marker(self):
+        """Even an unscored free host is tried before spending money."""
+        from grader import clients
+
+        paid = clients._rank(("openai", "gpt-4.1"))
+        free_unmeasured = clients._rank(("gemini", "gemini-2.5-flash"))
+        assert free_unmeasured < paid
+
+    def test_marking_reaches_it_only_when_every_free_budget_is_spent(
+        self, monkeypatch
+    ):
+        from grader.grading import sampling
+
+        monkeypatch.setenv("GROQ_API_KEY", "k")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+        sampling.forget_spent_budgets()
+
+        from grader import clients
+
+        chain = clients.marking_chain()
+        # Spend everything except the last entry.
+        for entry in chain[:-1]:
+            sampling._spent.add(entry)
+        assert sampling.next_marker() == ("openai", "gpt-4.1")
+
+        # And with that spent too, marking has nowhere left to go and says so
+        # rather than looping.
+        sampling._spent.add(("openai", "gpt-4.1"))
+        assert sampling.next_marker() is None
+        sampling.forget_spent_budgets()

@@ -114,6 +114,13 @@ jobs:
           GROQ_SECRET_ARN: ${{ vars.GROQ_SECRET_ARN }}
           CEREBRAS_SECRET_ARN: ${{ vars.CEREBRAS_SECRET_ARN }}
           GEMINI_SECRET_ARN: ${{ vars.GEMINI_SECRET_ARN }}
+          # Keys by value, used only where no ARN names a Secrets Manager entry.
+          # Lower security than an ARN - see the note in deploy.sh - and the only
+          # route that works without somebody creating the secret by hand, since
+          # the deploy role has no Secrets Manager permissions on purpose.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
           # The passcode in front of the origin. A secret rather than a var
           # because vars are readable by anyone with access to the repository's

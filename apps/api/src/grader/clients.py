@@ -139,7 +139,9 @@ FREE_TIER: dict[str, dict[str, float]] = {
     # minutes, which is fine for a queue and slow for somebody watching.
     "cerebras": {"scripts_per_day": 5.5, "rpm": 5},
     "groq": {"scripts_per_day": 2.0, "rpm": 30},
-    "openai": {"scripts_per_day": 0.0, "rpm": 60},
+    # Paid, and therefore last whatever it scores. See `_rank`.
+    "openai": {"scripts_per_day": 0.0, "rpm": 60, "paid": 1},
+    "anthropic": {"scripts_per_day": 0.0, "rpm": 60, "paid": 1},
 }
 
 
@@ -179,6 +181,12 @@ MEASURED: dict[tuple[str, str], int | None] = {
     ("groq", "qwen/qwen3.8-27b"): 4,
     ("cerebras", "qwen-3.8-27b"): None,
     ("groq", "openai/gpt-oss-20b"): 4,
+    # The paid last resort, so that a submission fails only when there is
+    # genuinely nowhere left to send it. It is the strongest marker here and it
+    # is still last, because reaching it costs money and every entry above it
+    # does not: an order that let it answer while a free allowance sat unspent
+    # would be charging for something already paid for.
+    ("openai", "gpt-4.1"): 8,
 }
 
 #: The minimum gate score a marker needs before it leads the chain.
@@ -195,7 +203,7 @@ MEASURED: dict[tuple[str, str], int | None] = {
 MIN_IN_BAND = int(os.getenv("GRADER_MIN_IN_BAND") or 6)
 
 
-def _rank(entry: tuple[str, str]) -> tuple[int, float, str, str]:
+def _rank(entry: tuple[str, str]) -> tuple[int, int, float, str, str]:
     """Sort key: accuracy tier first, then free allowance, then a stable name.
 
     Two levels rather than one. Ordering purely by allowance would put a weaker
@@ -211,8 +219,13 @@ def _rank(entry: tuple[str, str]) -> tuple[int, float, str, str]:
     provider, model = entry
     scored = MEASURED.get(entry)
     tier = 0 if scored is not None and scored >= MIN_IN_BAND else 1
-    allowance = FREE_TIER.get(provider, {}).get("scripts_per_day", 0.0)
-    return (tier, -allowance, provider, model)
+    limits = FREE_TIER.get(provider, {})
+    # Free before paid, ahead of everything else including accuracy. A paid host
+    # is a fine last resort and a bad first choice: reaching it while a free
+    # allowance sits unspent charges for marking that was already paid for, and
+    # it does so silently, one submission at a time.
+    paid = int(limits.get("paid", 0))
+    return (paid, tier, -limits.get("scripts_per_day", 0.0), provider, model)
 
 
 #: Where marking goes, in order, until something answers.
