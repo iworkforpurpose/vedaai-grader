@@ -347,7 +347,7 @@ roughly 396,000 tokens or 90 requests depending on who is counting.
 | host | free allowance | at five samples |
 | --- | --- | --- |
 | Groq | 200,000 tokens/day, **per model** | ~0.5 scripts/day per model |
-| Google | requests/day, **per model**, 10/minute | ~3-11 scripts/day per model |
+| Google | requests/day, **per model**, 10/minute | ~3 scripts/day; could not finish a gate run |
 | Cerebras | 1,000,000 tokens/day on paper | unusable: refuses without billing |
 
 Two things this table got wrong before, both worth stating because they are the
