@@ -231,19 +231,34 @@ class TestTheChainIsOrderedByEvidenceThenByAllowance:
         assert clients._rank(("gemini", "gemini-2.5-flash"))[0] == 1
         assert clients._rank(("groq", "openai/gpt-oss-120b"))[0] == 0
 
-    def test_measuring_a_big_free_tier_promotes_it_to_the_front(self, monkeypatch):
-        """The order is computed, so a new measurement changes it without a rewrite.
+    def test_measuring_a_marker_promotes_it_into_allowance_order(self, monkeypatch):
+        """The order is computed, so a new score re-sorts without anyone editing a list.
 
-        This is the case that matters: the host with by far the largest allowance
-        is currently unmeasured, and the moment it scores it should lead the
-        chain rather than wait for somebody to re-sort a list by hand.
+        Asserted as the rule rather than as a position, because the position
+        depends on numbers that move: this test used to say "measuring the
+        largest free tier puts it first", which stopped being true the moment a
+        host with a larger allowance started answering. The rule did not change;
+        only the arithmetic did.
         """
         from grader import clients
 
         entry = ("gemini", "gemini-2.5-flash")
+        assert clients.MEASURED[entry] is None
+        before = sorted(clients.MEASURED, key=clients._rank).index(entry)
+
         monkeypatch.setitem(clients.MEASURED, entry, 8)
-        reordered = sorted(clients.MEASURED, key=clients._rank)
-        assert reordered[0] == entry
+        after_chain = sorted(clients.MEASURED, key=clients._rank)
+        after = after_chain.index(entry)
+
+        assert after < before, "a measured marker did not move up"
+        assert clients._rank(entry)[0] == 0, "it did not join the scored tier"
+
+        # And it sits exactly where its allowance puts it among the scored.
+        scored = [e for e in after_chain if clients._rank(e)[0] == 0]
+        allowances = [
+            clients.FREE_TIER.get(p, {}).get("scripts_per_day", 0.0) for p, _m in scored
+        ]
+        assert allowances == sorted(allowances, reverse=True)
 
     def test_every_configured_host_is_reachable_before_marking_gives_up(
         self, monkeypatch

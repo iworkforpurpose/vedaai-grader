@@ -287,6 +287,20 @@ make. It is therefore where marking goes when the larger model's daily budget is
 spent, and not before. `provenance` names the model that actually answered, so a
 script marked after the switch says so.
 
+### What the open-weight marker scores, measured in one session
+
+`gpt-oss-120b` on Cerebras, five samples per question, a complete run with no
+rate limiting: **six of nine inside their band**. All three misses are
+under-marking - geography 10 against 13-15, english 15 against 16-20, economics
+10 against 11-13 - and the economics one is a known aligner fault rather than a
+marking one.
+
+An earlier session recorded eight of nine for the same weights on Groq. That
+figure is not comparable and should not be quoted next to this one: measurements
+in this project must come from the same session, because the scorer depends on a
+hosted embedding service and the golden set is not a closed system. Six of nine
+is what a clean run produced today.
+
 ### The panel is what buys the accuracy, not the model
 
 The same model, the same nine documents, the only difference being how many
@@ -348,7 +362,7 @@ roughly 396,000 tokens or 90 requests depending on who is counting.
 | --- | --- | --- |
 | Groq | 200,000 tokens/day, **per model** | ~0.5 scripts/day per model |
 | Google | requests/day, **per model**, 10/minute | ~3 scripts/day; could not finish a gate run |
-| Cerebras | 1,000,000 tokens/day on paper | unusable: refuses without billing |
+| Cerebras | 1,000,000 tokens/day, 2,400 requests/day, 5/minute | ~5 scripts/day |
 
 Two things this table got wrong before, both worth stating because they are the
 kind of thing that is easy to believe and expensive to assume.
@@ -360,9 +374,13 @@ on a fresh key is **twenty**, and nothing says so until a 429 arrives naming
 also being truncated out of the logs, so the first diagnosis was "rate limited,
 cause unknown".
 
-**Cerebras is not free.** It serves the right models and accepts the right
-schemas, and then refuses to answer: "Payment required to access this resource."
-The trial credit is not active on a new account without billing.
+**Cerebras needed billing enabled before it would answer.** With a valid key it
+authenticated, listed models, and refused every completion with "Payment required
+to access this resource." Once the account was activated it works, and its limits
+are read from the provider's own `x-ratelimit-*` response headers rather than
+from a documentation page - the one source that cannot be out of date. Tokens
+bind long before requests: 2,400 requests a day against about ninety calls a
+script, but the million-token budget runs out at roughly five scripts.
 
 So the numbers above decide the *order* markers are tried in and nothing else.
 Whether marking survives a spent allowance is decided by the chain walking on
