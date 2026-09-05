@@ -132,7 +132,7 @@ FALLBACK_CHAIN: list[tuple[str, str]] = [
     # is metered in requests rather than tokens, which is the shape marking
     # actually has, so it is the largest permanently-free allowance available.
     # It sits below the measured entries until somebody runs the gate on it.
-    ("gemini", "gemini-3-flash"),
+    ("gemini", "gemini-3-flash-preview"),
     # Measured at 4 of 9 at one sample, with six questions lost to rate limiting
     # rather than judged - so that figure is a floor, not a verdict.
     ("groq", "qwen/qwen3.8-27b"),

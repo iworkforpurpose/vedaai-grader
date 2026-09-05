@@ -763,3 +763,89 @@ class TestThePanelIsWhatBuysAccuracy:
             "cost change, and the gate figures above say what it costs"
         )
         importlib.reload(engine)
+
+
+class TestAHostThatRefusesAParameterIsLearnedFrom:
+    """Every OpenAI-shaped host implements a different subset of the parameters.
+
+    A refused parameter is silent in the worst way: it comes back as a 400 on
+    every sample, so the question is never judged and the document simply scores
+    zero. A whole nine-document gate run was lost to Google refusing `seed`, and
+    the message it refuses with is worded unlike any other host's.
+    """
+
+    def setup_method(self):
+        from grader.grading import sampling
+
+        sampling.forget()
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Unsupported value: 'seed' is not supported with this model",
+            "Unsupported parameter: 'seed'",
+            "Unrecognized request argument supplied: seed",
+            # Google, via its OpenAI-compatible endpoint.
+            'Invalid JSON payload received. Unknown name "seed": Cannot find field.',
+        ],
+    )
+    def test_every_hosts_wording_is_recognised(self, message):
+        from grader.grading import sampling
+
+        class BadRequestError(Exception):
+            pass
+
+        assert sampling._names_a_refused_parameter(BadRequestError(message)) == "seed"
+
+    def test_a_real_bad_request_is_not_mistaken_for_a_refused_parameter(self):
+        """Otherwise the retry loop strips parameters forever and never succeeds."""
+        from grader.grading import sampling
+
+        class BadRequestError(Exception):
+            pass
+
+        assert (
+            sampling._names_a_refused_parameter(
+                BadRequestError("The model `nope` does not exist")
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_request_is_retried_without_what_was_refused(self):
+        from grader.grading import sampling
+
+        sent: list[dict] = []
+
+        class BadRequestError(Exception):
+            pass
+
+        class Client:
+            class chat:  # noqa: N801
+                class completions:  # noqa: N801
+                    @staticmethod
+                    async def create(**kwargs):
+                        sent.append(kwargs)
+                        if "seed" in kwargs:
+                            raise BadRequestError(
+                                'Invalid JSON payload received. Unknown name "seed": '
+                                "Cannot find field."
+                            )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(message=SimpleNamespace(content="{}"))
+                            ]
+                        )
+
+        await sampling._create(
+            Client(),
+            model="gemini-3-flash-preview",
+            provider="gemini",
+            messages=[],
+            schema_name="s",
+            schema={},
+            temperature=0.2,
+            seed=7,
+        )
+        assert "seed" in sent[0] and "seed" not in sent[-1]
+        assert sampling.refused_by("gemini-3-flash-preview") == {"seed"}

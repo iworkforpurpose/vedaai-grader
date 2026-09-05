@@ -1103,14 +1103,50 @@ body::before {
 .dropzone-slot {
   display: flex;
   min-width: 0;
+  /*
+   * Contains the absolutely-positioned input. Without it the input resolves
+   * against whatever ancestor happens to be positioned, which is a different
+   * element on different screens.
+   */
+  position: relative;
 }
 
+/*
+ * Visually hidden, and hidden the standard way.
+ *
+ * This was `opacity: 0; pointer-events: none`, which works in Chrome and is a
+ * known way to break a file input in Safari: Safari honours `pointer-events:
+ * none` on the control itself, and a label's forwarded activation is delivered
+ * as a click on its target - so the label looks alive, the press animates, and
+ * no picker ever opens. That is exactly the shape of "the button does nothing",
+ * and it is invisible to any amount of testing in Chromium.
+ *
+ * The clip-rect pattern below hides the control without lying about whether it
+ * can be interacted with, which is why it is what assistive-technology guidance
+ * has settled on. It also leaves the input focusable, so the dropzone becomes
+ * keyboard-operable: Tab to it, Space to open the picker.
+ */
 .dropzone-input {
   position: absolute;
   width: 1px;
   height: 1px;
-  opacity: 0;
-  pointer-events: none;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * The focus ring has to appear on the label, because that is the part a reader
+ * can see. Without this the dropzone is reachable by keyboard and gives no sign
+ * of it, which is worse than not being reachable at all.
+ */
+.dropzone-input:focus-visible + .dropzone {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .dropzone {

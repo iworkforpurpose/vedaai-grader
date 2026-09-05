@@ -207,17 +207,30 @@ def forget() -> None:
 def _names_a_refused_parameter(error: Exception) -> str | None:
     """The optional parameter an error is complaining about, if it is one.
 
-    Matched on the message because the provider expresses this several ways —
+    Matched on the message because the provider expresses this several ways -
     "Unsupported value: 'temperature'", "Unsupported parameter: 'seed'",
-    "Unrecognized request argument supplied: seed" — and all of them are 400s
-    that name the parameter. Anything else is a real failure and is re-raised.
+    "Unrecognized request argument supplied: seed", and Google's
+    'Unknown name "seed": Cannot find field.' - and all of them are 400s that name
+    the parameter. Anything else is a real failure and is re-raised.
+
+    Google's wording is the one that cost a whole gate run. Every OpenAI-shaped
+    host implements a slightly different subset, so this list grows by meeting a
+    new host rather than by reading a specification; the failure it prevents is
+    not subtle but it is silent, because a refused parameter comes back as a
+    400 per sample and the document simply scores zero.
     """
     if "badrequest" not in type(error).__name__.lower():
         return None
     message = str(error).lower()
     if not any(
         phrase in message
-        for phrase in ("unsupported value", "unsupported parameter", "unrecognized request")
+        for phrase in (
+            "unsupported value",
+            "unsupported parameter",
+            "unrecognized request",
+            "unknown name",
+            "cannot find field",
+        )
     ):
         return None
     return next((name for name in _OPTIONAL if name in message), None)
