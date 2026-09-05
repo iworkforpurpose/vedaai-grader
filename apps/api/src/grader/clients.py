@@ -122,7 +122,12 @@ PROVIDERS: dict[str, tuple[str, str]] = {
 #: `rpm` is here because it decides how long one script takes rather than how
 #: many fit in a day, and the two pull in opposite directions.
 FREE_TIER: dict[str, dict[str, float]] = {
-    "gemini": {"scripts_per_day": 11.0, "rpm": 10},
+    # Measured by trying, not by reading. Two full gate attempts on two Google
+    # models produced 153 and 97+ rate-limit errors and could not finish either
+    # run, so the figure below is an upper bound on a good day rather than a
+    # capacity anyone should plan against. It stays above Groq only because a
+    # request budget is still worth more here than a 200,000-token one.
+    "gemini": {"scripts_per_day": 3.0, "rpm": 10},
     "groq": {"scripts_per_day": 2.0, "rpm": 30},
     # Serves the right models and refuses to answer without billing on a fresh
     # account: "Payment required to access this resource." Left in the chain
@@ -149,6 +154,9 @@ FREE_TIER: dict[str, dict[str, float]] = {
 MEASURED: dict[tuple[str, str], int | None] = {
     ("cerebras", "gpt-oss-120b"): 8,
     ("groq", "openai/gpt-oss-120b"): 8,
+    # Marks correctly when it gets through: on the documents that were not rate
+    # limited it landed in band. Neither model could complete a gate run on the
+    # free tier, so neither has a score, and without one they cannot lead.
     ("gemini", "gemini-2.5-flash"): None,
     ("gemini", "gemini-flash-lite-latest"): None,
     ("gemini", "gemini-3.1-flash-lite"): None,
