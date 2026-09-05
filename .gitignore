@@ -75,3 +75,8 @@ treehouse.toml
 
 # Derived check banks. A cache keyed by question text, rebuilt on demand.
 .banks/
+
+# Playwright MCP scratch output
+.playwright-mcp/
+review-live.png
+review-snapshot.md
