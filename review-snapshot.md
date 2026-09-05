@@ -1,0 +1,327 @@
+- generic [active] [ref=f12e1]:
+  - generic [ref=f12e2]:
+    - navigation "Main" [ref=f12e3]:
+      - button "AI Teacher's Toolkit" [ref=f12e6] [cursor=pointer]
+      - list [ref=f12e10]:
+        - listitem [ref=f12e11]:
+          - generic "Home"
+        - listitem [ref=f12e12]:
+          - generic "My Classroom"
+        - listitem [ref=f12e13]:
+          - generic "Assignments"
+        - listitem [ref=f12e14]:
+          - link "Exams" [ref=f12e15] [cursor=pointer]:
+            - /url: /
+        - listitem [ref=f12e21]:
+          - generic "My Library"
+        - listitem [ref=f12e22]:
+          - generic "Review"
+        - listitem [ref=f12e23]:
+          - generic "Analytics"
+      - generic [ref=f12e24]:
+        - generic "Settings"
+        - button "Expand navigation" [ref=f12e27] [cursor=pointer]
+    - generic [ref=f12e30]:
+      - banner [ref=f12e31]:
+        - button "Back" [ref=f12e32] [cursor=pointer]
+        - generic [ref=f12e35]: Exams
+        - generic [ref=f12e42]:
+          - button "Help" [ref=f12e43] [cursor=pointer]
+          - button "Notifications" [ref=f12e47] [cursor=pointer]
+          - button "Assistant" [ref=f12e52] [cursor=pointer]
+          - button "Vighnesh Nama" [ref=f12e56] [cursor=pointer]
+      - generic [ref=f12e63]:
+        - region "Extracted questions" [ref=f12e64]:
+          - generic [ref=f12e65]:
+            - heading "Extracted Questions (from question paper)" [level=2] [ref=f12e66]
+            - generic [ref=f12e67]:
+              - button "Re-mark" [ref=f12e68] [cursor=pointer]
+              - button "Expand All" [ref=f12e69] [cursor=pointer]
+          - paragraph [ref=f12e70]:
+            - strong [ref=f12e71]: "14"
+            - text: of 18 answered ·
+            - strong [ref=f12e72]: "0"
+            - text: not answered · 3 to check · marks not proposed, rubric only
+          - alert [ref=f12e73]:
+            - paragraph [ref=f12e74]:
+              - generic [aria-hidden] [ref=f12e75]: ·
+              - text: "1 written question number(s) do not match the writing beside them: 11.. They will not be trusted to place an answer on their own."
+            - paragraph [ref=f12e76]:
+              - generic [aria-hidden] [ref=f12e77]: ·
+              - text: 1 region(s) of writing match no question on the paper.
+            - paragraph [ref=f12e78]:
+              - generic [aria-hidden] [ref=f12e79]: "!"
+              - text: An answer appears to continue past the last uploaded page. A page may be missing from the upload.
+            - paragraph [ref=f12e80]:
+              - generic [aria-hidden] [ref=f12e81]: "!"
+              - text: "Answers were not marked automatically: No marking key is set, so answers cannot be marked automatically. Set GROQ_API_KEY or OPENAI_API_KEY. The rubric and the located answer are still produced. ANTHROPIC_API_KEY is not set, so answers cannot be marked automatically. The rubric and the located answer are still produced."
+          - generic [ref=f12e82]:
+            - generic [ref=f12e83] [cursor=pointer]:
+              - generic [ref=f12e84]:
+                - generic [aria-hidden] [ref=f12e85]: "1"
+                - 'button "Question 1: Define refraction of light." [ref=f12e86]': Define refraction of light.
+                - generic [ref=f12e87]:
+                  - button "Answered" [ref=f12e88]
+                  - button "Show details" [ref=f12e89]
+              - generic [ref=f12e92]:
+                - heading "AI Feedback" [level=3] [ref=f12e93]
+                - paragraph [ref=f12e94]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e95]: An answer was found and located on the sheet.
+                - generic [ref=f12e96]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e97]
+                  - button "Move “1. Refraction is the bending of light when it passes from on…”" [ref=f12e98]
+            - generic [ref=f12e99] [cursor=pointer]:
+              - generic [ref=f12e100]:
+                - generic [aria-hidden] [ref=f12e101]: "2"
+                - 'button "Question 2: State the SI unit of pressure." [ref=f12e102]': State the SI unit of pressure.
+                - generic [ref=f12e103]:
+                  - button "Answered" [ref=f12e104]
+                  - button "Show details" [ref=f12e105]
+              - generic [ref=f12e108]:
+                - heading "AI Feedback" [level=3] [ref=f12e109]
+                - paragraph [ref=f12e110]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e111]: An answer was found and located on the sheet.
+                - generic [ref=f12e112]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e113]
+                  - button "Move “2. The SI unit of pressure is the pascal (Pa).”" [ref=f12e114]
+            - generic [ref=f12e115] [cursor=pointer]:
+              - generic [ref=f12e116]:
+                - generic [aria-hidden] [ref=f12e117]: "3"
+                - 'button "Question 3: Name the process by which plants lose water as water vapour." [ref=f12e118]': Name the process by which plants lose water as water vapour.
+                - generic [ref=f12e119]:
+                  - button "Answered" [ref=f12e120]
+                  - button "Show details" [ref=f12e121]
+              - generic [ref=f12e124]:
+                - heading "AI Feedback" [level=3] [ref=f12e125]
+                - paragraph [ref=f12e126]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e127]: An answer was found and located on the sheet.
+                - generic [ref=f12e128]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e129]
+                  - button "Move “3. The process is called transpiration. water evaporates fro…”" [ref=f12e130]
+            - generic [ref=f12e131] [cursor=pointer]:
+              - generic [ref=f12e132]:
+                - generic [aria-hidden] [ref=f12e133]: "4"
+                - 'button "Question 4: Write the chemical formula of washing soda." [ref=f12e134]': Write the chemical formula of washing soda.
+                - generic [ref=f12e135]:
+                  - button "Page may be missing" [ref=f12e136]:
+                    - generic [aria-hidden] [ref=f12e137]: "!"
+                    - text: Page may be missing
+                  - button "Show details" [ref=f12e138]
+              - generic [ref=f12e141]:
+                - heading "AI Feedback" [level=3] [ref=f12e142]
+                - paragraph [ref=f12e143]: A page appears to be missing.
+                - paragraph [ref=f12e144]: An answer continues past the last uploaded page. Check for a missing page.
+            - generic [ref=f12e145] [cursor=pointer]:
+              - generic [ref=f12e146]:
+                - generic [aria-hidden] [ref=f12e147]: "5"
+                - 'button "Question 5: Write one difference between speed and velocity." [ref=f12e148]': Write one difference between speed and velocity.
+                - generic [ref=f12e149]:
+                  - button "Answered" [ref=f12e150]
+                  - button "Show details" [ref=f12e151]
+              - generic [ref=f12e154]:
+                - heading "AI Feedback" [level=3] [ref=f12e155]
+                - paragraph [ref=f12e156]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e157]: An answer was found and located on the sheet.
+                - generic [ref=f12e158]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e159]
+                  - button "Move “5. speed is a scalar and has only magnítude. velocity is a v…”" [ref=f12e160]
+            - generic [ref=f12e161] [cursor=pointer]:
+              - generic [ref=f12e162]:
+                - generic [aria-hidden] [ref=f12e163]: "6"
+                - 'button "Question 6: Name the tissue that transports water in a plant." [ref=f12e164]': Name the tissue that transports water in a plant.
+                - generic [ref=f12e165]:
+                  - button "Page may be missing" [ref=f12e166]:
+                    - generic [aria-hidden] [ref=f12e167]: "!"
+                    - text: Page may be missing
+                  - button "Show details" [ref=f12e168]
+              - generic [ref=f12e171]:
+                - heading "AI Feedback" [level=3] [ref=f12e172]
+                - paragraph [ref=f12e173]: A page appears to be missing.
+                - paragraph [ref=f12e174]: An answer continues past the last uploaded page. Check for a missing page.
+            - generic [ref=f12e175] [cursor=pointer]:
+              - generic [ref=f12e176]:
+                - generic [aria-hidden] [ref=f12e177]: "7"
+                - 'button "Question 7: Explain why a pencil appears bent when it is partly immersed in water." [ref=f12e178]': Explain why a pencil appears bent when it is partly immersed in water.
+                - generic [ref=f12e179]:
+                  - button "Answered" [ref=f12e180]
+                  - button "Show details" [ref=f12e181]
+              - generic [ref=f12e184]:
+                - heading "AI Feedback" [level=3] [ref=f12e185]
+                - paragraph [ref=f12e186]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e187]: An answer was found and located on the sheet.
+                - generic [ref=f12e188]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e189]
+                  - button "Move “7. The pencil looks bent because light coming from the part …”" [ref=f12e190]
+            - generic [ref=f12e191] [cursor=pointer]:
+              - generic [ref=f12e192]:
+                - generic [aria-hidden] [ref=f12e193]: "8"
+                - 'button "Question 8: State Newton''s second law of motion and derive the relation F = ma." [ref=f12e194]': State Newton's second law of motion and derive the relation F = ma.
+                - generic [ref=f12e195]:
+                  - button "Answered" [ref=f12e196]
+                  - button "Show details" [ref=f12e197]
+              - generic [ref=f12e200]:
+                - heading "AI Feedback" [level=3] [ref=f12e201]
+                - paragraph [ref=f12e202]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e203]: An answer was found and located on the sheet.
+                - generic [ref=f12e204]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e205]
+                  - button "Move “8. Newton's second Law says the rate of change of momentum i…”" [ref=f12e206]
+            - generic [ref=f12e207] [cursor=pointer]:
+              - generic [ref=f12e208]:
+                - generic [aria-hidden] [ref=f12e209]: "9"
+                - 'button "Question 9: Describe the structure of the plant cell wall and give one of its functions." [ref=f12e210]': Describe the structure of the plant cell wall and give one of its functions.
+                - generic [ref=f12e211]:
+                  - button "Answered" [ref=f12e212]
+                  - button "Show details" [ref=f12e213]
+              - generic [ref=f12e216]:
+                - heading "AI Feedback" [level=3] [ref=f12e217]
+                - paragraph [ref=f12e218]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e219]: An answer was found and located on the sheet.
+                - generic [ref=f12e220]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e221]
+                  - button "Move “9. The cell wall is made of cellulose and líes outsíde the c…”" [ref=f12e222]
+            - generic [ref=f12e223] [cursor=pointer]:
+              - generic [ref=f12e224]:
+                - generic [aria-hidden] [ref=f12e225]: "10"
+                - 'button "Question 10: Distinguish between an element, a compound and a mixture, with one example of each." [ref=f12e226]': Distinguish between an element, a compound and a mixture, with one example of each.
+                - generic [ref=f12e227]:
+                  - button "Answered" [ref=f12e228]
+                  - button "Show details" [ref=f12e229]
+              - generic [ref=f12e232]:
+                - heading "AI Feedback" [level=3] [ref=f12e233]
+                - paragraph [ref=f12e234]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e235]: An answer was found and located on the sheet.
+                - generic [ref=f12e236]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e237]
+                  - button "Move “10. An element has only one kind of atom, líke oxygen. A com…”" [ref=f12e238]
+            - generic [ref=f12e239] [cursor=pointer]:
+              - generic [ref=f12e240]:
+                - generic [aria-hidden] [ref=f12e241]: "11"
+                - generic [aria-hidden] [ref=f12e242]: a.
+                - 'button "Question 11 a.: Define atomic number and mass number." [ref=f12e243]': Define atomic number and mass number.
+                - generic [ref=f12e244]:
+                  - button "Answered" [ref=f12e245]
+                  - button "Show details" [ref=f12e246]
+              - generic [ref=f12e249]:
+                - heading "AI Feedback" [level=3] [ref=f12e250]
+                - paragraph [ref=f12e251]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e252]: An answer was found and located on the sheet.
+                - generic [ref=f12e253]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e254]
+                  - button "Move “11. Atomic number is the number of protons in the nucleus an…”" [ref=f12e255]
+            - generic [ref=f12e256] [cursor=pointer]:
+              - generic [ref=f12e257]:
+                - generic [aria-hidden] [ref=f12e258]: "11"
+                - generic [aria-hidden] [ref=f12e259]: b.
+                - 'button "Question 11 b.: An atom has 11 protons and 12 neutrons. Give its atomic number and mass number." [ref=f12e260]': An atom has 11 protons and 12 neutrons. Give its atomic number and mass number.
+                - generic [ref=f12e261]:
+                  - button "Answered" [ref=f12e262]
+                  - button "Show details" [ref=f12e263]
+              - generic [ref=f12e266]:
+                - heading "AI Feedback" [level=3] [ref=f12e267]
+                - paragraph [ref=f12e268]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e269]: An answer was found and located on the sheet.
+                - generic [ref=f12e270]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e271]
+                  - button "Move “11. Atomic number is the number of protons in the nucleus an…”" [ref=f12e272]
+            - generic [ref=f12e273] [cursor=pointer]:
+              - generic [ref=f12e274]:
+                - generic [aria-hidden] [ref=f12e275]: "12"
+                - 'button "Question 12: Explain, with one everyday example, how evaporation causes cooling." [ref=f12e276]': Explain, with one everyday example, how evaporation causes cooling.
+                - generic [ref=f12e277]:
+                  - button "Answered" [ref=f12e278]
+                  - button "Show details" [ref=f12e279]
+              - generic [ref=f12e282]:
+                - heading "AI Feedback" [level=3] [ref=f12e283]
+                - paragraph [ref=f12e284]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e285]: An answer was found and located on the sheet.
+                - generic [ref=f12e286]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e287]
+                  - button "Move “12. When a líquid evaporates the fastest particles escape fi…”" [ref=f12e288]
+            - generic [ref=f12e289] [cursor=pointer]:
+              - generic [ref=f12e290]:
+                - generic [aria-hidden] [ref=f12e291]: "13"
+                - 'button "Question 13: Describe the water cycle and explain the part transpiration plays in it." [ref=f12e292]': Describe the water cycle and explain the part transpiration plays in it.
+                - generic [ref=f12e293]:
+                  - button "Answered" [ref=f12e294]
+                  - button "Show details" [ref=f12e295]
+              - generic [ref=f12e298]:
+                - heading "AI Feedback" [level=3] [ref=f12e299]
+                - paragraph [ref=f12e300]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e301]: An answer was found and located on the sheet.
+                - generic [ref=f12e302]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e303]
+                  - button "Move “13. The water cycle is when water goes up and comes down aga…”" [ref=f12e304]
+            - generic [ref=f12e305] [cursor=pointer]:
+              - generic [ref=f12e306]:
+                - generic [aria-hidden] [ref=f12e307]: "14"
+                - generic [aria-hidden] [ref=f12e308]: i.
+                - 'button "Question 14 i.: State the law of conservation of mass." [ref=f12e309]': State the law of conservation of mass.
+                - generic [ref=f12e310]:
+                  - button "Not found" [ref=f12e311]:
+                    - generic [aria-hidden] [ref=f12e312]: "!"
+                    - text: Not found
+                  - button "Show details" [ref=f12e313]
+              - generic [ref=f12e316]:
+                - heading "AI Feedback" [level=3] [ref=f12e317]
+                - paragraph [ref=f12e318]: The answer to this could not be located on the sheet.
+                - paragraph [ref=f12e319]: Writing that may answer this is on the sheet, but could not be placed here.
+            - generic [ref=f12e320] [cursor=pointer]:
+              - generic [ref=f12e321]:
+                - generic [aria-hidden] [ref=f12e322]: "14"
+                - generic [aria-hidden] [ref=f12e323]: ii.
+                - 'button "Question 14 ii.: Six grams of carbon burns completely in sixteen grams of oxygen. Find the mass of carbon dioxide formed and justify your answer." [ref=f12e324]': Six grams of carbon burns completely in sixteen grams of oxygen. Find the mass of carbon dioxide formed and justify your answer.
+                - generic [ref=f12e325]:
+                  - button "Not required" [ref=f12e326]
+                  - button "Show details" [ref=f12e327]
+              - generic [ref=f12e330]:
+                - heading "AI Feedback" [level=3] [ref=f12e331]
+                - paragraph [ref=f12e332]: Not required — the student answered the alternatives.
+                - paragraph [ref=f12e333]: The paper allowed this to be skipped, and it was.
+            - generic [ref=f12e334] [cursor=pointer]:
+              - generic [ref=f12e335]:
+                - generic [aria-hidden] [ref=f12e336]: "15"
+                - 'button "Question 15: Explain the process of photosynthesis, naming the raw materials and the products, and describe one experiment that shows sunlight is necessary." [ref=f12e337]': Explain the process of photosynthesis, naming the raw materials and the products, and describe one experiment that shows sunlight is necessary.
+                - generic [ref=f12e338]:
+                  - button "Answered" [ref=f12e339]
+                  - button "Show details" [ref=f12e340]
+              - generic [ref=f12e343]:
+                - heading "AI Feedback" [level=3] [ref=f12e344]
+                - paragraph [ref=f12e345]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e346]: An answer was found and located on the sheet.
+                - generic [ref=f12e347]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e348]
+                  - button "Move “15. Photosynthesis is how green plants make their own food. …”" [ref=f12e349]
+            - generic [ref=f12e350] [cursor=pointer]:
+              - generic [ref=f12e351]:
+                - generic [aria-hidden] [ref=f12e352]: "16"
+                - 'button "Question 16: Describe the three states of matter in terms of the arrangement of their particles, and explain what happens at the melting point and the boiling point." [ref=f12e353]': Describe the three states of matter in terms of the arrangement of their particles, and explain what happens at the melting point and the boiling point.
+                - generic [ref=f12e354]:
+                  - button "Answered" [ref=f12e355]
+                  - button "Show details" [ref=f12e356]
+              - generic [ref=f12e359]:
+                - heading "AI Feedback" [level=3] [ref=f12e360]
+                - paragraph [ref=f12e361]: Not marked automatically — awaiting the teacher.
+                - paragraph [ref=f12e362]: An answer was found and located on the sheet.
+                - generic [ref=f12e363]:
+                  - heading "Wrong answer here?" [level=4] [ref=f12e364]
+                  - button "Move “16. In a solíd the partícles are packed closely and only víb…”" [ref=f12e365]
+        - region "Answer sheet" [ref=f12e366]:
+          - generic [ref=f12e367]:
+            - heading "Answer Sheet" [level=2] [ref=f12e368]
+            - generic [ref=f12e369]:
+              - generic [ref=f12e370]:
+                - button "Zoom out" [ref=f12e371] [cursor=pointer]
+                - generic [ref=f12e373]: 100%
+                - button "Zoom in" [ref=f12e374] [cursor=pointer]
+              - generic [ref=f12e377]:
+                - button "Previous page" [disabled] [ref=f12e378]
+                - generic [ref=f12e381]: Page 1 of 5
+                - button "Next page" [ref=f12e382] [cursor=pointer]
+          - generic [ref=f12e385]:
+            - img "Page 1 of the answer sheet" [ref=f12e387]
+            - img "Page 2 of the answer sheet" [ref=f12e389]
+            - img "Page 3 of the answer sheet" [ref=f12e391]
+            - img "Page 4 of the answer sheet" [ref=f12e393]
+            - img "Page 5 of the answer sheet" [ref=f12e395]
+  - alert [ref=f12e396]

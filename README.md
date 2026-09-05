@@ -287,18 +287,46 @@ make. It is therefore where marking goes when the larger model's daily budget is
 spent, and not before. `provenance` names the model that actually answered, so a
 script marked after the switch says so.
 
-**What is not measured.** The 8-of-9 figure for `gpt-oss-120b` comes from a run at
-five samples per question. The deployment ships one sample, and that exact
-combination has one document confirmed in band (`history`, 16 against 15-20) out
-of nine. The gap is not neglect: a single nine-document gate run consumes an
-entire 200,000-token daily budget, so the shipping configuration gets confirmed a
-document at a time as quota allows. Do not quote 8 of 9 as this deployment's
-number.
+### The panel is what buys the accuracy, not the model
 
-**Why the budget is per model.** A free tier meters each model separately, so the
-two sizes are two allowances rather than one. That is what makes the fallback
-worth having at all: with the larger model spent, the alternative to a worse
-marker is no marker.
+The same model, the same nine documents, the only difference being how many
+samples vote on each check:
+
+| `openai/gpt-oss-120b` | documents in band |
+| --- | --- |
+| five samples per question | 8 of 9 |
+| one sample per question | 5 of 9 |
+
+Both runs completed with no rate limiting, so this is the panel and nothing else.
+All four extra failures at one sample are *under*-marking.
+
+This matters because the obvious response to a tight free tier is to cut the
+panel, and that was done here: the deployment shipped one sample to fit inside
+200,000 tokens a day. It reads like a cost setting and it is an accuracy setting.
+Three documents were traded away without the trade being written down.
+
+So the panel is back to five and the capacity problem is solved where it actually
+lives, in the allowance. A marking call is about 2,300 tokens and a nine-document
+gate at one sample consumes very nearly a whole Groq day, which is the arithmetic
+that makes a single host untenable: at five samples one host affords roughly six
+scripts a day.
+
+**The chain, and why more hosts is not the same as more models.** Free tiers
+meter per model *and* per provider, so the same weights on a second host is a
+second allowance for the same judgement - extra capacity that costs no accuracy.
+That is why `clients.FALLBACK_CHAIN` begins with `gpt-oss-120b` twice, on two
+hosts, before it reaches anything weaker. Everything below those two entries is a
+worse marker and is reached only when the better ones have spent their day.
+
+`GRADER_MODEL` pins one entry and collapses the chain, which is what the eval
+harness does: a gate run that began on one model and quietly finished on another
+would report a number belonging to neither.
+
+**What is still not measured.** `gemini-3-flash` sits in the chain for capacity -
+its free tier is metered in requests per day rather than tokens, which is the
+shape marking actually has - but it has never been through the gate, so it is
+placed below every measured entry rather than above them on the strength of its
+allowance.
 
 **Marks move between identical runs**, so a single pass cannot tell a fix from
 noise. Each question is marked by a panel of five sampled independently, and
