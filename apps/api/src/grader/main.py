@@ -209,9 +209,18 @@ def _grading_readiness() -> GradingReadiness:
     except grading.GraderUnavailable:
         return GradingReadiness(configured=False, engine="rubric_only", model=None)
 
+    # The host, not the SDK. `grader.name` is the class's own label - "openai"
+    # for every OpenAI-shaped client - so a deployment marking on Cerebras or
+    # Google reported `openai` and looked misconfigured while working correctly.
+    #
+    # It matters beyond cosmetics: the release step reads this field to say what
+    # is live, and `provenance` on each grade already records the real host. Two
+    # places describing the same marker differently is how "a mark is only
+    # checkable if you know what made it" quietly stops being true.
+    engine = getattr(grader, "provider", "") or grader.name
     return GradingReadiness(
         configured=grader.name != "rubric_only",
-        engine=grader.name,
+        engine=engine,
         model=getattr(grader, "model", None),
     )
 

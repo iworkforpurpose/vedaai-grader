@@ -354,3 +354,50 @@ class TestProvingTheMarkerCanActuallyMark:
         assert body["grading"]["configured"] is False
         assert body["grading"]["reachable"] is False
         assert calls == []
+
+
+class TestHealthNamesTheHostNotTheSdk:
+    """Every OpenAI-shaped client calls itself "openai".
+
+    A deployment marking on Cerebras reported `openai:gpt-oss-120b` and read as
+    misconfigured while working correctly. The release step uses this field to
+    say what is live, and each grade's `provenance` already records the real
+    host - two places describing the same marker differently is how "a mark is
+    only checkable if you know what made it" quietly stops being true.
+    """
+
+    def test_the_provider_is_reported_rather_than_the_client_class(
+        self, client, monkeypatch
+    ) -> None:
+        from grader import main as main_module
+
+        monkeypatch.setenv("CEREBRAS_API_KEY", "csk-test")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+        main_module.forget_reachability()
+
+        body = client.get("/health").json()
+        assert body["grading"]["engine"] == "cerebras"
+        assert body["grading"]["model"] == "gpt-oss-120b"
+
+    def test_a_deployment_with_no_marker_still_says_so(
+        self, client, monkeypatch
+    ) -> None:
+        from grader import main as main_module
+
+        for var in (
+            "CEREBRAS_API_KEY",
+            "GROQ_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        main_module.forget_reachability()
+
+        grading = client.get("/health").json()["grading"]
+        assert grading["configured"] is False
+        assert grading["engine"] == "rubric_only"
