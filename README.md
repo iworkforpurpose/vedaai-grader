@@ -322,11 +322,35 @@ worse marker and is reached only when the better ones have spent their day.
 harness does: a gate run that began on one model and quietly finished on another
 would report a number belonging to neither.
 
-**What is still not measured.** `gemini-3-flash` sits in the chain for capacity -
-its free tier is metered in requests per day rather than tokens, which is the
-shape marking actually has - but it has never been through the gate, so it is
-placed below every measured entry rather than above them on the strength of its
-allowance.
+**Google, measured.** `gemini-3-flash-preview` marks: on the one document that
+got through a full gate run it scored 16 against a band of 15-20. The other eight
+scored zero, and none of that was marking - it was 155 rate-limit errors.
+
+That run found the governor's blind spot. Concurrency and rate are different
+limits and only the first was governed: a cap of two calls in flight says nothing
+about how many requests start in a minute, because short calls finish and are
+replaced immediately. Two workers comfortably issue sixty requests a minute
+against an allowance of ten. Requests are now paced per host on a sliding
+sixty-second window, which is what turns a request-metered free tier into usable
+capacity rather than an allowance spent on errors.
+
+It stays below the measured entries in the chain until a complete gate run gives
+it a number.
+
+### Which free tier buys what
+
+None of these gives both accuracy and volume on its own, which is the whole
+reason the chain exists.
+
+| host | free allowance | at five samples |
+| --- | --- | --- |
+| Groq | 200,000 tokens/day, **per model** | ~6 scripts/day per model |
+| Google | 1,500 requests/day, 10/minute | ~10 scripts/day, slowly |
+| Cerebras | 1,000,000 tokens/day, but trial credit with an expiry | ~30 scripts/day while it lasts |
+
+Groq's per-model metering is worth restating: four models with strict JSON
+support is four separate allowances on one key. That, plus Google, is the
+permanently-free floor.
 
 **Marks move between identical runs**, so a single pass cannot tell a fix from
 noise. Each question is marked by a panel of five sampled independently, and

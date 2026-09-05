@@ -63,8 +63,79 @@ RATE_LIMIT_RETRIES = int(os.getenv("MODEL_RATE_LIMIT_RETRIES") or 5)
 #: hold a teacher's browser open until it arrives.
 MAX_BACKOFF_SECONDS = float(os.getenv("MODEL_MAX_BACKOFF") or 90.0)
 
+#: Requests a minute this process will start, per host.
+#:
+#: Concurrency and rate are different limits and only the first was governed. A
+#: cap of two in flight says nothing about how many requests are started in a
+#: minute: short calls finish and are immediately replaced, so two concurrent
+#: workers comfortably issue sixty requests a minute against an allowance of ten.
+#:
+#: Measured, on Google's free tier: a nine-document gate produced 155 rate-limit
+#: errors and eight documents scoring zero, with the one document that did get
+#: through landing inside its band. The marking was never the problem.
+#:
+#: Per host because the allowance is per host, and because the chain can move
+#: between hosts mid-submission - a shared pacer would slow the fast host to the
+#: slow one's rate for no reason.
+REQUESTS_PER_MINUTE: dict[str, int] = {
+    "gemini": int(os.getenv("GEMINI_RPM") or 10),
+    "cerebras": int(os.getenv("CEREBRAS_RPM") or 5),
+    "groq": int(os.getenv("GROQ_RPM") or 30),
+}
+
+#: Used where a host is not in the table. High enough not to slow a paid account.
+DEFAULT_RPM = int(os.getenv("MODEL_RPM") or 60)
+
 _in_flight: asyncio.Semaphore | None = None
 _loop_owning_semaphore: object | None = None
+_starts: dict[str, list[float]] = {}
+_pace_lock: dict[str, asyncio.Lock] = {}
+_pace_loop: object | None = None
+
+
+def rpm_for(provider: str) -> int:
+    return REQUESTS_PER_MINUTE.get(provider, DEFAULT_RPM)
+
+
+async def _pace(provider: str) -> None:
+    """Wait until starting one more request keeps this host under its rate.
+
+    A sliding window rather than a fixed one: the provider's limit is itself a
+    rolling sixty seconds, so bucketing by wall-clock minute lets a burst at the
+    end of one bucket and the start of the next exceed the allowance while
+    looking compliant.
+
+    This is what turns a request-metered free tier into usable capacity. Without
+    it the allowance is spent on errors rather than on marking, which is a
+    strictly worse way to run out.
+    """
+    global _pace_loop
+    loop = asyncio.get_running_loop()
+    if _pace_loop is not loop:
+        _starts.clear()
+        _pace_lock.clear()
+        _pace_loop = loop
+
+    limit = rpm_for(provider)
+    if limit <= 0:
+        return
+    lock = _pace_lock.setdefault(provider, asyncio.Lock())
+    async with lock:
+        while True:
+            now = loop.time()
+            recent = [s for s in _starts.get(provider, []) if now - s < 60.0]
+            _starts[provider] = recent
+            if len(recent) < limit:
+                recent.append(now)
+                return
+            # Sleep until the oldest start falls out of the window.
+            await asyncio.sleep(max(0.05, 60.0 - (now - recent[0])))
+
+
+def forget_pacing() -> None:
+    """For tests."""
+    _starts.clear()
+    _pace_lock.clear()
 
 
 def _gate() -> asyncio.Semaphore:
@@ -263,6 +334,7 @@ async def _create(
     while True:
         sending = {k: v for k, v in optional.items() if k not in refused_by(model)}
         try:
+            await _pace(provider)
             async with _gate():
                 completion = await client.chat.completions.create(
                     model=model,

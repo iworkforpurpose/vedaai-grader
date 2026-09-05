@@ -849,3 +849,110 @@ class TestAHostThatRefusesAParameterIsLearnedFrom:
         )
         assert "seed" in sent[0] and "seed" not in sent[-1]
         assert sampling.refused_by("gemini-3-flash-preview") == {"seed"}
+
+
+class TestRequestsArePacedNotJustLimitedInFlight:
+    """Concurrency and rate are different limits, and only the first was governed.
+
+    A cap of two in flight says nothing about how many requests start in a
+    minute: short calls finish and are replaced immediately, so two workers
+    comfortably issue sixty requests a minute against an allowance of ten.
+    Measured on Google's free tier, a nine-document gate produced 155 rate-limit
+    errors and eight documents scoring zero, while the one document that got
+    through landed inside its band. The marking was never the problem.
+    """
+
+    def setup_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_pacing()
+
+    def teardown_method(self):
+        from grader.grading import sampling
+
+        sampling.forget_pacing()
+
+    @pytest.mark.asyncio
+    async def test_starting_more_than_the_allowance_waits(self, monkeypatch):
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "gemini", 3)
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        # The first three go straight through; the fourth has to wait for the
+        # window to roll.
+        for _ in range(3):
+            await sampling._pace("gemini")
+        assert not waits
+
+        # Ages the window by one slot on each sleep, so the fourth call waits
+        # once and then proceeds. Without this the stubbed sleep returns
+        # instantly, the window never moves, and the test spins for a real
+        # minute - which is the loop working correctly against a clock that is
+        # not advancing rather than a bug in the pacer.
+        async def age_one(seconds):
+            waits.append(seconds)
+            sampling._starts["gemini"][0] -= 61.0
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", age_one)
+        await sampling._pace("gemini")
+        assert len(waits) == 1, "the fourth request did not wait exactly once"
+
+    @pytest.mark.asyncio
+    async def test_each_host_is_paced_on_its_own_allowance(self, monkeypatch):
+        """A shared pacer would slow the fast host to the slow one's rate."""
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "gemini", 1)
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "groq", 30)
+
+        await sampling._pace("gemini")
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", record)
+        # Groq has its own budget and must not be held up by Gemini's.
+        await sampling._pace("groq")
+        assert not waits
+
+    @pytest.mark.asyncio
+    async def test_the_window_slides_rather_than_bucketing(self, monkeypatch):
+        """A fixed wall-clock bucket lets a burst straddle two of them.
+
+        The provider's own limit is a rolling sixty seconds, so bucketing would
+        allow twice the allowance across a boundary while looking compliant.
+        """
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "groq", 2)
+        await sampling._pace("groq")
+        await sampling._pace("groq")
+
+        # Age the recorded starts past the window; they should be discarded.
+        sampling._starts["groq"] = [t - 61.0 for t in sampling._starts["groq"]]
+        waits: list[float] = []
+        real_sleep = sampling.asyncio.sleep
+
+        async def record(seconds):
+            waits.append(seconds)
+            await real_sleep(0)
+
+        monkeypatch.setattr(sampling.asyncio, "sleep", record)
+        await sampling._pace("groq")
+        assert not waits, "starts older than the window were still counted"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_host_is_not_throttled_to_a_standstill(self):
+        from grader.grading import sampling
+
+        assert sampling.rpm_for("some-paid-host") == sampling.DEFAULT_RPM
