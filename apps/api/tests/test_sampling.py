@@ -712,7 +712,15 @@ class TestTheChainIsOrderedByMeasurement:
         assert chain[0][1].endswith("gpt-oss-120b")
         assert chain[1][1].endswith("gpt-oss-120b")
 
-    def test_the_weakest_measured_marker_is_reached_last(self, monkeypatch):
+    def test_a_marker_that_scores_zeros_on_earned_answers_is_reached_late(
+        self, monkeypatch
+    ):
+        """`gpt-oss-20b` is behind every measured-good and every unmeasured entry.
+
+        Its four-of-nine is a complete run, and two of its misses are answers a
+        student earned marks for that came back zero. Reaching it early would
+        trade a false zero for some latency.
+        """
         from grader import clients
 
         for var in ("GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY"):
@@ -720,7 +728,11 @@ class TestTheChainIsOrderedByMeasurement:
         monkeypatch.delenv("GRADER_MODEL", raising=False)
         monkeypatch.delenv("GRADER_PROVIDER", raising=False)
 
-        assert clients.marking_chain()[-1] == ("groq", "openai/gpt-oss-20b")
+        chain = clients.marking_chain()
+        weak = chain.index(("groq", "openai/gpt-oss-20b"))
+        best = chain.index(("groq", "openai/gpt-oss-120b"))
+        assert weak > best
+        assert weak >= len(chain) - 3, "the weakest marker is reached too early"
 
     def test_the_same_weights_appear_on_more_than_one_host(self, monkeypatch):
         """The point of the chain: capacity that costs no accuracy.

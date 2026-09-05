@@ -339,6 +339,57 @@ it a number.
 
 ### Which free tier buys what
 
+Free allowances are quoted in units that are not comparable by eye, so they are
+converted into the only unit that matters. A marking call is about 4,400 tokens;
+an eighteen-question script at five samples is ninety calls, so one paper costs
+roughly 396,000 tokens or 90 requests depending on who is counting.
+
+| host | free allowance | at five samples |
+| --- | --- | --- |
+| Groq | 200,000 tokens/day, **per model** | ~0.5 scripts/day per model |
+| Google | requests/day, **per model**, 10/minute | ~3-11 scripts/day per model |
+| Cerebras | 1,000,000 tokens/day on paper | unusable: refuses without billing |
+
+Two things this table got wrong before, both worth stating because they are the
+kind of thing that is easy to believe and expensive to assume.
+
+**Published free tiers are not account free tiers.** Google's documented limit
+for `gemini-3-flash` is widely quoted as 1,500 requests a day. The actual limit
+on a fresh key is **twenty**, and nothing says so until a 429 arrives naming
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier, limit: 20`. That message was
+also being truncated out of the logs, so the first diagnosis was "rate limited,
+cause unknown".
+
+**Cerebras is not free.** It serves the right models and accepts the right
+schemas, and then refuses to answer: "Payment required to access this resource."
+The trial credit is not active on a new account without billing.
+
+So the numbers above decide the *order* markers are tried in and nothing else.
+Whether marking survives a spent allowance is decided by the chain walking on
+when it meets one, which does not consult them at all. Getting them wrong costs a
+slower first attempt, never a failed submission - which is the property to design
+for when the numbers come from other people's documentation.
+
+### The honest capacity picture
+
+Across every free marker configured, at five samples, this is roughly a handful
+of scripts a day - not the dozens a twenty-teacher pilot needs. There are three
+ways out and they should be chosen deliberately rather than drifted into:
+
+1. **More markers.** Both Groq and Google meter per model, so each additional
+   model that holds a strict schema is another allowance. That is why the chain
+   has nine entries rather than three.
+2. **Fewer samples.** Three instead of five is more capacity for less accuracy,
+   and the size of that trade is measured above: five gets 8 of 9, one gets 5 of
+   9. Three has not been measured because measuring it costs a day's allowance.
+3. **Spend a little.** A few dollars on any one host removes the problem
+   entirely, and the marking cost is about two cents a script.
+
+What must not happen is the first option being quietly replaced by the second,
+which is exactly what happened once already.
+
+## Which free tier buys what
+
 None of these gives both accuracy and volume on its own, which is the whole
 reason the chain exists.
 

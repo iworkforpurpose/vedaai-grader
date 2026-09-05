@@ -90,10 +90,42 @@ def redact(text: str) -> str:
     return _SECRETS.sub(lambda m: f"{m.group(0)[:6]}...[redacted]", text)
 
 
+#: Fragments worth keeping even when the field around them is trimmed.
+#:
+#: A provider's error message puts the useful part last. Google's 429 opens with
+#: three lines of documentation links and names the quota that was actually
+#: exceeded at around character 340, so a 300-character field logged the boiler-
+#: plate and cut the answer off. That difference is "rate limited, unclear why"
+#: against "GenerateRequestsPerDayPerProjectPerModel-FreeTier, limit 20" - which
+#: is the whole diagnosis, and it took a direct probe to recover.
+_KEEP = re.compile(
+    r"(quota[A-Za-z]*\s*[:=]\s*\S+|limit:?\s*\d+|Limit \d+|Used \d+"
+    r"|per (?:day|minute)|TP[DM]|RP[DM]|retry in [\d.ms]+|try again in [\d.ms]+)",
+    re.IGNORECASE,
+)
+
+
+def _trim(text: str) -> str:
+    """Trim to ``MAX_FIELD``, keeping the diagnostic fragments.
+
+    A log line is a signal rather than an archive, so the cap stays. What changes
+    is which end of the message survives: the head is kept for context, and any
+    quota or limit the tail named is appended, because that is the part somebody
+    reading this at three in the morning is looking for.
+    """
+    if len(text) <= MAX_FIELD:
+        return text
+    kept = " ".join(dict.fromkeys(_KEEP.findall(text)))
+    if not kept:
+        return text[:MAX_FIELD]
+    head = text[: max(0, MAX_FIELD - len(kept) - 5)]
+    return f"{head} ... {kept}"[: MAX_FIELD + len(kept) + 5]
+
+
 def _clean(value: Any) -> Any:
     if isinstance(value, str):
         collapsed = redact(" ".join(value.split()))
-        return collapsed[:MAX_FIELD]
+        return _trim(collapsed)
     if isinstance(value, float):
         return round(value, 4)
     return value
