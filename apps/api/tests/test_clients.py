@@ -179,3 +179,85 @@ class TestTheGradeSaysWhichHostJudgedIt:
 
         assert grader.model == "openai/gpt-oss-120b"
         assert grader.provenance == "groq:openai/gpt-oss-120b"
+
+
+class TestTheChainIsOrderedByEvidenceThenByAllowance:
+    """Two rules, and the order between them is the whole design.
+
+    Ordering purely by free allowance puts a weaker marker in front of a better
+    one the moment somebody's free tier grows. Ordering purely by accuracy wastes
+    the largest allowance on the entry least able to use it. So accuracy decides
+    who is allowed to mark, and among markers that measured the same, allowance
+    decides who marks first.
+    """
+
+    def test_a_marker_below_the_bar_never_outranks_one_above_it(self):
+        from grader import clients
+
+        chain = clients.FALLBACK_CHAIN
+        good = [e for e in chain if (clients.MEASURED.get(e) or 0) >= clients.MIN_IN_BAND]
+        weak = [e for e in chain if (clients.MEASURED.get(e) or 0) < clients.MIN_IN_BAND]
+        assert good, "no marker cleared the accuracy bar"
+        assert max(chain.index(e) for e in good) < min(chain.index(e) for e in weak)
+
+    def test_among_equals_the_larger_free_tier_comes_first(self):
+        """The user-facing rule: the biggest allowance is reached first.
+
+        Applied within an accuracy tier rather than across all of them, because
+        a free tier buys scripts and only a gate score says whether those scripts
+        are marked correctly.
+        """
+        from grader import clients
+
+        for tier in (0, 1):
+            entries = [e for e in clients.FALLBACK_CHAIN if clients._rank(e)[0] == tier]
+            allowances = [
+                clients.FREE_TIER.get(p, {}).get("scripts_per_day", 0.0)
+                for p, _m in entries
+            ]
+            assert allowances == sorted(allowances, reverse=True), (
+                f"tier {tier} is not ordered by free allowance: {entries}"
+            )
+
+    def test_an_unmeasured_marker_sorts_below_a_measured_one(self):
+        """Not evidence of being bad, but not evidence either.
+
+        A large free tier is a reason to measure a marker, never a reason to put
+        it in front of one that has already scored.
+        """
+        from grader import clients
+
+        assert clients.MEASURED[("gemini", "gemini-2.5-flash")] is None
+        assert clients._rank(("gemini", "gemini-2.5-flash"))[0] == 1
+        assert clients._rank(("groq", "openai/gpt-oss-120b"))[0] == 0
+
+    def test_measuring_a_big_free_tier_promotes_it_to_the_front(self, monkeypatch):
+        """The order is computed, so a new measurement changes it without a rewrite.
+
+        This is the case that matters: the host with by far the largest allowance
+        is currently unmeasured, and the moment it scores it should lead the
+        chain rather than wait for somebody to re-sort a list by hand.
+        """
+        from grader import clients
+
+        entry = ("gemini", "gemini-2.5-flash")
+        monkeypatch.setitem(clients.MEASURED, entry, 8)
+        reordered = sorted(clients.MEASURED, key=clients._rank)
+        assert reordered[0] == entry
+
+    def test_every_configured_host_is_reachable_before_marking_gives_up(
+        self, monkeypatch
+    ):
+        """A submission should fail only once every host has spent its day."""
+        from grader import clients
+
+        for var in ("GROQ_API_KEY", "GEMINI_API_KEY", "CEREBRAS_API_KEY"):
+            monkeypatch.setenv(var, "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+
+        assert {p for p, _m in clients.marking_chain()} == {
+            "groq",
+            "gemini",
+            "cerebras",
+        }

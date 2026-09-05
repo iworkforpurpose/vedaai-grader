@@ -189,3 +189,64 @@ class TestCredentialsDoNotReachTheLog:
         observability.log_event("marking_failed", detail="x" * 250 + " sk-abc123def456ghi")
 
         assert "sk-abc123def456ghi" not in lines(stream)[0]["detail"]
+
+
+class TestATruncatedErrorStillNamesTheQuota:
+    """The useful half of a provider error is at the end of it.
+
+    Google's 429 opens with three lines of documentation links and names the
+    quota that was actually exceeded around character 340. A flat 300-character
+    field logged the boilerplate and cut the answer off, which is the difference
+    between "rate limited, unclear why" and "requests per day per model, limit
+    20" - and recovering it took a direct probe against the provider.
+    """
+
+    GOOGLE_429 = (
+        "Error code: 429 - You exceeded your current quota, please check your plan "
+        "and billing details. For more information on this error, head to: "
+        "https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current "
+        "usage, head to: https://ai.dev/rate-limit. * Quota exceeded for metric: "
+        "generativelanguage.googleapis.com/generate_content_free_tier_requests, "
+        "limit: 20, model: gemini-3-flash. Please retry in 17.5s."
+    )
+
+    def test_the_quota_survives_the_cut(self):
+        from grader import observability
+
+        line = observability._clean(self.GOOGLE_429)
+        assert "limit: 20" in line
+        assert "quota" in line.lower()
+
+    def test_the_head_of_the_message_is_still_there(self):
+        from grader import observability
+
+        assert observability._clean(self.GOOGLE_429).startswith("Error code: 429")
+
+    def test_a_groq_daily_limit_keeps_its_numbers(self):
+        from grader import observability
+
+        groq = (
+            "Error code: 429 - Rate limit reached for model `openai/gpt-oss-120b` in "
+            "organization `org_abc` service tier `on_demand` on tokens per day (TPD): "
+            + ("padding " * 40)
+            + "Limit 200000, Used 199900. Please try again in 15m34s."
+        )
+        line = observability._clean(groq)
+        assert "Limit 200000" in line and "Used 199900" in line
+
+    def test_a_short_message_is_untouched(self):
+        from grader import observability
+
+        assert observability._clean("just a message") == "just a message"
+
+    def test_redaction_still_wins_over_keeping_things(self):
+        """Trimming must never resurrect a credential the redactor removed."""
+        from grader import observability
+
+        leaky = (
+            "Incorrect API key provided: sk-abcdefghijklmnop. " + ("padding " * 60)
+            + " quota: exceeded limit: 20"
+        )
+        line = observability._clean(leaky)
+        assert "sk-abcdefghijklmnop" not in line
+        assert "limit: 20" in line

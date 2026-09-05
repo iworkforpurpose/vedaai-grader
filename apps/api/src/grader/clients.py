@@ -103,44 +103,97 @@ PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", ""),
 }
 
+#: What each host's free tier is worth, in scripts a day.
+#:
+#: Allowances are quoted in units that are not comparable by eye - one host
+#: meters tokens per day, another requests per day - so they are converted here.
+#: A marking call is about 4,400 tokens and an eighteen-question script at five
+#: samples is ninety calls, so the same paper costs ~396,000 tokens or 90
+#: requests depending on who is counting.
+#:
+#: **These numbers have been wrong before and will be again.** A provider's
+#: published free tier said 1,500 requests a day; the account's actual limit for
+#: that model was twenty, and only a 429 said so. So this table decides the
+#: *order* markers are tried in and nothing else. Whether marking survives a
+#: spent allowance is decided by the chain walking on when it meets one, which
+#: does not consult these numbers at all. Getting them wrong costs a slower first
+#: attempt, never a failed submission.
+#:
+#: `rpm` is here because it decides how long one script takes rather than how
+#: many fit in a day, and the two pull in opposite directions.
+FREE_TIER: dict[str, dict[str, float]] = {
+    "gemini": {"scripts_per_day": 11.0, "rpm": 10},
+    "groq": {"scripts_per_day": 2.0, "rpm": 30},
+    # Serves the right models and refuses to answer without billing on a fresh
+    # account: "Payment required to access this resource." Left in the chain
+    # because a key that starts working should start being used, and an entry
+    # whose host has no key is skipped anyway.
+    "cerebras": {"scripts_per_day": 0.0, "rpm": 5},
+    "openai": {"scripts_per_day": 0.0, "rpm": 60},
+}
+
+
+#: Markers that hold a strict JSON schema, and what the gate measured.
+#:
+#: Membership is earned by scoring, not by allowance. A host with a large free
+#: tier and a bad marker is worse than no host, because the marks look the same
+#: either way. Every model here has been confirmed to accept
+#: `response_format: json_schema` with `strict: true`, which is the property that
+#: makes a weak model safe: it fills a schema rather than writing prose, so
+#: malformed output is impossible and invented citations are refused downstream.
+#:
+#: `in_band` is documents inside their band out of nine, five samples per
+#: question, from a run with no rate limiting. `None` means never measured, which
+#: sorts below every measured entry: an unmeasured marker is not a bad one, but
+#: it is not evidence either.
+MEASURED: dict[tuple[str, str], int | None] = {
+    ("cerebras", "gpt-oss-120b"): 8,
+    ("groq", "openai/gpt-oss-120b"): 8,
+    ("gemini", "gemini-2.5-flash"): None,
+    ("gemini", "gemini-flash-lite-latest"): None,
+    ("gemini", "gemini-3.1-flash-lite"): None,
+    ("gemini", "gemini-2.5-flash-lite"): None,
+    ("groq", "qwen/qwen3.8-27b"): 4,
+    ("cerebras", "qwen-3.8-27b"): None,
+    ("groq", "openai/gpt-oss-20b"): 4,
+}
+
+#: The minimum gate score a marker needs before it leads the chain.
+#:
+#: Seven of nine. Below that the misses stop being close calls: `gpt-oss-20b`
+#: scores four, and two of its misses are answers a student earned marks for that
+#: came back zero. A false zero is the worst error this product makes and no
+#: amount of free allowance pays for one.
+MIN_IN_BAND = int(os.getenv("GRADER_MIN_IN_BAND") or 7)
+
+
+def _rank(entry: tuple[str, str]) -> tuple[int, float, str, str]:
+    """Sort key: accuracy tier first, then free allowance, then a stable name.
+
+    Two levels rather than one. Ordering purely by allowance would put a weaker
+    marker in front of a better one the moment somebody's free tier grew;
+    ordering purely by accuracy would waste the largest allowance on the entry
+    least able to use it. So a gate score decides who leads, and among markers
+    that measured the same, the one that buys the most scripts a day goes first.
+
+    Everything unmeasured shares the lower tier and is ordered by allowance
+    within it, which is the right default for a marker nobody has scored yet: try
+    the one there is most of.
+    """
+    provider, model = entry
+    scored = MEASURED.get(entry)
+    tier = 0 if scored is not None and scored >= MIN_IN_BAND else 1
+    allowance = FREE_TIER.get(provider, {}).get("scripts_per_day", 0.0)
+    return (tier, -allowance, provider, model)
+
+
 #: Where marking goes, in order, until something answers.
 #:
-#: A chain of (provider, model) rather than a single choice, because on a free
-#: tier the binding constraint is not price per token but a daily allowance, and
-#: allowances are metered **per model and per provider**. The same model on two
-#: hosts is two budgets; two models on one host is also two budgets. Refusing to
-#: mark while an untouched allowance sits one entry down is the only genuinely
-#: wrong answer available here.
-#:
-#: Ordered by measured accuracy on the nine-document gate, never by speed or
-#: cost, because every entry below the first is a worse marker and the point of
-#: the order is to reach them as late as possible. What the chain buys is
-#: capacity at the top of it: the same accurate model on a second host is more
-#: scripts a day at unchanged accuracy, which is the only kind of extra capacity
-#: worth having.
-#:
-#: Entries whose provider has no key are skipped, so this is also how a
-#: deployment says which hosts it has. `GRADER_MODEL` still pins one model and
-#: `GRADER_PROVIDER` still pins one host, both of which collapse the chain.
-FALLBACK_CHAIN: list[tuple[str, str]] = [
-    # Measured on the nine-document gate, five samples per question, and the two
-    # entries are the same weights on two hosts - so reaching the second costs
-    # nothing but latency. `gpt-oss-120b` is the only marker measured at 8 of 9.
-    ("cerebras", "gpt-oss-120b"),
-    ("groq", "openai/gpt-oss-120b"),
-    # Unmeasured, and here for capacity rather than for judgement. Its free tier
-    # is metered in requests rather than tokens, which is the shape marking
-    # actually has, so it is the largest permanently-free allowance available.
-    # It sits below the measured entries until somebody runs the gate on it.
-    ("gemini", "gemini-3-flash-preview"),
-    # Measured at 4 of 9 at one sample, with six questions lost to rate limiting
-    # rather than judged - so that figure is a floor, not a verdict.
-    ("groq", "qwen/qwen3.8-27b"),
-    ("cerebras", "qwen-3.8-27b"),
-    # Measured at 4 of 9, complete run, every miss under-marking and two of them
-    # earned answers scoring zero. Last on purpose.
-    ("groq", "openai/gpt-oss-20b"),
-]
+#: Every entry whose host has a key is tried before marking gives up, so a
+#: submission fails only once every allowance is spent. The order is computed -
+#: see `_rank` - so recording a new measurement re-sorts it rather than requiring
+#: somebody to re-sort a list by hand and get it subtly wrong.
+FALLBACK_CHAIN: list[tuple[str, str]] = sorted(MEASURED, key=_rank)
 
 
 def configured_providers() -> set[str]:
