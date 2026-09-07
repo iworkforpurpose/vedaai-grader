@@ -968,3 +968,35 @@ class TestRequestsArePacedNotJustLimitedInFlight:
         from grader.grading import sampling
 
         assert sampling.rpm_for("some-paid-host") == sampling.DEFAULT_RPM
+
+
+class TestConcurrencyDoesNotOutrankThePacers:
+    """The in-flight cap is a backstop; `_pace` is the rate limiter.
+
+    Left at two it silently became the binding constraint: a marking call takes
+    about twelve seconds, so two in flight is ten calls a minute against
+    thirty-five available across two hosts. Measured on the live deployment, an
+    eighteen-question paper took ten minutes to mark while both hosts sat idle.
+    """
+
+    def test_the_cap_is_above_what_the_pacers_admit(self):
+        from grader.grading import sampling
+
+        # A call takes roughly twelve seconds, so sustaining N requests a minute
+        # needs about N/5 of them in flight. If the semaphore is tighter than
+        # that, it is the limit rather than the quota.
+        reachable = sum(
+            sampling.rpm_for(host) for host in ("cerebras", "groq")
+        )
+        needed = reachable / 5
+        assert needed <= sampling.MAX_IN_FLIGHT, (
+            f"{sampling.MAX_IN_FLIGHT} in flight cannot sustain {reachable}/min; "
+            "the backstop has become the rate limiter again"
+        )
+
+    def test_it_is_still_bounded(self):
+        """Unbounded would put the whole panel of every question in flight at
+        once, which is the fan-out that cost 53 samples before `_pace` existed."""
+        from grader.grading import sampling
+
+        assert 0 < sampling.MAX_IN_FLIGHT <= 32

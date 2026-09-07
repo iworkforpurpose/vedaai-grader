@@ -44,16 +44,24 @@ from ..observability import log_event
 
 #: How many model calls this process will have in flight at once.
 #:
-#: Not a performance knob. Free and low tier quotas are per minute, and this
-#: service fans out four questions at a time, each of which used to fan out to
-#: five samples — twenty concurrent calls against an allowance of thirty a minute,
-#: with nothing client-side to slow it down. Measured on a nine-document gate run,
-#: that produced 53 dropped panel samples and a set of documents that scored zero
-#: for reasons that had nothing to do with marking.
+#: A backstop, not the rate limiter. It was two, from before `_pace` existed:
+#: with nothing enforcing requests per minute, a fan-out of twenty concurrent
+#: calls against an allowance of thirty a minute produced 53 dropped panel
+#: samples and documents scoring zero for reasons that had nothing to do with
+#: marking, so a hard cap on concurrency was the only protection available.
 #:
-#: A pilot on a free tier is exactly this shape, so this is a correctness setting
-#: rather than a courtesy.
-MAX_IN_FLIGHT = int(os.getenv("MODEL_MAX_IN_FLIGHT") or 2)
+#: `_pace` now enforces the real constraint, per host and on a sliding window,
+#: which is where it belongs - the limit is per host, and a single global
+#: semaphore cannot express that. Left at two it became the binding constraint
+#: instead: a marking call takes about twelve seconds, so two in flight is ten
+#: calls a minute against thirty-five available across two hosts. Measured on the
+#: live deployment, an eighteen-question paper took ten minutes to finish marking
+#: while both hosts sat mostly idle.
+#:
+#: Set above what the pacers will admit, so that the pacers stay the thing that
+#: decides. If this is ever the binding constraint again it is silently costing
+#: throughput, which is exactly the failure it just caused.
+MAX_IN_FLIGHT = int(os.getenv("MODEL_MAX_IN_FLIGHT") or 8)
 
 #: How many times a refused-for-rate request is waited out before giving up.
 RATE_LIMIT_RETRIES = int(os.getenv("MODEL_RATE_LIMIT_RETRIES") or 5)
