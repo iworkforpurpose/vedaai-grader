@@ -85,10 +85,25 @@ MAX_BACKOFF_SECONDS = float(os.getenv("MODEL_MAX_BACKOFF") or 90.0)
 #: Per host because the allowance is per host, and because the chain can move
 #: between hosts mid-submission - a shared pacer would slow the fast host to the
 #: slow one's rate for no reason.
+#: What each host will actually accept, in marking calls a minute.
+#:
+#: Calls, not requests, and the difference is the whole point. A host advertises
+#: both a request ceiling and a token ceiling and the binding one is whichever
+#: comes first for the size of call being made. Read from the providers' own
+#: `x-ratelimit` headers:
+#:
+#:   cerebras   5 requests/min, 30,000 tokens/min  ->  5 calls/min (requests bind)
+#:   groq      16 requests/min,  8,000 tokens/min  ->  2 calls/min (tokens bind)
+#:
+#: A marking call is about 2,860 tokens, so Groq's eight thousand a minute is
+#: under three calls - not the sixteen its request ceiling suggests, and nowhere
+#: near the thirty this table claimed from reading a documentation page. That
+#: error made the weighted split hand Groq six times the work of Cerebras when it
+#: can take rather less, so the panel queued behind the host thought to be fast.
 REQUESTS_PER_MINUTE: dict[str, int] = {
     "gemini": int(os.getenv("GEMINI_RPM") or 10),
     "cerebras": int(os.getenv("CEREBRAS_RPM") or 5),
-    "groq": int(os.getenv("GROQ_RPM") or 30),
+    "groq": int(os.getenv("GROQ_RPM") or 2),
 }
 
 #: Used where a host is not in the table. High enough not to slow a paid account.

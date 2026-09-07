@@ -1746,8 +1746,15 @@ class TestTheGraderSpreadsAPanelAcrossHosts:
         grader, _made = self._grader(monkeypatch)
         hosts = Counter(grader._peer_for(i)[1] for i in range(70))
 
+        from grader.grading import sampling
+
         assert set(hosts) == {"cerebras", "groq"}, "a host was left out entirely"
-        assert hosts["groq"] > hosts["cerebras"], "the faster host must carry more"
+        # Which host is faster is measured, not assumed - it has already changed
+        # once, when Groq turned out to be token-bound rather than request-bound.
+        faster, slower = sorted(
+            ("cerebras", "groq"), key=sampling.rpm_for, reverse=True
+        )
+        assert hosts[faster] > hosts[slower], "the faster host must carry more"
 
     def test_each_sample_asks_for_the_name_its_host_uses(self, monkeypatch):
         """The same weights are served under different ids, and asking one host

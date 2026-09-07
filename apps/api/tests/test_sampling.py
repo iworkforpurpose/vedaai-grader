@@ -1054,3 +1054,42 @@ class TestWorkIsSplitByHowFastEachHostAccceptsIt:
 
         assert sampling.weighted_hosts([("groq", "m")]) == [("groq", "m")]
         assert sampling.weighted_hosts([]) == []
+
+
+class TestRatesAreCallsPerMinuteNotRequestsPerMinute:
+    """A host's binding ceiling depends on the size of the call being made.
+
+    Groq advertises sixteen requests a minute and eight thousand tokens a minute.
+    A marking call is about 2,860 tokens, so tokens bind first and the real figure
+    is under three calls a minute. Taking the request ceiling at face value made
+    the weighted split hand Groq six times Cerebras's work when it can take rather
+    less, and the panel queued behind the host believed to be fast.
+    """
+
+    def test_a_token_bound_host_is_rated_by_its_tokens(self):
+        from grader.grading import sampling
+
+        # 8,000 tokens a minute over ~2,860 a call is under three.
+        assert sampling.rpm_for("groq") <= 3, (
+            "groq is token-bound for marking calls; its request ceiling is not "
+            "the number that matters"
+        )
+
+    def test_a_request_bound_host_keeps_its_request_ceiling(self):
+        from grader.grading import sampling
+
+        # 30,000 tokens a minute is ten calls, but only five requests are allowed.
+        assert sampling.rpm_for("cerebras") == 5
+
+    def test_the_combined_rate_is_what_sets_the_wait(self):
+        """Stated so the arithmetic is checkable rather than folded into a comment."""
+        from grader.grading import sampling
+
+        combined = sampling.rpm_for("cerebras") + sampling.rpm_for("groq")
+        questions, samples = 18, 5
+        minutes = questions * samples / combined
+        assert minutes > 10, (
+            "five samples across the free tiers is over ten minutes; if this "
+            "assertion ever fails the rates improved and the default is worth "
+            "revisiting"
+        )
