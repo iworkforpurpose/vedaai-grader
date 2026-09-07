@@ -67,13 +67,13 @@ def test_strips_matching_quotes_but_keeps_a_hash_inside_a_value(tmp_path, monkey
     one that authenticates against nothing, and the resulting 401 names the key
     rather than the parser.
     """
-    (tmp_path / ".env").write_text('ACCESS_CODE="quoted value"\nSECRET=abc#def\n')
-    monkeypatch.delenv("ACCESS_CODE", raising=False)
+    (tmp_path / ".env").write_text('QUOTED_VALUE="quoted value"\nSECRET=abc#def\n')
+    monkeypatch.delenv("QUOTED_VALUE", raising=False)
     monkeypatch.delenv("SECRET", raising=False)
 
     load_repo_env(tmp_path)
 
-    assert os.environ["ACCESS_CODE"] == "quoted value"
+    assert os.environ["QUOTED_VALUE"] == "quoted value"
     assert os.environ["SECRET"] == "abc#def"
 
 

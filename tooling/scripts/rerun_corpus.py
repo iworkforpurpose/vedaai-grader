@@ -28,7 +28,6 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from access import unlock  # noqa: E402  - same directory
 from build_corpus import EXAMPLES, LIVE, summarise  # noqa: E402
 
 #: The deployed service sits behind Next, which owns the /api prefix and proxies
@@ -147,7 +146,6 @@ def main() -> int:
     parser.add_argument("--against", default=None, help="An earlier run label to diff against")
     parser.add_argument("--only", default=None, help="Run one example by name")
     args = parser.parse_args()
-    unlock(args.base)
 
     RUNS.mkdir(parents=True, exist_ok=True)
     previous: dict = {}

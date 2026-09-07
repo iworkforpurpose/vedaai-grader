@@ -692,11 +692,11 @@ def get_page_image(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # `private`, not `public`. These are photographs of a named student's
-    # handwriting, served from an endpoint with no authentication beyond the
-    # access code, and `public, max-age=31536000` authorised every shared cache
-    # and intermediary between here and the browser to keep a copy for a year.
-    # The content is still immutable — the key is a content hash — so the
-    # browser's own cache does the work the long max-age was there for.
+    # handwriting served from an unauthenticated endpoint, and
+    # `public, max-age=31536000` authorised every shared cache between here and
+    # the browser to keep a copy for a year. The content is still immutable - the
+    # key is a content hash - so the browser's own cache does the work the long
+    # max-age was there for.
     return Response(
         content=data,
         media_type="image/png",

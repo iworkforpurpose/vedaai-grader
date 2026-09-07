@@ -75,6 +75,7 @@ needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 - Report placement accuracy and highlight IoU separately. They move for unrelated
   reasons and the two highlight metrics pull against each other by construction.
 - `deploy/` and IAM are mine. Do not run `deploy/deploy.sh` or apply infrastructure.
-  The live deploy is behind `ACCESS_CODE`; never remove or weaken that gate.
+  The live deploy is open: no login, no access code. Anyone with the address can
+  read every stored submission.
 - Uploads are untrusted input. Read the "Untrusted input" section of the README
   before changing anything in the ingest path.

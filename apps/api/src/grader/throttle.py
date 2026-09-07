@@ -15,9 +15,9 @@ round trip on the hot path for a problem that does not exist yet. When it does,
 the seam is `Throttle` and the change is behind it.
 
 It is not authentication. It slows a stranger down; it does not keep them out.
-The passcode in the web layer is what keeps them out, and the two are worth
-having separately: the gate stops people who should not be here at all, and this
-stops the ones who should from costing more than intended by accident.
+The origin has no login, so this is the only thing standing between a stranger
+with the URL and the cost of a submission - which renders every page, recognises
+all of them, and calls a marking model once per question.
 """
 
 from __future__ import annotations

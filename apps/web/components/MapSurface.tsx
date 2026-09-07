@@ -459,8 +459,8 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
             Every mutation failure lands here — a move that would not save, a 409
             telling the teacher to reload, a 429 with a wait, "no answer is mapped
             to that spot". It had no role and no aria-live, so all of it was
-            silent to a screen reader while the pattern existed three components
-            away (`UploadForm` uses role="alert", `UnlockForm` uses role="status").
+            silent to a screen reader while the pattern existed one component
+            away (`UploadForm` uses role="alert").
 
             `assertive`, because every one of these is a response to something the
             teacher just did and the next thing they do depends on it.

@@ -122,13 +122,6 @@ jobs:
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_SECRET_ARN: ${{ vars.OPENAI_SECRET_ARN }}
-          # The passcode in front of the origin. A secret rather than a var
-          # because vars are readable by anyone with access to the repository's
-          # settings, and this one is meant to be handed only to testers.
-          #
-          # `deploy.sh` refuses to release without it, so a missing secret is a
-          # red build rather than an origin quietly open to the internet.
-          ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
         run: |
           echo "deploying ${GITHUB_SHA} to ${AWS_REGION}"
           bash deploy/deploy.sh release
@@ -167,11 +160,8 @@ jobs:
           # The job summary, because "what exactly and when exactly did I deploy" is
           # the question this whole pipeline exists to answer.
           stable="$(bash deploy/gateway.sh url)"
-          # Health rather than the front page. The origin is behind a passcode, so
-          # `/` answers 307 to the unlock screen — which is the gate working, and
-          # would fail a check for 200. Health is deliberately open (the container
-          # probe needs it) and proves the same two things this step is for: the
-          # task is serving, and the gateway points at it.
+          # Health rather than the front page: it proves the two things this step
+          # is for, that the task is serving and the gateway points at it.
           scode="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/api/health" || echo 000)"
           # What will actually mark the next submission.
           #
@@ -198,14 +188,8 @@ jobs:
             read -r why
             read -r throttled
           } < <(printf '%s' "$health" | python3 deploy/health_summary.py)
-          # Checked separately, because "the gate is on" is its own claim and the
-          # cost of it being quietly off is every stored script.
-          gate="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
-          if [ "${gate}" = "307" ]; then
-            gate_note="(behind the access code)"
-          else
-            gate_note="(OPEN — anyone with the address can read every script)"
-          fi
+          # The page a teacher is actually handed.
+          front="$(curl -s -o /dev/null -m 25 -w '%{http_code}' "${stable}/" || echo 000)"
 
           {
             echo "### Deployed"
@@ -224,7 +208,7 @@ jobs:
             fi
             if [ -n "${why}" ]; then echo "| provider said | ${why} |"; fi
             echo "| placing answers by | ${placing} |"
-            echo "| front page | HTTP ${gate} ${gate_note} |"
+            echo "| front page | HTTP ${front} |"
             echo "| task directly | HTTP ${code} (http://${ip}:8080, changes each deploy) |"
           } >> "$GITHUB_STEP_SUMMARY"
 

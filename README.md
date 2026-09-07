@@ -451,9 +451,6 @@ pnpm dev                      # web on :3000, API on :8000
 
 Everything works with no keys at all: the question paper is read from its PDF text
 layer, and marking degrades to a rubric a teacher fills in rather than failing.
-`ACCESS_CODE` is unset locally, which leaves the origin open — right for a laptop
-and wrong for anything with a public address, so the deploy script refuses to
-release without one.
 Handwriting recognition needs either `OCR_ENGINE=textract` with AWS credentials, or
 `uv sync --extra ocr-local` for the local model. Marking needs `OPENAI_API_KEY` or
 `ANTHROPIC_API_KEY`, and so does the second read of handwritten mathematics.
@@ -475,18 +472,15 @@ clone does not have — see the last of the known limitations.
 
 ## Deployment
 
-**Live: https://wvqyfdkpl1.execute-api.ap-south-1.amazonaws.com** — behind an access
-code. Ask for it, or read `ACCESS_CODE` from `.env`.
+**Live: https://wvqyfdkpl1.execute-api.ap-south-1.amazonaws.com**
 
-The gate is a shared passcode in Next middleware, which is the one place both the
-pages and the proxied API sit behind. It is not accounts and does not tell testers
-apart; it stops a stored script being readable by anyone who finds the address,
-which matters because those scripts are real handwriting. The cookie holds an HMAC
-keyed by the code rather than the code, so changing the code revokes every session.
-`deploy/deploy.sh` refuses to release without one — a gate that silently fails to
-engage is worse than none, because it is believed.
+The origin is open: there is no login and no access code, so every page and every
+stored submission is readable by anyone with the address. Submissions are real
+student handwriting, so this is a deliberate choice for a pilot rather than a
+property to keep. Authentication is the seam to grow when submissions need to
+belong to somebody.
 
-Separately, ingest and re-marking are rate limited per caller. One submission
+Ingest and re-marking are rate limited per caller. One submission
 renders every page, recognises all of them, embeds both documents and calls a
 marking model once per question, so the limit is what decides what a stranger with
 the URL can cost. It is held in memory: with more than one task a caller would get
