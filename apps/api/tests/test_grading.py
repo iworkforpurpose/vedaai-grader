@@ -27,7 +27,7 @@ from vedaai_contracts import (
     RubricPoint,
 )
 
-from grader.grading import citations, engine, rubric, run
+from grader.grading import citations, engine, graders, rubric, run
 from grader.regions import lines_excluded_from_grading
 
 
@@ -86,7 +86,7 @@ class TestRubricDerivation:
 
         Found on the science script. Question 14(ii) reads "Six grams of carbon
         burns completely in sixteen grams of oxygen. Find the mass of carbon
-        dioxide formed and justify your answer" — one question, one answer, worth
+        dioxide formed and justify your answer" - one question, one answer, worth
         3. It was split into six criteria of half a mark, and the student was told
         the answer "does not provide a second method or calculation", then a
         third, a fourth, a fifth and a sixth. They scored 0.5 out of 3 for
@@ -167,7 +167,7 @@ class TestRubricDerivation:
 
     def test_a_drawing_is_not_gradable_from_text(self) -> None:
         # The point of tracking evidence kind. A diagram's transcription is empty
-        # or noise, so a text grader would score a correct answer zero — and do
+        # or noise, so a text grader would score a correct answer zero - and do
         # it confidently.
         spec = rubric.derive(q("B/6", "6.", "Draw a diagram of the digestive system.", 0, marks=5))
         assert spec.gradable_from_text is False
@@ -281,7 +281,7 @@ class TestCitationValidation:
 
     def test_a_citation_outside_the_answer_is_refused(self) -> None:
         # Otherwise a grade can credit this question with another question's
-        # writing — including writing the student never offered as this answer.
+        # writing - including writing the student never offered as this answer.
         answer, other, index = self._setup()
         spec = rubric.derive(self.PAPER_QUESTION)
 
@@ -321,7 +321,7 @@ class TestCitationValidation:
             },
         )
         # The invariant that matters is unchanged: no mark is ever awarded on
-        # evidence nobody can look at. What changed is the blast radius — the
+        # evidence nobody can look at. What changed is the blast radius - the
         # uncited point is dropped, rather than every point beside it.
         assert graded.marks_awarded == 0.0
         assert graded.needs_review is True
@@ -437,7 +437,7 @@ class TestSatisfiedMeansTheMarksAreEarned:
     Seen on a real script. Question 11(a), "Define atomic number and mass number",
     worth 2. The student defined both. The marker returned one criterion, marked it
     satisfied, wrote "You provided clear definitions for both atomic number and mass
-    number. Great job!" — and awarded 1 of 2.
+    number. Great job!" - and awarded 1 of 2.
 
     Nothing in the grade disagreed with the student; the two fields the model
     returns simply contradicted each other and nothing reconciled them. A teacher
@@ -491,13 +491,13 @@ class TestSatisfiedMeansTheMarksAreEarned:
 class TestASatisfiedClaimStillNeedsEvidence:
     """A point the marker calls satisfied but cites nothing for cannot be promoted.
 
-    The rule above — satisfied means full marks — was written for a point that
+    The rule above - satisfied means full marks - was written for a point that
     cited its evidence, and applied to one that did not it destroys the grade
     rather than repairing it. Question 16 of a real science script, worth 5: the
     model judged three points, cited four lines for each of the first two, and
     returned the third satisfied with an empty citation list. Promoting that third
     point to its full marks produced "marks awarded with no line cited", and the
-    citation check refuses a question as a whole — so a 3.5 out of 5 that was
+    citation check refuses a question as a whole - so a 3.5 out of 5 that was
     correct and fully evidenced became 0 out of 5, unjudged.
 
     So the promotion is conditional on evidence. An uncited claim is not shown as
@@ -592,7 +592,7 @@ class TestASatisfiedClaimStillNeedsEvidence:
     def test_marks_claimed_without_a_citation_are_dropped_the_same_way(self) -> None:
         # The same omission wearing different clothes. On the next run of the same
         # script the model returned the third point NOT satisfied but carrying
-        # marks, still citing nothing, and the question was refused again — a
+        # marks, still citing nothing, and the question was refused again - a
         # separate branch reaching the identical dead end.
         #
         # Which of the two shapes turns up is chance, so both have to survive it.
@@ -629,7 +629,7 @@ class TestWholeSubmission:
     )
 
     def test_absence_reasons_are_carried_through_rather_than_scored(self) -> None:
-        # "Not answered" and "could not be read" must not both arrive as zero —
+        # "Not answered" and "could not be read" must not both arrive as zero -
         # that collapse is what the four-state vocabulary exists to prevent, and
         # grading is where it would most easily be undone.
         from vedaai_contracts import Mapping
@@ -726,7 +726,7 @@ class TestPromptSafety:
             line_ids=[answer.line_id],
         )
         # The fence carries a per-request value, so this checks the shape rather
-        # than a literal — see `test_the_fence_a_student_cannot_close` for why.
+        # than a literal - see `test_the_fence_a_student_cannot_close` for why.
         import re
 
         assert re.search(r"<<<ANSWER:[0-9a-f]{8}\n", text)
@@ -1108,17 +1108,17 @@ class TestProvenance:
 
 class TestProviderSelection:
     def test_an_explicit_choice_of_none_is_honoured(self, monkeypatch) -> None:
-        monkeypatch.setattr(engine, "GRADER_PROVIDER", "none")
+        monkeypatch.setattr(graders, "GRADER_PROVIDER", "none")
         assert isinstance(engine.select_grader(), engine.RubricOnly)
 
     def test_openai_is_used_when_only_its_key_is_present(self, monkeypatch) -> None:
-        monkeypatch.setattr(engine, "GRADER_PROVIDER", "")
+        monkeypatch.setattr(graders, "GRADER_PROVIDER", "")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         assert isinstance(engine.select_grader(), engine.OpenAIGrader)
 
     def test_an_explicit_provider_wins_over_the_other_key(self, monkeypatch) -> None:
-        monkeypatch.setattr(engine, "GRADER_PROVIDER", "openai")
+        monkeypatch.setattr(graders, "GRADER_PROVIDER", "openai")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
         monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
         assert isinstance(engine.select_grader(), engine.OpenAIGrader)
@@ -1143,13 +1143,13 @@ class TestProviderSelection:
 
         # Captured off the logger rather than off stdout. `configure` is
         # idempotent by design, so by the time this test runs another one has
-        # already bound the handler and `capsys` sees nothing — the test passed
+        # already bound the handler and `capsys` sees nothing - the test passed
         # alone and failed in the suite.
         captured = io.StringIO()
         handler = logging.StreamHandler(captured)
         logger = logging.getLogger("grader")
         logger.addHandler(handler)
-        monkeypatch.setattr(engine, "GRADER_PROVIDER", "")
+        monkeypatch.setattr(graders, "GRADER_PROVIDER", "")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
@@ -1178,7 +1178,7 @@ class TestMarkingFailuresAreNotFatal:
 
     The rubric is already derived from the paper and the answer already located,
     which is most of the value. Only the mark is missing, and the message has to
-    name what to change — a raw "401" arrives beside a student's script, where it
+    name what to change - a raw "401" arrives beside a student's script, where it
     is not actionable.
     """
 
@@ -1284,7 +1284,7 @@ class TestASplitTheMarksCannotCarry:
 
     The even division always summed to the printed total, which is necessary and
     was not sufficient. Where the count outruns the marks the remainder lands on
-    the first criterion and starves the rest — or goes negative, which
+    the first criterion and starves the rest - or goes negative, which
     ``RubricPoint`` refuses, so the grade raises and the question reports "could
     not be marked automatically" with nothing pointing at the paper as the cause.
     """
@@ -1303,7 +1303,7 @@ class TestASplitTheMarksCannotCarry:
         assert spec.marks_split_inferred is False
 
     def test_four_items_worth_one_mark_is_not_split(self) -> None:
-        # Produced [1.0, 0.0, 0.0, 0.0] — three points the model was asked to
+        # Produced [1.0, 0.0, 0.0, 0.0] - three points the model was asked to
         # judge that could not earn anything.
         spec = rubric.derive(self._question("Give four examples of renewable energy.", 1))
         assert [c.marks for c in spec.criteria] == [1.0]
@@ -1564,7 +1564,7 @@ class TestThePanel:
         """The panel is only a panel if it samples more than once.
 
         Asserted at the client because every intermediate layer would look
-        identical if it collapsed to a single call — the marks would still be
+        identical if it collapsed to a single call - the marks would still be
         produced, the tests above would still pass, and the instability the panel
         exists to remove would be back with nothing reporting it.
         """
@@ -1637,7 +1637,7 @@ class TestThePanel:
         Asserted through the helper rather than by reloading the module. Reloading
         it replaces every class it defines, including ``GraderUnavailable``, so the
         route that catches the old one stops recognising the new one and three
-        unrelated tests fail — which is exactly what the first version of this
+        unrelated tests fail - which is exactly what the first version of this
         test did.
         """
         assert engine._default_temperature(1) == 0.0
@@ -1652,7 +1652,7 @@ class TestCitationRepair:
     wrote ``as:00010`` for the line the index calls ``as:0010``. The answer named
     a delta, named it correctly, and cited the sentence that said so. The ID did
     not match a string, so the whole question was refused and the teacher was
-    told the citation was invented — a lost mark and a false accusation in one.
+    told the citation was invented - a lost mark and a false accusation in one.
     """
 
     @staticmethod
@@ -1692,7 +1692,7 @@ class TestCitationRepair:
     def test_the_repaired_citation_passes_the_check_it_used_to_fail(self) -> None:
         """The property that matters, asserted end to end.
 
-        Before the repair this exact point produced "no such line — the citation
+        Before the repair this exact point produced "no such line - the citation
         was invented" and took the question's whole mark with it.
         """
         index = self._index(12)
