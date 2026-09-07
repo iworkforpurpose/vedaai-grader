@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from types import SimpleNamespace
 
 import pytest
@@ -1000,3 +1001,56 @@ class TestConcurrencyDoesNotOutrankThePacers:
         from grader.grading import sampling
 
         assert 0 < sampling.MAX_IN_FLIGHT <= 32
+
+
+class TestWorkIsSplitByHowFastEachHostAccceptsIt:
+    """An even split makes the whole panel wait on the slowest host.
+
+    Measured on the live deployment: ninety calls split evenly across a host
+    allowing five a minute and one allowing thirty put forty-five on the slow one,
+    which is nine minutes, while the fast one finished its half in ninety seconds
+    and idled. Weighting by rate makes them finish together.
+    """
+
+    def test_a_faster_host_gets_proportionally_more_work(self, monkeypatch):
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "slow", 5)
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "fast", 30)
+        schedule = sampling.weighted_hosts([("slow", "m"), ("fast", "m")])
+
+        counts = Counter(provider for provider, _model in schedule)
+        assert counts["fast"] == 6 * counts["slow"]
+
+    def test_the_hosts_finish_at_about_the_same_time(self, monkeypatch):
+        """The property that actually matters, stated as time rather than shares."""
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "slow", 5)
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "fast", 30)
+        schedule = sampling.weighted_hosts([("slow", "m"), ("fast", "m")])
+
+        calls = 90
+        share = Counter(schedule[i % len(schedule)][0] for i in range(calls))
+        minutes = {
+            host: share[host] / sampling.rpm_for(host) for host in ("slow", "fast")
+        }
+        assert abs(minutes["slow"] - minutes["fast"]) < 0.5, minutes
+        # And the whole panel lands well inside what the slow host alone would take.
+        assert max(minutes.values()) < calls / sampling.rpm_for("slow") / 3
+
+    def test_the_slowest_host_is_never_dropped_entirely(self, monkeypatch):
+        """It belongs to the group; carrying a small share beats carrying none,
+        because its allowance is what the chain falls back on."""
+        from grader.grading import sampling
+
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "crawling", 1)
+        monkeypatch.setitem(sampling.REQUESTS_PER_MINUTE, "quick", 1000)
+        schedule = sampling.weighted_hosts([("crawling", "m"), ("quick", "m")])
+        assert any(provider == "crawling" for provider, _m in schedule)
+
+    def test_a_lone_host_is_left_alone(self, monkeypatch):
+        from grader.grading import sampling
+
+        assert sampling.weighted_hosts([("groq", "m")]) == [("groq", "m")]
+        assert sampling.weighted_hosts([]) == []

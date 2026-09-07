@@ -1734,23 +1734,37 @@ class TestTheGraderSpreadsAPanelAcrossHosts:
         grader.model = "gpt-oss-120b"
         return grader, made
 
-    def test_consecutive_samples_go_to_different_hosts(self, monkeypatch):
+    def test_samples_reach_both_hosts_in_proportion_to_their_rate(self, monkeypatch):
+        """Not strict alternation, which was the first attempt and too slow.
+
+        Alternating gives the slow host half the panel, so the whole thing waits
+        on it: ninety calls split evenly is forty-five on a five-a-minute host,
+        which is nine minutes. The share follows the rate instead.
+        """
+        from collections import Counter
+
         grader, _made = self._grader(monkeypatch)
-        hosts = [grader._peer_for(i)[1] for i in range(4)]
-        assert hosts == ["cerebras", "groq", "cerebras", "groq"]
+        hosts = Counter(grader._peer_for(i)[1] for i in range(70))
+
+        assert set(hosts) == {"cerebras", "groq"}, "a host was left out entirely"
+        assert hosts["groq"] > hosts["cerebras"], "the faster host must carry more"
 
     def test_each_sample_asks_for_the_name_its_host_uses(self, monkeypatch):
         """The same weights are served under different ids, and asking one host
         for another's name is a model-not-found rather than a fallback."""
         grader, _made = self._grader(monkeypatch)
-        assert grader._peer_for(0)[2] == "gpt-oss-120b"
-        assert grader._peer_for(1)[2] == "openai/gpt-oss-120b"
+        seen = {grader._peer_for(i)[1]: grader._peer_for(i)[2] for i in range(70)}
+        assert seen["cerebras"] == "gpt-oss-120b"
+        assert seen["groq"] == "openai/gpt-oss-120b"
 
     def test_a_peer_client_is_built_once_and_reused(self, monkeypatch):
         grader, made = self._grader(monkeypatch)
-        first = grader._peer_for(1)[0]
-        second = grader._peer_for(3)[0]
-        assert first is second
+        clients = [
+            grader._peer_for(i)[0]
+            for i in range(70)
+            if grader._peer_for(i)[1] == "groq"
+        ]
+        assert len({id(c) for c in clients}) == 1
         assert made == ["groq"], "a client was rebuilt per sample"
 
     def test_two_graders_do_not_share_peer_clients(self, monkeypatch):

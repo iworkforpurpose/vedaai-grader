@@ -32,6 +32,7 @@ from .panel import (
     vote_checks,
 )
 from .rubric import Rubric
+from .sampling import weighted_hosts as _weighted
 from .schemas import (
     CHECK_JUDGEMENT_SCHEMA,
     JUDGEMENT_SCHEMA,
@@ -421,12 +422,18 @@ class OpenAIGrader:
     def _peer_for(self, index: int) -> tuple[object, str, str]:
         """The client, provider and model this sample should go to.
 
-        Round-robin across every host serving these weights. Same model, so the
-        samples stay comparable and the panel is still a panel on one marker;
-        what changes is that the requests-per-minute ceilings add up instead of
-        one host queueing behind itself.
+        Spread across every host serving these weights, in proportion to how fast
+        each one accepts requests. Same model throughout, so the samples stay
+        comparable and the panel is still a panel on one marker; what changes is
+        that the requests-per-minute ceilings add up.
+
+        In proportion, not evenly. An even split hands the slowest host as much
+        work as the fastest, so the whole panel waits on it: measured on the live
+        deployment, half of ninety calls sent to a host allowing five a minute is
+        nine minutes, while the host allowing thirty finished its half in ninety
+        seconds and then sat idle. Weighting by rate makes them finish together.
         """
-        peers = peers_for(getattr(self, "provider", ""), self.model)
+        peers = _weighted(peers_for(getattr(self, "provider", ""), self.model))
         provider, model = peers[index % len(peers)]
         if provider == getattr(self, "provider", ""):
             return self._client, provider, model

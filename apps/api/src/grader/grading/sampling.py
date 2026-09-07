@@ -140,6 +140,28 @@ async def _pace(provider: str) -> None:
             await asyncio.sleep(max(0.05, 60.0 - (now - recent[0])))
 
 
+def weighted_hosts(peers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`peers` repeated in proportion to how fast each host accepts requests.
+
+    The caller indexes into this cyclically, so a host allowing thirty a minute
+    appears six times for every appearance of one allowing five. Sending each an
+    equal share instead makes the panel wait on the slowest: ninety calls split
+    evenly is forty-five to a five-a-minute host, which is nine minutes, while the
+    fast one idles after ninety seconds.
+
+    Rounded down to whole slots but never to none, so the slowest host still
+    carries some of the work rather than being dropped from a group it belongs to.
+    """
+    if len(peers) < 2:
+        return list(peers)
+    rates = [max(1, rpm_for(provider)) for provider, _model in peers]
+    smallest = min(rates)
+    schedule: list[tuple[str, str]] = []
+    for peer, rate in zip(peers, rates, strict=True):
+        schedule.extend([peer] * max(1, round(rate / smallest)))
+    return schedule
+
+
 def forget_pacing() -> None:
     """For tests."""
     _starts.clear()
