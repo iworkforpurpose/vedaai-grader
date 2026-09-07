@@ -1772,3 +1772,103 @@ class TestTheGraderSpreadsAPanelAcrossHosts:
         grader = graders.OpenAIGrader(client=own)
         grader.provider, grader.model = "cerebras", "gpt-oss-120b"
         assert [grader._peer_for(i)[0] for i in range(3)] == [own, own, own]
+
+
+class TestMarksArriveWithoutHoldingTheScreen:
+    """Locating takes seconds; marking takes minutes. Only one should be waited on.
+
+    Measured on the real pipeline: ingest of an eighteen-question paper - render,
+    transcribe, extract, segment, map - is about sixteen seconds, and marking the
+    same paper is minutes, because a free tier meters requests per minute and
+    every question is a panel of calls. Holding the submission until the last
+    mark returned made a teacher wait three minutes for a screen that was ready
+    after sixteen.
+    """
+
+    def _run(self, on_grade=None):
+        first = line(1, "Light bends when it changes medium", y0=0.10)
+        second = line(2, "Sound needs a material to travel through", y0=0.30)
+        index = index_of(first, second)
+        from vedaai_contracts import Mapping
+
+        mapping = MappingResult(
+            mappings=[
+                Mapping(
+                    qid="A/1",
+                    status=AnswerStatus.ANSWERED,
+                    start_line_id=first.line_id,
+                    end_line_id=first.line_id,
+                ),
+                Mapping(
+                    qid="A/2",
+                    status=AnswerStatus.ANSWERED,
+                    start_line_id=second.line_id,
+                    end_line_id=second.line_id,
+                ),
+            ],
+            orphans=[],
+            unassigned_ink_ratio=0.0,
+        )
+        return asyncio.run(
+            run.grade_submission(
+                paper=QuestionPaper(
+                    questions=[
+                        q("A/1", "1.", "Define refraction of light.", 0),
+                        q("A/2", "2.", "Why can sound not travel in a vacuum?", 1),
+                    ],
+                    sections=[],
+                ),
+                mapping=mapping,
+                index=index,
+                grader=engine.RubricOnly(),
+                excluded_line_ids=set(),
+                on_grade=on_grade,
+            )
+        )
+
+    def test_each_grade_is_handed_over_as_it_lands(self) -> None:
+        """Not gathered up and delivered once at the end.
+
+        This callback is the whole mechanism: without it the submission holds no
+        marks until the final question returns, and a screen polling for them has
+        nothing to show for the entire run.
+        """
+        arrived: list[str] = []
+        result, _failures = self._run(on_grade=lambda g: arrived.append(g.qid))
+
+        assert sorted(arrived) == ["A/1", "A/2"]
+        assert sorted(arrived) == sorted(g.qid for g in result.grades)
+
+    def test_a_failing_callback_never_costs_a_mark(self) -> None:
+        """It is a side effect of marking, not part of it.
+
+        A store refusing one write must not turn a graded question into an
+        ungraded one: the mark is correct whether or not anybody saved it yet.
+        """
+
+        def explode(_grade):
+            raise RuntimeError("the store refused this write")
+
+        broken, _f1 = self._run(on_grade=explode)
+        clean, _f2 = self._run()
+
+        # Identical, not merely non-empty: a swallowed callback must leave the
+        # marking indistinguishable from a run where nobody was listening.
+        assert [g.model_dump() for g in broken.grades] == [
+            g.model_dump() for g in clean.grades
+        ]
+
+    def test_marking_without_a_callback_is_unchanged(self) -> None:
+        """The default path must behave exactly as it did."""
+        result, failures = self._run()
+        assert len(result.grades) == 2
+        assert failures == []
+
+    def test_a_submission_says_when_marks_are_still_coming(self) -> None:
+        """`complete` with no marks and no flag gives a client no reason to look
+        again - which is why holding the status was tried first and could not work.
+        """
+        from vedaai_contracts import Submission
+
+        assert "marking" in Submission.model_fields
+        assert Submission(submission_id="x").marking is False

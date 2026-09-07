@@ -2,7 +2,7 @@
 
 Note on uploads: the browser posts files to this service directly, not through
 the Next.js app. That matters because a Vercel function caps its request body at
-4.5 MB, which a scanned answer sheet routinely exceeds — but this service runs on
+4.5 MB, which a scanned answer sheet routinely exceeds - but this service runs on
 its own host, so the cap never applies and presigned object-storage uploads
 become an optimization rather than a requirement.
 """
@@ -19,8 +19,10 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, R
 from fastapi.responses import Response, StreamingResponse
 from vedaai_contracts import (
     DocumentKind,
+    GradeResult,
     InkRegion,
     LineIndex,
+    QuestionGrade,
     Submission,
     SubmissionStatus,
 )
@@ -48,8 +50,8 @@ def _limit_from_env(name: str, default: int) -> int:
 
 #: Submissions one caller may start in an hour.
 #:
-#: Ingest is the expensive request — every page rendered and recognised, the paper
-#: and script embedded, a marking call per question — so this is the number that
+#: Ingest is the expensive request - every page rendered and recognised, the paper
+#: and script embedded, a marking call per question - so this is the number that
 #: decides what a stranger with the URL can cost. Generous enough that a teacher
 #: working through a class does not meet it, low enough that a loop does.
 _INGEST = Throttle(limit=_limit_from_env("RATE_LIMIT_INGEST_PER_HOUR", 30), window=3600.0)
@@ -62,8 +64,8 @@ _REMARK = Throttle(limit=_limit_from_env("RATE_LIMIT_REMARK_PER_HOUR", 120), win
 def _caller(request: Request) -> str:
     """Who to count this request against.
 
-    The web layer is the only thing that can reach this service — it proxies to
-    loopback inside the same container — so the header it sets is as trustworthy
+    The web layer is the only thing that can reach this service - it proxies to
+    loopback inside the same container - so the header it sets is as trustworthy
     as the process itself. Falling back to the peer address would otherwise count
     every caller as the proxy and make one person's loop everybody's refusal.
     """
@@ -97,8 +99,8 @@ def start_upload(
     """Where to put the two documents.
 
     Returns presigned destinations when object storage is configured, so the browser
-    uploads past this service entirely. Every host caps request bodies — API Gateway
-    at 10 MB, serverless functions lower — and this service accepts documents up to
+    uploads past this service entirely. Every host caps request bodies - API Gateway
+    at 10 MB, serverless functions lower - and this service accepts documents up to
     40 MB, so routing them through the host would mean the host choosing the product
     limit. Uploading past it removes the question.
 
@@ -155,8 +157,8 @@ async def create_submission(
     """Accept both documents and start ingest. Returns immediately.
 
     Ingest used to be awaited here, on the reasoning that a request taking a few
-    seconds is simpler than a job handle. That reasoning had a stated expiry —
-    "when transcription grows to a minute-plus this moves to a background task" —
+    seconds is simpler than a job handle. That reasoning had a stated expiry -
+    "when transcription grows to a minute-plus this moves to a background task" -
     and it expired in a way worth recording, because it did not look like a
     timeout.
 
@@ -164,7 +166,7 @@ async def create_submission(
     exactly thirty seconds. Not an exception: no traceback, no completed request in
     the log, the worker still healthy and never restarted. A one-page sheet failed
     at 30.7s and a two-page at 32.0s, which is what said it was a wall rather than
-    a resource limit — the same wall regardless of the work behind it.
+    a resource limit - the same wall regardless of the work behind it.
 
     Raising whichever timeout it was would only move the wall. A pipeline that
     takes fifteen seconds a page cannot live inside one HTTP request whatever the
@@ -191,7 +193,7 @@ async def create_submission(
     if by_key == by_file:
         raise HTTPException(
             status_code=422,
-            detail="Send both documents as files, or both as upload keys — not a mix.",
+            detail="Send both documents as files, or both as upload keys - not a mix.",
         )
 
     loop = asyncio.get_running_loop()
@@ -249,7 +251,7 @@ async def create_submission(
         )
     )
     # Held, because asyncio keeps only a weak reference to a running task and will
-    # happily collect one mid-flight — which would abandon the ingest silently.
+    # happily collect one mid-flight - which would abandon the ingest silently.
     _BACKGROUND.add(task)
     task.add_done_callback(_BACKGROUND.discard)
 
@@ -311,20 +313,22 @@ async def _run_ingest(
     )
 
     if marking:
-        # Held at `processing` across marking, because `pipeline.ingest` sets
-        # `complete` itself the moment locating is done.
+        # The review screen opens on the located answers, and marks arrive into
+        # it. Locating takes about sixteen seconds; marking the same paper takes
+        # minutes, because a free tier meters requests per minute and every
+        # question is a panel of calls. Holding the submission at `processing`
+        # across both made a teacher wait three minutes for a screen that was
+        # ready after sixteen seconds, which is indistinguishable from broken.
         #
-        # That is a seam a client cannot see past: the submission says complete
-        # while eight marking calls are still in flight, so anything watching the
-        # status opens the review screen with no marks on it and no reason to look
-        # again. It read as auto-marking silently not running — the marks arrived
-        # perfectly well, roughly half a minute after the only signal saying to
-        # stop waiting.
-        submission.status = SubmissionStatus.PROCESSING
+        # `marking` is what a client watches instead. It was once the status
+        # itself, which could not work: `complete` with no marks and no flag
+        # gives a client no reason to look again, so the marks arrived into a
+        # screen that had stopped listening.
+        submission.marking = True
         store.put(submission)
         try:
             with timed("marking", submission_id=submission_id):
-                await _apply_marks(submission, page_store)
+                await _apply_marks(submission, page_store, store)
         except BaseException as exc:  # noqa: BLE001
             # BaseException, not Exception: a cancelled task raises CancelledError,
             # which is not an Exception, and losing it here would leave a
@@ -332,6 +336,7 @@ async def _run_ingest(
             warning = f"Answers were not marked automatically: {exc}"
             if warning not in submission.warnings:
                 submission.warnings.append(warning)
+        submission.marking = False
         submission.status = SubmissionStatus.COMPLETE
 
     store.put(submission)
@@ -416,7 +421,7 @@ def _store_or_conflict(store: SubmissionStore, submission: Submission) -> None:
 
     Unreachable with one task and one worker. It is here because that is a
     property of today's deployment, not of this code, and the failure it prevents
-    is a silently discarded correction — the kind nobody reports because it looks
+    is a silently discarded correction - the kind nobody reports because it looks
     like they mis-clicked.
     """
     try:
@@ -443,7 +448,7 @@ def reassign_answer(
 
     Manual correction is expected rather than exceptional. Gradescope, the
     established tool for this task, does not locate answer regions automatically
-    at all — students mark their own, or a pre-printed template is required — and
+    at all - students mark their own, or a pre-printed template is required - and
     it ships an explicit tool for instructors to correct regions. This endpoint is
     that tool.
     """
@@ -487,7 +492,7 @@ async def grade_submission(
 
     It was deliberately *not* part of ingest, on the reasoning that a proposed
     score is hard to unsee and locating answers is useful without it. Overruled on
-    request — a teacher opening a marked script and choosing to ignore the numbers
+    request - a teacher opening a marked script and choosing to ignore the numbers
     is a smaller cost than one who never finds the button. The numbers are still
     labelled as proposals and every one carries the line it rests on.
 
@@ -518,7 +523,11 @@ async def grade_submission(
     return submission
 
 
-async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None:
+async def _apply_marks(
+    submission: Submission,
+    page_store: AnyPageStore,
+    store: SubmissionStore | None = None,
+) -> None:
     """Mark a submission in place, degrading to the rubric when no grader is set.
 
     Shared by the explicit endpoint and by ingest, so the two cannot diverge in
@@ -534,7 +543,7 @@ async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None
     # Read the answers recognition is likely to have damaged again, before they
     # are marked. Mathematics and diagram labels are what a text recognizer reads
     # worst and what a marker can do least with, and the aligner has already
-    # decided which lines belong to which question — which is what makes it
+    # decided which lines belong to which question - which is what makes it
     # possible to pay for a second read only where it can help.
     #
     # After mapping and before marking, and it changes only what a line says: no
@@ -585,12 +594,29 @@ async def _apply_marks(submission: Submission, page_store: AnyPageStore) -> None
         if g.teacher_marks is not None
     }
 
+    # Each mark is written as it lands, so the review screen fills in rather than
+    # staying blank until the last question returns. Writing the whole submission
+    # per grade is affordable because there are tens of questions, not thousands,
+    # and the alternative is a teacher watching an empty screen for minutes.
+    #
+    # `GradeResult` is built up here rather than in `grade_submission`, which
+    # still returns the complete one - the partial exists only to be looked at.
+    arriving: list[QuestionGrade] = []
+
+    def landed(grade: QuestionGrade) -> None:
+        if store is None:
+            return
+        arriving.append(grade)
+        submission.grades = GradeResult(grades=list(arriving))
+        store.put(submission)
+
     submission.grades, marking_failures = await grading.grade_submission(
         paper=submission.questions,
         mapping=submission.mapping,
         index=submission.answer_sheet_lines,
         grader=grader,
         excluded_line_ids=excluded,
+        on_grade=landed,
     )
     if decided:
         submission.grades.grades = [

@@ -2,7 +2,7 @@
 
 The order here is the design. Rubrics come from the paper, the lines come from
 the mapping with abandoned work already removed, and only then is anything
-judged — so the two failure modes that would be invisible in a score are
+judged - so the two failure modes that would be invisible in a score are
 structurally impossible rather than guarded against downstream:
 
   * A question with no answer is never marked. It is reported by the status the
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 
 from vedaai_contracts import (
     AnswerStatus,
@@ -43,7 +44,7 @@ CONCURRENCY = 4
 #: Marking is one call per question and nothing connected that to what a caller
 #: is allowed to upload. A document is accepted up to sixty pages, a page holds
 #: around forty lines, and a paper crafted so every line parses as a question
-#: turns one upload into thousands of paid calls — inside the rate limit, which
+#: turns one upload into thousands of paid calls - inside the rate limit, which
 #: counts submissions, and outside any budget anybody had chosen. OWASP files
 #: this as unbounded consumption, and asks for a limit applied before the work
 #: rather than a bill noticed after it.
@@ -91,7 +92,7 @@ def _ungraded(
 _SKIP_REASON = {
     AnswerStatus.UNANSWERED: "Nothing was written for this question.",
     AnswerStatus.OCR_FAILED: "There is writing here, but it could not be read. Check the page.",
-    AnswerStatus.NOT_REQUIRED: "Not required — the student answered the alternatives.",
+    AnswerStatus.NOT_REQUIRED: "Not required - the student answered the alternatives.",
     AnswerStatus.PAGES_MISSING: "A page appears to be missing.",
     AnswerStatus.UNCERTAIN: "The answer to this could not be located on the sheet.",
 }
@@ -104,8 +105,19 @@ async def grade_submission(
     index: LineIndex,
     grader: Grader,
     excluded_line_ids: set[str],
+    on_grade: Callable[[QuestionGrade], None] | None = None,
 ) -> GradeResult:
-    """Grade every answered question, and say why the rest were not marked."""
+    """Grade every answered question, and say why the rest were not marked.
+
+    `on_grade` is called with each question's grade as it lands, so a caller can
+    persist marks one at a time instead of holding a submission blank until the
+    last one returns. Locating an answer takes about sixteen seconds and marking
+    it takes minutes, so the difference decides whether a teacher waits for the
+    fast half or the slow one.
+
+    Never allowed to fail a question: the callback is a side effect of marking,
+    not part of it.
+    """
     by_qid = {m.qid: m for m in mapping.mappings}
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
@@ -204,19 +216,33 @@ async def grade_submission(
                 )
 
     failures: list[str] = []
-    #: Questions whose mark scheme rests on material the paper did not supply — a
+    #: Questions whose mark scheme rests on material the paper did not supply - a
     #: poem, a figure, a source. The marks on these are advisory and the teacher
     #: is told so, because nothing downstream can verify a quotation from a
     #: passage nobody has.
     advisory: list[str] = []
     ordered = sorted(paper.questions, key=lambda q: q.print_order)
 
-    # Beyond the cap, questions are still returned — found, located, and reported
+    # Beyond the cap, questions are still returned - found, located, and reported
     # as unmarked with the reason. Silently marking fewer would read as the model
     # declining to judge them, which is a different and more alarming thing than
     # a stated limit.
     payable, beyond = ordered[:MAX_MARKED_QUESTIONS], ordered[MAX_MARKED_QUESTIONS:]
-    grades = list(await asyncio.gather(*(one(q) for q in payable)))
+    async def one_and_report(question) -> QuestionGrade:
+        grade = await one(question)
+        if on_grade is not None:
+            try:
+                on_grade(grade)
+            except Exception as exc:  # noqa: BLE001
+                log_event(
+                    "grade_callback_failed",
+                    qid=question.qid,
+                    error=type(exc).__name__,
+                    detail=str(exc),
+                )
+        return grade
+
+    grades = list(await asyncio.gather(*(one_and_report(q) for q in payable)))
     for question in beyond:
         spec = rubric_mod.derive(question)
         grades.append(

@@ -31,7 +31,7 @@ import { SheetView } from "./SheetView";
  *
  * Questions on the left, the answer sheet on the right, and clicking a question
  * highlights where it was answered. Below the rail breakpoint the two become tabs
- * rather than a split, which is what the phone frames show — and the right call,
+ * rather than a split, which is what the phone frames show - and the right call,
  * since a side-by-side split at 393px gave the sheet 73px and made the highlight
  * impossible to see.
  *
@@ -77,7 +77,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
    * The upload used to return the finished submission, so the first render was
    * always the final one. It now returns immediately in `processing`, because a
    * pipeline measured in tens of seconds per page cannot live inside one HTTP
-   * request — every layer between the browser and the worker gets to impose its own
+   * request - every layer between the browser and the worker gets to impose its own
    * timeout, and one of them was cutting the connection at thirty seconds.
    *
    * Polling rather than the SSE progress stream: this screen needs the whole
@@ -86,7 +86,11 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
    * the right source if this ever shows per-page progress.
    */
   useEffect(() => {
-    if (submission.status !== "processing") return;
+    // Two reasons to keep asking, and they end at different times. `processing`
+    // means there is nothing to show yet; `marking` means the screen is showing
+    // located answers while their marks are still arriving.
+    const waiting = submission.status === "processing" || submission.marking;
+    if (!waiting) return;
 
     let live = true;
     const timer = window.setInterval(() => {
@@ -98,11 +102,20 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
           );
           if (!response.ok || !live) return;
           const next = (await response.json()) as Submission;
-          // The waiting screen giving way to the mapping screen, which is the
-          // other whole-screen swap in the app.
-          if (live && next.status !== "processing") crossFade(() => setSubmission(next));
+          if (!live) return;
+          if (submission.status === "processing" && next.status !== "processing") {
+            // The waiting screen giving way to the mapping screen, which is the
+            // other whole-screen swap in the app.
+            crossFade(() => setSubmission(next));
+          } else if (next.status !== "processing") {
+            // Marks landing into a screen the reader is already looking at. No
+            // cross-fade: the page is not being replaced, a few numbers are
+            // filling in, and animating the whole surface for that would draw
+            // the eye away from what changed.
+            setSubmission(next);
+          }
         } catch {
-          // A dropped poll is not a failure — the next one is two seconds away.
+          // A dropped poll is not a failure - the next one is two seconds away.
         }
       })();
     }, 2000);
@@ -111,7 +124,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       live = false;
       window.clearInterval(timer);
     };
-  }, [submission.status, submission.submission_id]);
+  }, [submission.status, submission.marking, submission.submission_id]);
 
   const rows = useMemo(() => buildRows(submission), [submission]);
   const summary = useMemo(() => summarize(submission, rows), [submission, rows]);
@@ -122,7 +135,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
 
   // A cited rubric point narrows the highlight to the lines behind that one mark.
   // Without it the whole answer lights up and the teacher still has to find the
-  // sentence — which is the work the citation exists to save.
+  // sentence - which is the work the citation exists to save.
   const highlights = useMemo(
     () =>
       citedPoint
@@ -141,8 +154,8 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
    * Bring a region into view: scroll to it, and on the phone switch to the tab it
    * is on.
    *
-   * One function because there are two ways to ask for a region — picking a
-   * question, and following a citation — and only the first had this. Clicking
+   * One function because there are two ways to ask for a region - picking a
+   * question, and following a citation - and only the first had this. Clicking
    * "show the writing this rests on" moved the highlight and left the reader
    * looking at wherever they already were, which on the phone was the questions
    * tab, so the entire response to the click was invisible. Sharing the path is
@@ -170,7 +183,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
    * there.
    *
    * Clicking the same citation again clears it and returns the highlight to the
-   * whole answer, so it is a toggle — and in that direction there is nothing new
+   * whole answer, so it is a toggle - and in that direction there is nothing new
    * to scroll to.
    */
   function cite(point: RubricPoint): void {
@@ -195,7 +208,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
     }
     // Switch panes on a miss as well as on a hit. The notice renders in the
     // questions pane, and on a narrow screen the other pane is `inert` and at
-    // zero opacity — so the answer to "why did nothing happen" was being written
+    // zero opacity - so the answer to "why did nothing happen" was being written
     // into the half of the screen the teacher could not see.
     setNotice("No answer is mapped to that spot.");
     if (narrow) setTab("questions");
@@ -205,7 +218,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
    * Move a block of writing to a question, and keep the screen honest if it fails.
    *
    * Applied locally first, because the correction is the teacher's decision and
-   * should land the moment they make it — a round trip of a second on a list they
+   * should land the moment they make it - a round trip of a second on a list they
    * are actively working through reads as the interface ignoring them. The local
    * apply mirrors the server's rules exactly, which is why it lives in
    * `lib/review.ts` and is tested there rather than being written twice.
@@ -243,7 +256,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       setSelectedQid(toQid);
     } catch {
       setSubmission(submission);
-      setNotice("That move could not be saved — the service could not be reached.");
+      setNotice("That move could not be saved - the service could not be reached.");
     } finally {
       setMoving(false);
     }
@@ -277,7 +290,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       }
       setSubmission((await response.json()) as Submission);
     } catch {
-      setNotice("That mark could not be saved — the service could not be reached.");
+      setNotice("That mark could not be saved - the service could not be reached.");
     }
   }
 
@@ -296,7 +309,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       }
       setSubmission((await response.json()) as Submission);
     } catch {
-      setNotice("Marking could not be run — the service could not be reached.");
+      setNotice("Marking could not be run - the service could not be reached.");
     } finally {
       setMarking(false);
     }
@@ -321,7 +334,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
       <>
         <LoadingStage
           title="This one could not be read"
-          note="Nothing was kept — try uploading again."
+          note="Nothing was kept - try uploading again."
           detail={submission.error ?? submission.warnings[0]}
         />
         {/* And everything else it said. `warnings[0]` above is the headline; a
@@ -386,7 +399,7 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
               * It was the latter, and it read as prose: the one control that puts
               * scores and feedback on the screen was the hardest thing on the
               * screen to find. Marking now also runs at ingest, so this is the
-              * re-run — which is what a teacher needs after moving an answer
+              * re-run - which is what a teacher needs after moving an answer
               * between questions, since the old mark was made against the old
               * mapping.
               */}
@@ -450,13 +463,23 @@ export function MapSurface({ initial }: { initial: Submission }): React.JSX.Elem
                 · <strong>{marks.awarded}</strong>/{marks.available} proposed
               </>
             )}
-            {marks.rubricOnly && <> · marks not proposed, rubric only</>}
+            {/*
+              Said while marks are still arriving, because the alternative reads
+              as a verdict. A partial total is indistinguishable from a finished
+              one, so a paper half marked looks like a paper that scored half.
+              The answers below are already located and clickable; only the
+              numbers are still coming.
+            */}
+            {submission.marking && <> · still marking</>}
+            {marks.rubricOnly && !submission.marking && (
+              <> · marks not proposed, rubric only</>
+            )}
           </p>
 
           <RunNotices notices={notices} />
 
           {/*
-            Every mutation failure lands here — a move that would not save, a 409
+            Every mutation failure lands here - a move that would not save, a 409
             telling the teacher to reload, a 429 with a wait, "no answer is mapped
             to that spot". It had no role and no aria-live, so all of it was
             silent to a screen reader while the pattern existed one component

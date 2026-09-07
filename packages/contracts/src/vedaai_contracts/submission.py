@@ -27,7 +27,7 @@ class Submission(BaseModel):
 
     Persisted whole rather than as rows. Every field below is derived from the two
     uploaded documents in one pipeline run, so there is no query that wants them
-    apart — and splitting them across tables would mean a half-written submission
+    apart - and splitting them across tables would mean a half-written submission
     becoming representable, which is a state no reader here knows how to handle.
 
     The consequence worth knowing is that this object is what gets written on every
@@ -53,9 +53,19 @@ class Submission(BaseModel):
     mapping: MappingResult | None = None
     grades: GradeResult | None = None
 
+    marking: bool = Field(
+        default=False,
+        description="True while marks are still arriving. Locating an answer takes "
+        "about sixteen seconds and marking it takes minutes, because a free tier "
+        "meters requests per minute and every question is a panel of calls. Holding "
+        "the submission at `processing` across both made a teacher wait for the slow "
+        "half to see the fast one; this lets the review screen open on the located "
+        "answers and fill the marks in as they land.",
+    )
+
     warnings: list[str] = Field(
         default_factory=list,
-        description="Conditions a teacher should know about before trusting the report — "
+        description="Conditions a teacher should know about before trusting the report - "
         "missing pages, suppressed absence claims, low transcription confidence.",
     )
     error: str | None = None
@@ -65,7 +75,7 @@ class Submission(BaseModel):
     #: Here rather than left to the persistence layer because it answers a
     #: question about the submission and not about the row: how long it has been
     #: since anything happened to it. Ingest runs in a background task, and the
-    #: code around it turns every exception it can catch into a stored failure —
+    #: code around it turns every exception it can catch into a stored failure -
     #: but not the process going away. A deploy, an out-of-memory kill or a
     #: replaced host leaves a submission at `processing` with nobody to move it,
     #: and this is what lets a reader tell that apart from one still working.
