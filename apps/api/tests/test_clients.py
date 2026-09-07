@@ -1,7 +1,7 @@
 """How long this service is willing to wait.
 
 Every external client was constructed bare. No `botocore.Config` existed anywhere
-in the tree, and both model SDKs default to **600 seconds** — so a stalled
+in the tree, and both model SDKs default to **600 seconds** - so a stalled
 provider held a submission at `processing` for ten minutes per wave of four
 questions, with no reaper and nothing logged.
 
@@ -36,8 +36,8 @@ class TestNothingWaitsForever:
         Adaptive rate-limits client-side on a throttle instead of retrying
         straight back into the same wall, which is what a per-page loop over
         sixty pages needs. Nothing retried at all before: `ocr/textract.py`
-        translates `ThrottlingException` — which carries its own hand-written
-        "try again" message — into a terminal `EngineUnavailable`, and that ends
+        translates `ThrottlingException` - which carries its own hand-written
+        "try again" message - into a terminal `EngineUnavailable`, and that ends
         the transcription of every page including the ones already paid for.
         """
         retries = clients.aws_config().retries
@@ -346,3 +346,60 @@ class TestAPaidHostIsAlwaysLast:
         sampling._spent.add(("openai", "gpt-4.1"))
         assert sampling.next_marker() is None
         sampling.forget_spent_budgets()
+
+
+class TestPanelSamplesSpreadAcrossEquivalentHosts:
+    """The binding constraint on a free tier is requests per minute, per host.
+
+    Marking one question fans out to a panel, so eighteen questions at five
+    samples is ninety calls. On a host allowing five a minute that is sixteen
+    minutes of a teacher watching a spinner - measured on the live deployment,
+    which is what "it is not working" turned out to mean. Spread across every
+    host serving the same weights the ceilings add up instead.
+    """
+
+    def test_equal_weights_on_two_hosts_are_peers(self, monkeypatch):
+        from grader import clients
+
+        monkeypatch.setenv("GROQ_API_KEY", "k")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+        peers = clients.peers_for("cerebras", "gpt-oss-120b")
+        assert ("groq", "openai/gpt-oss-120b") in peers
+        assert peers[0] == ("cerebras", "gpt-oss-120b"), "the caller's own host goes first"
+
+    def test_a_host_without_a_key_is_not_a_peer(self, monkeypatch):
+        from grader import clients
+
+        monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        assert clients.peers_for("cerebras", "gpt-oss-120b") == [
+            ("cerebras", "gpt-oss-120b")
+        ]
+
+    def test_a_model_with_no_twin_is_its_own_only_peer(self, monkeypatch):
+        """A deployment with one credential must behave exactly as before."""
+        from grader import clients
+
+        monkeypatch.setenv("GEMINI_API_KEY", "k")
+        assert clients.peers_for("gemini", "gemini-2.5-flash") == [
+            ("gemini", "gemini-2.5-flash")
+        ]
+
+    def test_only_equal_weights_are_grouped(self):
+        """Grouping two different models would make the panel's samples
+        incomparable - the vote would be reconciling disagreements between
+        models rather than cancelling decode noise, which is what it is for.
+        """
+        import re
+
+        from grader import clients
+
+        def weights(model: str) -> str:
+            # Hosts punctuate the same weights differently - `qwen-3.8-27b`
+            # against `qwen/qwen3.8-27b` - so compare on the letters and digits.
+            return re.sub(r"[^a-z0-9]", "", model.rsplit("/", 1)[-1].lower())
+
+        for group in clients.EQUIVALENT:
+            names = {weights(model) for _provider, model in group}
+            assert len(names) == 1, f"unequal weights grouped together: {group}"
+            assert len({p for p, _m in group}) == len(group), "a host twice in one group"

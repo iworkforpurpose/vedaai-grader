@@ -19,6 +19,7 @@ from typing import Protocol
 
 from vedaai_contracts import LineIndex, Question, QuestionGrade
 
+from ..clients import client_for, peers_for
 from ..observability import log_event
 from . import prompt, sampling
 from .assembly import _needs_a_person, _tool_input, _unjudged_points, assemble, assemble_checks
@@ -251,7 +252,10 @@ class Claude:
             question=question, rubric=rubric, index=index,
             line_ids=line_ids, scheme=scheme,
         )
-        samples = await _panel(lambda _seed: self._judge(text, binary=binary), MARK_SAMPLES)
+        samples = await _panel(
+            lambda _seed, index: self._judge(text, binary=binary, index=index),
+            MARK_SAMPLES,
+        )
         need = _agreement(len(samples))
 
         if binary:
@@ -274,7 +278,13 @@ class Claude:
             graded_by=self.provenance,
         )
 
-    async def _judge(self, text: str, *, binary: bool) -> dict:
+    async def _judge(
+        self, text: str, *, binary: bool, index: int = 0
+    ) -> dict:
+        # `index` says which member of the panel this is, so a grader can send it
+        # to a different host. Anthropic serves these weights nowhere else, so
+        # there is no peer to reach and the argument exists only to keep one
+        # signature across the graders.
         """One member of the panel. This provider exposes no seed."""
         message = await self._client.messages.create(
             model=self.model,
@@ -359,8 +369,6 @@ class OpenAIGrader:
             raise GraderUnavailable(
                 "the openai package is not installed; install the 'grading' extra"
             ) from exc
-        from ..clients import client_for
-
         self._client = client_for(self.provider)
 
     async def grade(
@@ -383,7 +391,10 @@ class OpenAIGrader:
             line_ids=line_ids, scheme=scheme,
         )
         samples = await _panel(
-            lambda seed: self._judge(message, binary=binary, seed=seed), MARK_SAMPLES
+            lambda seed, index: self._judge(
+                message, binary=binary, seed=seed, index=index
+            ),
+            MARK_SAMPLES,
         )
         need = _agreement(len(samples))
 
@@ -407,7 +418,31 @@ class OpenAIGrader:
             graded_by=self.provenance,
         )
 
-    async def _judge(self, message: str, *, binary: bool, seed: int) -> dict:
+    def _peer_for(self, index: int) -> tuple[object, str, str]:
+        """The client, provider and model this sample should go to.
+
+        Round-robin across every host serving these weights. Same model, so the
+        samples stay comparable and the panel is still a panel on one marker;
+        what changes is that the requests-per-minute ceilings add up instead of
+        one host queueing behind itself.
+        """
+        peers = peers_for(getattr(self, "provider", ""), self.model)
+        provider, model = peers[index % len(peers)]
+        if provider == getattr(self, "provider", ""):
+            return self._client, provider, model
+        # Instance-local and lazy. A class attribute here would be one dict
+        # shared by every grader ever built, handing one instance's clients to
+        # another.
+        cache: dict[str, object] = self.__dict__.setdefault("_peers", {})
+        client = cache.get(provider)
+        if client is None:
+            client = client_for(provider)
+            cache[provider] = client
+        return client, provider, model
+
+    async def _judge(
+        self, message: str, *, binary: bool, seed: int, index: int = 0
+    ) -> dict:
         """One member of the panel.
 
         Temperature and seed are asked for and given up if the model refuses
@@ -421,10 +456,11 @@ class OpenAIGrader:
         A reasoning model accepts neither, and refusing the whole request over an
         optimisation would mark nothing at all. See ``sampling``.
         """
+        client, provider, model = self._peer_for(index)
         return await sampling.structured_completion(
-            self._client,
-            model=self.model,
-            provider=getattr(self, "provider", ""),
+            client,
+            model=model,
+            provider=provider,
             system=prompt.SYSTEM,
             user=message,
             schema_name="judgement",

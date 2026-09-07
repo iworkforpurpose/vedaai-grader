@@ -217,8 +217,12 @@ async def _panel(judge, count: int) -> list[dict]:
     cost a vote, not the question. Everything failing is still an error, and the
     surviving count is what sets the agreement threshold.
     """
+    # The sample's position is passed alongside its seed so the caller can send
+    # each one to a different host. Panels are the whole latency cost of marking,
+    # and a free tier's wall is requests per minute per host.
     results = await asyncio.gather(
-        *(judge(seed) for seed in _seeds(count)), return_exceptions=True
+        *(judge(seed, index) for index, seed in enumerate(_seeds(count))),
+        return_exceptions=True,
     )
     samples = [r for r in results if isinstance(r, dict)]
     if len(samples) < count:

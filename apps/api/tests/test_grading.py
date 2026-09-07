@@ -1149,6 +1149,12 @@ class TestProviderSelection:
         handler = logging.StreamHandler(captured)
         logger = logging.getLogger("grader")
         logger.addHandler(handler)
+        # The level matters as much as the handler. `configure` is what normally
+        # sets it, and without that the logger inherits the root's WARNING and
+        # drops every `info` on the floor - the handler is attached and captures
+        # nothing.
+        previous = logger.level
+        logger.setLevel(logging.INFO)
         monkeypatch.setattr(graders, "GRADER_PROVIDER", "")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1169,6 +1175,7 @@ class TestProviderSelection:
             logged = captured.getvalue()
         finally:
             logger.removeHandler(handler)
+            logger.setLevel(previous)
         assert "no_marker_available" in logged
         assert "API_KEY" in logged, "the operator's detail did not reach the log"
 
@@ -1524,7 +1531,7 @@ class TestThePanel:
         assert engine.median_sample(samples)["points"][0]["comment"] == "two"
 
     def test_one_failed_call_costs_a_vote_and_not_the_question(self) -> None:
-        async def judge(seed: int) -> dict:
+        async def judge(seed: int, index: int) -> dict:
             if seed == engine._seeds(3)[0]:
                 raise RuntimeError("upstream refused")
             return {"checks": [], "feedback": None, "uncertain": False}
@@ -1532,7 +1539,7 @@ class TestThePanel:
         assert len(asyncio.run(engine._panel(judge, 3))) == 2
 
     def test_every_call_failing_is_still_an_error(self) -> None:
-        async def judge(seed: int) -> dict:
+        async def judge(seed: int, index: int) -> dict:
             raise RuntimeError("upstream refused")
 
         with pytest.raises(RuntimeError, match="upstream refused"):
@@ -1706,3 +1713,62 @@ class TestCitationRepair:
         )
         allowed = {ln.line_id for ln in index.lines}
         assert citations.check([point], index, allowed_line_ids=allowed) == []
+
+
+class TestTheGraderSpreadsAPanelAcrossHosts:
+    """Same weights, two hosts, so the requests-per-minute ceilings add up."""
+
+    def _grader(self, monkeypatch):
+        from grader.grading import graders
+
+        monkeypatch.setenv("GROQ_API_KEY", "k")
+        monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+        monkeypatch.delenv("GRADER_MODEL", raising=False)
+        monkeypatch.delenv("GRADER_PROVIDER", raising=False)
+        made: list[str] = []
+        monkeypatch.setattr(
+            graders, "client_for", lambda provider: made.append(provider) or object()
+        )
+        grader = graders.OpenAIGrader(client=object())
+        grader.provider = "cerebras"
+        grader.model = "gpt-oss-120b"
+        return grader, made
+
+    def test_consecutive_samples_go_to_different_hosts(self, monkeypatch):
+        grader, _made = self._grader(monkeypatch)
+        hosts = [grader._peer_for(i)[1] for i in range(4)]
+        assert hosts == ["cerebras", "groq", "cerebras", "groq"]
+
+    def test_each_sample_asks_for_the_name_its_host_uses(self, monkeypatch):
+        """The same weights are served under different ids, and asking one host
+        for another's name is a model-not-found rather than a fallback."""
+        grader, _made = self._grader(monkeypatch)
+        assert grader._peer_for(0)[2] == "gpt-oss-120b"
+        assert grader._peer_for(1)[2] == "openai/gpt-oss-120b"
+
+    def test_a_peer_client_is_built_once_and_reused(self, monkeypatch):
+        grader, made = self._grader(monkeypatch)
+        first = grader._peer_for(1)[0]
+        second = grader._peer_for(3)[0]
+        assert first is second
+        assert made == ["groq"], "a client was rebuilt per sample"
+
+    def test_two_graders_do_not_share_peer_clients(self, monkeypatch):
+        """`_peers` on the class would be one dict for every grader ever built."""
+        from grader.grading import graders
+
+        a, _ = self._grader(monkeypatch)
+        b = graders.OpenAIGrader(client=object())
+        b.provider, b.model = "cerebras", "gpt-oss-120b"
+        a._peer_for(1)
+        assert b.__dict__.get("_peers", {}) == {}
+
+    def test_with_one_key_every_sample_stays_where_it_was(self, monkeypatch):
+        from grader.grading import graders
+
+        monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        own = object()
+        grader = graders.OpenAIGrader(client=own)
+        grader.provider, grader.model = "cerebras", "gpt-oss-120b"
+        assert [grader._peer_for(i)[0] for i in range(3)] == [own, own, own]

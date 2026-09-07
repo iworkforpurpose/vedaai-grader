@@ -1,7 +1,7 @@
 """How long this service is willing to wait, in one place.
 
 Every external client was constructed bare. No `botocore.Config` existed anywhere
-in the tree, and the model clients took the SDK defaults — which for both OpenAI
+in the tree, and the model clients took the SDK defaults - which for both OpenAI
 and Anthropic is **600 seconds**.
 
 That number is the whole problem. Marking runs four questions at a time
@@ -10,9 +10,9 @@ provider holds a submission at `processing` for ten minutes per wave with no
 reaper and nothing logged. A teacher watches a spinner; an operator sees an idle
 task. Nothing in the service disagrees with waiting.
 
-AWS was worse in a quieter way. `ocr/textract.py` translates every failure —
+AWS was worse in a quieter way. `ocr/textract.py` translates every failure -
 including `ThrottlingException` and `ProvisionedThroughputExceededException`, both
-of which carry a hand-written "try again" message — into a terminal
+of which carry a hand-written "try again" message - into a terminal
 `EngineUnavailable`, and nothing retried. A throttle on one page ends the
 transcription of the whole document.
 
@@ -80,7 +80,7 @@ def aws_config(read_timeout: float = STORAGE_READ_TIMEOUT) -> Any:
 #:
 #: Groq is chosen when its key is present because it is the one open-weight host
 #: confirmed to support `response_format: json_schema` with `strict: true`, which
-#: every marking call here depends on — and its schema rules (all fields required,
+#: every marking call here depends on - and its schema rules (all fields required,
 #: `additionalProperties: false`, nullables as unions) are the ones this codebase
 #: already emits, so nothing had to be rewritten to move.
 #:
@@ -235,6 +235,44 @@ def _rank(entry: tuple[str, str]) -> tuple[int, int, float, str, str]:
 #: see `_rank` - so recording a new measurement re-sorts it rather than requiring
 #: somebody to re-sort a list by hand and get it subtly wrong.
 FALLBACK_CHAIN: list[tuple[str, str]] = sorted(MEASURED, key=_rank)
+
+
+#: Hosts that serve the same weights under different names.
+#:
+#: The point is latency, not redundancy. A free tier's binding constraint is
+#: requests per minute, and marking one question fans out to a panel: eighteen
+#: questions at five samples is ninety calls, which at Cerebras's five a minute
+#: is sixteen minutes of a teacher watching a spinner. Spread across every host
+#: serving the same model it is five plus thirty a minute, and about three.
+#:
+#: Only equal weights belong in a group. Two hosts running the same model give
+#: the same judgement, so a panel split between them is still a panel on one
+#: marker - which is why this buys speed without costing accuracy. Grouping two
+#: *different* models would make the samples incomparable, and the vote would be
+#: reconciling disagreements between models rather than decode noise.
+EQUIVALENT: list[list[tuple[str, str]]] = [
+    [("cerebras", "gpt-oss-120b"), ("groq", "openai/gpt-oss-120b")],
+    [("cerebras", "qwen-3.8-27b"), ("groq", "qwen/qwen3.8-27b")],
+]
+
+
+def peers_for(provider: str, model: str) -> list[tuple[str, str]]:
+    """Every reachable host serving these weights, this one first.
+
+    The caller spreads panel samples across the result. A host with no key is
+    left out, so a deployment holding one credential simply gets a list of one
+    and behaves exactly as it did before.
+    """
+    have = configured_providers()
+    here = (provider, model)
+    for group in EQUIVALENT:
+        if here in group:
+            peers = [entry for entry in group if entry[0] in have]
+            if here in peers:
+                peers.remove(here)
+                return [here, *peers]
+            return peers or [here]
+    return [here]
 
 
 def configured_providers() -> set[str]:
